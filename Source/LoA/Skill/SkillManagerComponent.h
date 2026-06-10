@@ -76,6 +76,31 @@ public:
     UFUNCTION(BlueprintCallable, Category="Skills")
     UTexture2D* GetSlotIcon(int32 SlotIndex) const;
 
+    // ─── 스킬트리 ───────────────────────────────────────────────
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SkillTree")
+    int32 AvailableSkillPoints = 10;
+
+    UPROPERTY(BlueprintReadOnly, Category="SkillTree")
+    TMap<FName, int32> SkillLevels;
+
+    UFUNCTION(BlueprintCallable, Category="SkillTree")
+    int32 GetSkillLevel(FName RowName) const;
+
+    UFUNCTION(BlueprintCallable, Category="SkillTree")
+    bool LevelUpSkill(FName RowName);
+
+    UFUNCTION(BlueprintCallable, Category="SkillTree")
+    bool LevelDownSkill(FName RowName);
+
+    // DataTable의 모든 Row 이름 반환 (스킬트리 목록 구성용)
+    UFUNCTION(BlueprintCallable, Category="SkillTree")
+    TArray<FName> GetAllSkillRowNames() const;
+
+    // 스킬트리에서 드래그앤드랍/우클릭으로 슬롯(0~7)에 스킬 배정
+    UFUNCTION(BlueprintCallable, Category="SkillTree")
+    bool AssignSkillToSlot(FName RowName, int32 SlotIndex);
+
 private:
     UPROPERTY()
     TArray<TObjectPtr<USkillBase>> SlotInstances;

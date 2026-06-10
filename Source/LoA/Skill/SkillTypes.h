@@ -62,6 +62,16 @@ struct FSkillData : public FTableRowBase
     // 스킬 계수 — 캐릭터 공격력에 곱해서 최종 데미지 산출 (예: 3.5 = 공격력의 350%)
     UPROPERTY(EditAnywhere, BlueprintReadOnly)
     float DamageCoefficient = 1.0f;
+
+    // 스킬트리 관련
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    FText SkillTypeLabel;  // "일반", "지점", "홀딩" 등 UI 표시용
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin=1))
+    int32 MaxSkillLevel = 10;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin=1))
+    int32 SkillPointCostPerLevel = 1;
 };
 
 

@@ -265,6 +265,74 @@ UTexture2D* USkillManagerComponent::GetSlotIcon(int32 SlotIndex) const
     return nullptr;
 }
 
+// ─── 스킬트리 ───────────────────────────────────────────────────────────────
+
+int32 USkillManagerComponent::GetSkillLevel(FName RowName) const
+{
+    const int32* Level = SkillLevels.Find(RowName);
+    return Level ? *Level : 0;
+}
+
+bool USkillManagerComponent::LevelUpSkill(FName RowName)
+{
+    if (!SkillDataTable) return false;
+    FSkillData* Data = SkillDataTable->FindRow<FSkillData>(RowName, TEXT(""));
+    if (!Data) return false;
+
+    const int32 Current = GetSkillLevel(RowName);
+    if (Current >= Data->MaxSkillLevel) return false;
+    if (AvailableSkillPoints < Data->SkillPointCostPerLevel) return false;
+
+    SkillLevels.FindOrAdd(RowName) = Current + 1;
+    AvailableSkillPoints -= Data->SkillPointCostPerLevel;
+    return true;
+}
+
+bool USkillManagerComponent::LevelDownSkill(FName RowName)
+{
+    if (!SkillDataTable) return false;
+    FSkillData* Data = SkillDataTable->FindRow<FSkillData>(RowName, TEXT(""));
+    if (!Data) return false;
+
+    const int32 Current = GetSkillLevel(RowName);
+    if (Current <= 0) return false;
+
+    SkillLevels[RowName] = Current - 1;
+    AvailableSkillPoints += Data->SkillPointCostPerLevel;
+    return true;
+}
+
+TArray<FName> USkillManagerComponent::GetAllSkillRowNames() const
+{
+    if (SkillDataTable)
+        return SkillDataTable->GetRowNames();
+    return {};
+}
+
+bool USkillManagerComponent::AssignSkillToSlot(FName RowName, int32 SlotIndex)
+{
+    if (SlotIndex < 0 || SlotIndex >= 8) return false;
+    if (!SkillDataTable) return false;
+
+    FSkillData* Data = SkillDataTable->FindRow<FSkillData>(RowName, TEXT(""));
+    if (!Data || !Data->SkillClass) return false;
+
+    if (!SlotClasses.IsValidIndex(SlotIndex))
+        SlotClasses.SetNum(8);
+    SlotClasses[SlotIndex] = Data->SkillClass;
+
+    USkillBase* NewInstance = NewObject<USkillBase>(GetOwner(), Data->SkillClass);
+    NewInstance->SkillData = *Data;
+    NewInstance->SkillRowName = RowName;
+    SlotInstances[SlotIndex] = NewInstance;
+
+    CooldownEndTimes[SlotIndex] = 0.0f;
+    CooldownDurations[SlotIndex] = Data->Cooldown;
+    return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 void USkillManagerComponent::ResetCombo()
 {
     if (ComboSlotIndex != -1 && ComboStep > 0)

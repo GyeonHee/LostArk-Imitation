@@ -16,6 +16,7 @@
 #include "LoA.h"
 #include "Skill/SkillManagerComponent.h"
 #include "UI/HUD_ViewModel.h"
+#include "UI/SkillTree_ViewModel.h"
 #include "Blueprint/UserWidget.h"
 #include "View/MVVMView.h"
 
@@ -42,6 +43,7 @@ void ALoAPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	HUDViewModel = NewObject<UHUD_ViewModel>(this);
+	SkillTreeViewModel = NewObject<USkillTree_ViewModel>(this);
 
 	if (HUDWidgetClass && IsLocalController())
 	{
@@ -74,6 +76,26 @@ void ALoAPlayerController::BeginPlay()
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
 	{
 		BindCharacterEvents(Char);
+		if (Char->SkillManager && SkillTreeViewModel)
+		{
+			SkillTreeViewModel->Initialize(Char->SkillManager);
+		}
+	}
+
+	// SkillTree 위젯: Initialize 후에 SetViewModel → AddToViewport 순서로 생성
+	// (AddToViewport가 Event Construct를 트리거하므로 ViewModel이 먼저 준비되어야 함)
+	if (SkillTreeWidgetClass && IsLocalController())
+	{
+		SkillTreeWidget = CreateWidget<UUserWidget>(this, SkillTreeWidgetClass);
+		if (SkillTreeWidget)
+		{
+			if (UMVVMView* View = SkillTreeWidget->GetExtension<UMVVMView>())
+			{
+				View->SetViewModel(FName("SkillTree_ViewModel"), SkillTreeViewModel);
+			}
+			SkillTreeWidget->AddToViewport(10);
+			SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
 }
 
@@ -97,12 +119,13 @@ void ALoAPlayerController::OnPossess(APawn* InPawn)
 		CMC->PrimaryComponentTick.AddPrerequisite(this, PrimaryActorTick);
 	}
 
-	if (HUDViewModel)
+	if (ALoACharacter* Char = Cast<ALoACharacter>(InPawn))
 	{
-		if (ALoACharacter* Char = Cast<ALoACharacter>(InPawn))
-		{
+		if (HUDViewModel)
 			BindCharacterEvents(Char);
-		}
+
+		if (SkillTreeViewModel && Char->SkillManager)
+			SkillTreeViewModel->Initialize(Char->SkillManager);
 	}
 }
 
@@ -118,6 +141,25 @@ void ALoAPlayerController::BindCharacterEvents(ALoACharacter* InCharacter)
 
 	InCharacter->OnHPChanged.AddUObject(this, &ALoAPlayerController::OnPlayerHPChanged);
 	InCharacter->OnMPChanged.AddUObject(this, &ALoAPlayerController::OnPlayerMPChanged);
+}
+
+void ALoAPlayerController::OnSkillTreeToggle()
+{
+	if (!SkillTreeWidget) return;
+
+	const bool bOpen = SkillTreeWidget->GetVisibility() == ESlateVisibility::Collapsed;
+	if (bOpen)
+	{
+		if (SkillTreeViewModel) SkillTreeViewModel->Refresh();
+		SkillTreeWidget->SetVisibility(ESlateVisibility::Visible);
+		SetInputMode(FInputModeGameAndUI());
+	}
+	else
+	{
+		SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
+		SetInputMode(FInputModeGameOnly());
+		bShowMouseCursor = true;
+	}
 }
 
 void ALoAPlayerController::OnPlayerHPChanged(float NewHP)
@@ -177,6 +219,12 @@ void ALoAPlayerController::SetupInputComponent()
 				EnhancedInputComponent->BindAction(SkillSlotActions[i], ETriggerEvent::Started,   this, &ALoAPlayerController::OnSkillKeyDown, i);
 				EnhancedInputComponent->BindAction(SkillSlotActions[i], ETriggerEvent::Triggered, this, &ALoAPlayerController::OnSkillKeyHeld, i);
 				EnhancedInputComponent->BindAction(SkillSlotActions[i], ETriggerEvent::Completed, this, &ALoAPlayerController::OnSkillKeyUp,   i);
+			}
+
+			// 스킬트리 토글 (K키)
+			if (SkillTreeAction)
+			{
+				EnhancedInputComponent->BindAction(SkillTreeAction, ETriggerEvent::Started, this, &ALoAPlayerController::OnSkillTreeToggle);
 			}
 
 			// 대쉬 바인딩

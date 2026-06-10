@@ -13,6 +13,7 @@ class UInputAction;
 class UPathFollowingComponent;
 class USkillManagerComponent;
 class UHUD_ViewModel;
+class USkillTree_ViewModel;
 class ALoACharacter;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -74,6 +75,19 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<UHUD_ViewModel> HUDViewModel;
+
+	/** K 키 — 스킬트리 토글 */
+	UPROPERTY(EditAnywhere, Category="Input|UI")
+	TObjectPtr<UInputAction> SkillTreeAction;
+
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<UUserWidget> SkillTreeWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> SkillTreeWidget;
+
+	UPROPERTY(BlueprintReadOnly, Category="UI")
+	TObjectPtr<USkillTree_ViewModel> SkillTreeViewModel;
 
 	/** True if the controlled character should navigate to the mouse cursor. */
 	uint32 bMoveToMouseCursor : 1;
@@ -145,6 +159,8 @@ protected:
 	/** 현재 빙의된 캐릭터의 SkillManager 반환 */
 	UFUNCTION(BlueprintCallable, Category="Skills")
 	USkillManagerComponent* GetSkillManager() const;
+
+	void OnSkillTreeToggle();
 
 	void OnPlayerHPChanged(float NewHP);
 	void OnPlayerMPChanged(float NewMP);
