@@ -250,6 +250,28 @@ FSkillData USkillManagerComponent::GetSlotSkillData(int32 SlotIndex) const
     return FSkillData{};
 }
 
+bool USkillManagerComponent::IsSlotAssigned(int32 SlotIndex) const
+{
+    return SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex] != nullptr;
+}
+
+FName USkillManagerComponent::GetSlotRowName(int32 SlotIndex) const
+{
+    if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])
+        return SlotInstances[SlotIndex]->SkillRowName;
+    return NAME_None;
+}
+
+int32 USkillManagerComponent::FindFirstEmptySlot() const
+{
+    for (int32 i = 0; i < 8; i++)
+    {
+        if (!SlotInstances.IsValidIndex(i) || !SlotInstances[i])
+            return i;
+    }
+    return -1;
+}
+
 UTexture2D* USkillManagerComponent::GetSlotIcon(int32 SlotIndex) const
 {
     if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])
@@ -328,6 +350,8 @@ bool USkillManagerComponent::AssignSkillToSlot(FName RowName, int32 SlotIndex)
 
     CooldownEndTimes[SlotIndex] = 0.0f;
     CooldownDurations[SlotIndex] = Data->Cooldown;
+
+    OnSkillSlotChanged.Broadcast(SlotIndex, RowName);
     return true;
 }
 

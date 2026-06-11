@@ -74,6 +74,9 @@ protected:
 	TSubclassOf<UUserWidget> HUDWidgetClass;
 
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	TObjectPtr<UUserWidget> HUDWidget;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<UHUD_ViewModel> HUDViewModel;
 
 	/** K 키 — 스킬트리 토글 */
@@ -115,6 +118,9 @@ protected:
 
 	/** Whether auto-move was active before the dash — restored after dash ends */
 	bool bWasAutoMovingBeforeDash = false;
+
+	/** 스킬트리 토글 중복 호출 방지용 타임스탬프 */
+	float LastSkillTreeToggleTime = -1.f;
 
 	/** Distance to destination at which movement stops */
 	UPROPERTY(EditAnywhere, Category="Movement", meta=(ClampMin=0, Units="cm"))
@@ -160,6 +166,7 @@ protected:
 	UFUNCTION(BlueprintCallable, Category="Skills")
 	USkillManagerComponent* GetSkillManager() const;
 
+	UFUNCTION(BlueprintCallable, Category="UI")
 	void OnSkillTreeToggle();
 
 	void OnPlayerHPChanged(float NewHP);

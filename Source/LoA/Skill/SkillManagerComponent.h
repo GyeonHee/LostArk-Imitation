@@ -9,6 +9,8 @@
 #include "SkillManagerComponent.generated.h"
 
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSkillSlotChanged, int32, SlotIndex, FName, RowName);
+
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class LOA_API USkillManagerComponent : public UActorComponent
 {
@@ -76,6 +78,18 @@ public:
     UFUNCTION(BlueprintCallable, Category="Skills")
     UTexture2D* GetSlotIcon(int32 SlotIndex) const;
 
+    // 슬롯에 스킬이 배정되어 있는지 확인
+    UFUNCTION(BlueprintPure, Category="Skills")
+    bool IsSlotAssigned(int32 SlotIndex) const;
+
+    // 슬롯에 배정된 스킬 RowName 반환 (비어있으면 NAME_None)
+    UFUNCTION(BlueprintPure, Category="Skills")
+    FName GetSlotRowName(int32 SlotIndex) const;
+
+    // 비어있는 첫 번째 슬롯(0~7) 인덱스 반환. 모두 찼으면 -1
+    UFUNCTION(BlueprintCallable, Category="Skills")
+    int32 FindFirstEmptySlot() const;
+
     // ─── 스킬트리 ───────────────────────────────────────────────
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SkillTree")
@@ -100,6 +114,10 @@ public:
     // 스킬트리에서 드래그앤드랍/우클릭으로 슬롯(0~7)에 스킬 배정
     UFUNCTION(BlueprintCallable, Category="SkillTree")
     bool AssignSkillToSlot(FName RowName, int32 SlotIndex);
+
+    // 슬롯이 변경될 때마다 브로드캐스트 — WBP_HUD가 바인딩해서 아이콘 갱신
+    UPROPERTY(BlueprintAssignable, Category="SkillTree")
+    FOnSkillSlotChanged OnSkillSlotChanged;
 
 private:
     UPROPERTY()

@@ -42,16 +42,22 @@ void ALoAPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 클릭이동 게임은 항상 GameAndUI 모드 — 커서 유지, 캡처 시 커서 숨기지 않음
+	FInputModeGameAndUI DefaultMode;
+	DefaultMode.SetHideCursorDuringCapture(false);
+	DefaultMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(DefaultMode);
+
 	HUDViewModel = NewObject<UHUD_ViewModel>(this);
 	SkillTreeViewModel = NewObject<USkillTree_ViewModel>(this);
 
 	if (HUDWidgetClass && IsLocalController())
 	{
-		UUserWidget* Widget = CreateWidget<UUserWidget>(this, HUDWidgetClass);
-		if (Widget)
+		HUDWidget = CreateWidget<UUserWidget>(this, HUDWidgetClass);
+		if (HUDWidget)
 		{
-			Widget->AddToViewport();
-			if (UMVVMView* View = Widget->GetExtension<UMVVMView>())
+			HUDWidget->AddToViewport();
+			if (UMVVMView* View = HUDWidget->GetExtension<UMVVMView>())
 			{
 				bool bOk = View->SetViewModel(FName("HUD_ViewModel"), HUDViewModel);
 				UE_LOG(LogTemp, Warning, TEXT("[HUD] SetViewModel: %s"), bOk ? TEXT("성공") : TEXT("실패 - 이름 불일치?"));
@@ -147,19 +153,31 @@ void ALoAPlayerController::OnSkillTreeToggle()
 {
 	if (!SkillTreeWidget) return;
 
+	// 0.3초 내 중복 호출 무시 (SetWidgetToFocus 시 Enhanced Input 재평가로 인한 이중 발동 방지)
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastSkillTreeToggleTime < 0.3f) return;
+	LastSkillTreeToggleTime = Now;
+
 	const bool bOpen = SkillTreeWidget->GetVisibility() == ESlateVisibility::Collapsed;
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetHideCursorDuringCapture(false);
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+
 	if (bOpen)
 	{
 		if (SkillTreeViewModel) SkillTreeViewModel->Refresh();
 		SkillTreeWidget->SetVisibility(ESlateVisibility::Visible);
-		SetInputMode(FInputModeGameAndUI());
+		InputMode.SetWidgetToFocus(SkillTreeWidget->TakeWidget());
 	}
 	else
 	{
 		SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
-		SetInputMode(FInputModeGameOnly());
-		bShowMouseCursor = true;
+		// 위젯 포커스 없이 — 게임이 마우스 입력 정상 수신
 	}
+
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
 }
 
 void ALoAPlayerController::OnPlayerHPChanged(float NewHP)
