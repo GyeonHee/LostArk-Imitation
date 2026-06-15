@@ -131,6 +131,10 @@ public:
 	/** Constructor */
 	ALoAPlayerController();
 
+	// 스킬 등 외부에서 강제 이동 목표 설정
+	void ForceMoveTo(const FVector& Destination);
+	void CancelAutoMove();
+
 	virtual void BeginPlay() override;
 
 	virtual void Tick(float DeltaSeconds) override;

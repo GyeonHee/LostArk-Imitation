@@ -16,6 +16,12 @@ void USkillBase::OnKeyUp(AActor* Owner)
 }
 
 
+void USkillBase::ForceCancel(AActor* Owner)
+{
+    bIsActive = false;
+    ElapsedTime = 0.f;
+}
+
 void USkillBase::Execute_Implementation(AActor* Owner)
 {
 }

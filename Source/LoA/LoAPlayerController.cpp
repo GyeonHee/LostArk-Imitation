@@ -105,6 +105,27 @@ void ALoAPlayerController::BeginPlay()
 	}
 }
 
+void ALoAPlayerController::ForceMoveTo(const FVector& Destination)
+{
+	CachedDestination = Destination;
+	bAutoMoving = true;
+	bHoldMoving = false;
+}
+
+void ALoAPlayerController::CancelAutoMove()
+{
+	bAutoMoving  = false;
+	bHoldMoving  = false;
+	if (APawn* P = GetPawn())
+	{
+		if (UCharacterMovementComponent* CMC =
+			Cast<UCharacterMovementComponent>(P->GetMovementComponent()))
+		{
+			CMC->Velocity = FVector(0.f, 0.f, CMC->Velocity.Z);
+		}
+	}
+}
+
 void ALoAPlayerController::StopMovement()
 {
 	bWasAutoMovingBeforeDash = bAutoMoving;
@@ -345,6 +366,10 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 void ALoAPlayerController::OnInputStarted()
 {
+	// 이동 시작 시 활성 캐스팅 스킬 취소
+	if (USkillManagerComponent* SM = GetSkillManager())
+		SM->CancelActiveCastSkill();
+
 	bAutoMoving = false;
 	bHoldMoving = false;
 	bDashSuppressed = false;

@@ -32,6 +32,9 @@ public:
 
     bool IsActive() const { return bIsActive; }
 
+    // SkillManagerComponent가 이동 입력 시 강제 취소할 때 호출
+    virtual void ForceCancel(AActor* Owner);
+
 protected:
 
     // 실제 스킬 효과 발동 (서브클래스에서 오버라이드)

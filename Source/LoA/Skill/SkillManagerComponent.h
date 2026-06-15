@@ -54,6 +54,9 @@ public:
     void HandleKeyHeld(int32 SlotIndex, float DeltaTime);
     void HandleKeyUp(int32 SlotIndex);
 
+    // 이동 입력 시 활성 Cast 스킬을 강제 취소하고 쿨타임 시작
+    void CancelActiveCastSkill();
+
     // UI에서 쿨타임 비율 조회용 (0.0 ~ 1.0)
     UFUNCTION(BlueprintCallable, Category="Skills")
     float GetCooldownRatio(int32 SlotIndex) const;

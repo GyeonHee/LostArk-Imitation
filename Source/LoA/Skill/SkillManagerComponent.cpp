@@ -151,12 +151,27 @@ void USkillManagerComponent::HandleKeyUp(int32 SlotIndex)
     const bool bWasActive = Skill->IsActive();
     Skill->OnKeyUp(GetOwner());
 
-    // 키를 수동으로 뗄 때 쿨타임 시작 (Charge: 차징 발동, Cast: 취소/성공 모두)
+    // Charge/Cast 모두: 키 해제 시 쿨타임 시작 (취소든 완료 후 해제든)
+    // Cast 자동 완료는 HandleKeyHeld에서도 처리하지만, 그 시점엔 bIsActive=false라 여기선 중복 호출 안 됨
     if (bWasActive &&
         (Skill->SkillData.InputType == ESkillInputType::Charge ||
          Skill->SkillData.InputType == ESkillInputType::Cast))
     {
         StartCooldown(SlotIndex);
+    }
+}
+
+void USkillManagerComponent::CancelActiveCastSkill()
+{
+    for (int32 i = 0; i < SlotInstances.Num(); i++)
+    {
+        USkillBase* Skill = SlotInstances[i];
+        if (!Skill || !Skill->IsActive()) continue;
+        if (Skill->SkillData.InputType != ESkillInputType::Cast) continue;
+
+        Skill->ForceCancel(GetOwner());
+        StartCooldown(i);
+        return;
     }
 }
 
