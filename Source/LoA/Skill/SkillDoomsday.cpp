@@ -31,7 +31,6 @@ void USkillDoomsday::OnKeyDown(AActor* Owner)
     else
     {
         bMovingToRange = true;
-        bIsActive = true;  // HandleKeyUp이 쿨타임을 시작할 수 있도록
         PC->ForceMoveTo(PendingCastTarget);
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
             TEXT("[종말의 날] 사거리 초과 — 이동 중..."));
@@ -49,9 +48,8 @@ void USkillDoomsday::OnKeyHeld(AActor* Owner, float DeltaTime)
         {
             bMovingToRange = false;
             CancelMovement(Owner);
-            Super::OnKeyDown(Owner);  // 캐스팅 시작
+            Super::OnKeyDown(Owner);  // 캐스팅 타이머 시작 (홀드 유지 필요)
         }
-        // 아직 범위 밖: PlayerController Tick이 ForceMoveTo로 계속 이동시킴
         return;
     }
 
@@ -63,13 +61,17 @@ void USkillDoomsday::OnKeyUp(AActor* Owner)
     if (bMovingToRange)
     {
         bMovingToRange = false;
-        bIsActive = false;  // HandleKeyUp 조건 충족 후 정리
         CancelMovement(Owner);
-        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, TEXT("[종말의 날] 이동 취소"));
-        return;
+        return;  // 쿨타임 없음 (bIsActive=false 이므로 HandleKeyUp도 미발동)
     }
 
     Super::OnKeyUp(Owner);  // 캐스팅 중 취소
+}
+
+void USkillDoomsday::CancelRangeMove(AActor* Owner)
+{
+    bMovingToRange = false;
+    CancelMovement(Owner);
 }
 
 void USkillDoomsday::Execute_Implementation(AActor* Owner)

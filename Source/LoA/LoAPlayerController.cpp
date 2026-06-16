@@ -366,9 +366,11 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 void ALoAPlayerController::OnInputStarted()
 {
-	// 이동 시작 시 활성 캐스팅 스킬 취소
 	if (USkillManagerComponent* SM = GetSkillManager())
+	{
 		SM->CancelActiveCastSkill();
+		SM->CancelPendingRangeMove();  // 자동이동 대기 스킬도 취소 (쿨타임 없음)
+	}
 
 	bAutoMoving = false;
 	bHoldMoving = false;

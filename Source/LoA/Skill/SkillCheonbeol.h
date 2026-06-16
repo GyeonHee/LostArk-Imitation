@@ -21,6 +21,8 @@ public:
     virtual void OnKeyHeld(AActor* Owner, float DeltaTime) override;
     virtual void OnKeyUp(AActor* Owner) override;
     virtual void ForceCancel(AActor* Owner) override;
+    virtual bool IsMovingToRange() const override { return bMovingToRange; }
+    virtual void CancelRangeMove(AActor* Owner) override;
 
     UPROPERTY(EditDefaultsOnly, Category="Cheonbeol")
     TSubclassOf<ALightningStrikeActor> LightningClass;

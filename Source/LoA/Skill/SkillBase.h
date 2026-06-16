@@ -32,6 +32,12 @@ public:
 
     bool IsActive() const { return bIsActive; }
 
+    // 사거리 자동이동 중인지 (SkillManagerComponent 틱에서 사용)
+    virtual bool IsMovingToRange() const { return false; }
+
+    // 사거리 이동 취소 (쿨타임 없음 — 플레이어가 직접 이동 시 호출)
+    virtual void CancelRangeMove(AActor* Owner) {}
+
     // SkillManagerComponent가 이동 입력 시 강제 취소할 때 호출
     virtual void ForceCancel(AActor* Owner);
 

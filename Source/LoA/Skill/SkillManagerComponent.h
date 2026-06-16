@@ -21,8 +21,8 @@ public:
 	USkillManagerComponent();
 
 protected:
-	// Called when the game starts
 	virtual void BeginPlay() override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 public:
     // 슬롯 인덱스 상수 (0~17 = 스킬 18개, 18 = 대시)
@@ -56,6 +56,9 @@ public:
 
     // 이동 입력 시 활성 Cast 스킬을 강제 취소하고 쿨타임 시작
     void CancelActiveCastSkill();
+
+    // 사거리 자동이동 대기 중인 스킬을 취소 (쿨타임 없음 — 플레이어가 직접 이동할 때)
+    void CancelPendingRangeMove();
 
     // UI에서 쿨타임 비율 조회용 (0.0 ~ 1.0)
     UFUNCTION(BlueprintCallable, Category="Skills")
@@ -129,6 +132,9 @@ private:
     // 쿨타임 종료 시각 (WorldTime 기준)
     TArray<float> CooldownEndTimes;
     TArray<float> CooldownDurations;
+
+    // 사거리 자동이동 대기 중인 슬롯 인덱스 (-1 = 없음)
+    int32 PendingRangeMoveSlot = -1;
 
     // 콤보 상태
     int32 ComboSlotIndex = -1;

@@ -9,9 +9,8 @@
 // Sets default values for this component's properties
 USkillManagerComponent::USkillManagerComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bCanEverTick = true;
 	SlotClasses.SetNum(8);
-
 }
 
 
@@ -90,10 +89,34 @@ void USkillManagerComponent::BeginPlay()
     }
 }
 
+void USkillManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (PendingRangeMoveSlot == -1) return;
+    if (!IsValidSlot(PendingRangeMoveSlot)) { PendingRangeMoveSlot = -1; return; }
+
+    USkillBase* Skill = SlotInstances[PendingRangeMoveSlot];
+    if (!Skill->IsMovingToRange()) { PendingRangeMoveSlot = -1; return; }
+
+    Skill->OnKeyHeld(GetOwner(), DeltaTime);
+
+    // 이번 틱에 사거리 진입하여 스킬 발동됐으면 쿨타임 시작
+    if (!Skill->IsMovingToRange())
+    {
+        StartCooldown(PendingRangeMoveSlot);
+        PendingRangeMoveSlot = -1;
+    }
+}
+
 void USkillManagerComponent::HandleKeyDown(int32 SlotIndex)
 {
     if (!IsValidSlot(SlotIndex)) return;
     if (IsOnCooldown(SlotIndex)) return;
+
+    // 다른 슬롯이 자동이동 대기 중이면 취소하고 새 스킬 시작
+    if (PendingRangeMoveSlot != -1 && PendingRangeMoveSlot != SlotIndex)
+        CancelPendingRangeMove();
 
     USkillBase* Skill = SlotInstances[SlotIndex];
 
@@ -115,6 +138,18 @@ void USkillManagerComponent::HandleKeyDown(int32 SlotIndex)
     }
 
     Skill->OnKeyDown(GetOwner());
+
+    // 사거리 자동이동 상태:
+    // - Cast/Charge: HandleKeyHeld가 처리 (홀드 중에만 이동 + 캐스팅)
+    // - Instant 등: 틱에 위임 (원프레스 자동이동)
+    if (Skill->IsMovingToRange())
+    {
+        const bool bIsCastCharge = Skill->SkillData.InputType == ESkillInputType::Cast
+                                || Skill->SkillData.InputType == ESkillInputType::Charge;
+        if (!bIsCastCharge)
+            PendingRangeMoveSlot = SlotIndex;
+        return;
+    }
 
     // Charge, Cast는 완료/취소 시점에 쿨타임 시작
     const bool bDeferCooldown = Skill->SkillData.InputType == ESkillInputType::Charge
@@ -161,17 +196,38 @@ void USkillManagerComponent::HandleKeyUp(int32 SlotIndex)
     }
 }
 
+void USkillManagerComponent::CancelPendingRangeMove()
+{
+    if (PendingRangeMoveSlot == -1) return;
+    if (IsValidSlot(PendingRangeMoveSlot))
+        SlotInstances[PendingRangeMoveSlot]->CancelRangeMove(GetOwner());
+    PendingRangeMoveSlot = -1;
+    // 쿨타임 시작하지 않음
+}
+
 void USkillManagerComponent::CancelActiveCastSkill()
 {
     for (int32 i = 0; i < SlotInstances.Num(); i++)
     {
         USkillBase* Skill = SlotInstances[i];
-        if (!Skill || !Skill->IsActive()) continue;
-        if (Skill->SkillData.InputType != ESkillInputType::Cast) continue;
+        if (!Skill) continue;
 
-        Skill->ForceCancel(GetOwner());
-        StartCooldown(i);
-        return;
+        const bool bIsCastCharge = Skill->SkillData.InputType == ESkillInputType::Cast
+                                || Skill->SkillData.InputType == ESkillInputType::Charge;
+        if (!bIsCastCharge) continue;
+
+        if (Skill->IsActive())
+        {
+            Skill->ForceCancel(GetOwner());
+            StartCooldown(i);
+            return;
+        }
+        // 사거리 이동 중 마우스 클릭: 취소만 하고 쿨타임 없음
+        if (Skill->IsMovingToRange())
+        {
+            Skill->CancelRangeMove(GetOwner());
+            return;
+        }
     }
 }
 

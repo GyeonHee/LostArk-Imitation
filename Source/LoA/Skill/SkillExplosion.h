@@ -2,17 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Skill/SkillCast.h"
-#include "SkillDoomsday.generated.h"
+#include "SkillExplosion.generated.h"
 
-class ADoomsdayMeteor;
+class AExplosionMeteorActor;
 
 /**
- * 종말의 날 — 마우스 커서 위치에 거대 메테오가 낙하하는 캐스팅 스킬
+ * 익스플로전 — 캐릭터 방향에서 45도 각도로 날아오는 메테오 캐스팅 스킬
  * 사거리 밖: 캐릭터 이동 → 사거리 진입 시 캐스팅 시작 → 완료 시 발동
- * 이동/캐스팅 중 키 해제 → 취소 + 쿨타임 없음
  */
 UCLASS(Blueprintable)
-class LOA_API USkillDoomsday : public USkillCast
+class LOA_API USkillExplosion : public USkillCast
 {
     GENERATED_BODY()
 
@@ -24,14 +23,14 @@ public:
     virtual bool IsMovingToRange() const override { return bMovingToRange; }
     virtual void CancelRangeMove(AActor* Owner) override;
 
-    UPROPERTY(EditDefaultsOnly, Category="Doomsday")
-    TSubclassOf<ADoomsdayMeteor> MeteorClass;
+    UPROPERTY(EditDefaultsOnly, Category="Explosion")
+    TSubclassOf<AExplosionMeteorActor> MeteorClass;
 
-    UPROPERTY(EditDefaultsOnly, Category="Doomsday")
-    float MaxCastRange = 800.f;
+    UPROPERTY(EditDefaultsOnly, Category="Explosion")
+    float MaxCastRange = 1000.f;
 
-    UPROPERTY(EditDefaultsOnly, Category="Doomsday")
-    float ExplosionRadius = 350.f;
+    UPROPERTY(EditDefaultsOnly, Category="Explosion")
+    float ExplosionRadius = 300.f;
 
 protected:
     virtual void Execute_Implementation(AActor* Owner) override;
