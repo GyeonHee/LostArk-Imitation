@@ -18,7 +18,7 @@
 |---|---|
 | `LoAPlayerController` | 이동, 대시억제, 스킬입력, UI토글 |
 | `LoACharacter` | HP/MP스탯, SkillManager 보유 |
-| `SkillManagerComponent` | 스킬슬롯 관리, 쿨타임, 스킬트리 레벨 |
+| `SkillManagerComponent` | 스킬슬롯 관리, 쿨타임, 스킬트리 레벨, 자동이동 틱 |
 | `HUD_ViewModel` | MVVM — HP/MP 바 |
 | `SkillTree_ViewModel` | MVVM — 스킬트리 창 전체 |
 | `SkillTreeEntry_ViewModel` | MVVM — 스킬트리 행(Row) 단위 |
@@ -34,23 +34,57 @@
 | `SkillDoomsday` | SkillCast | `ADoomsdayMeteor` (`BP_SkillMeteor`) | 종말의 날 — 메테오 낙하 |
 | `SkillCheonbeol` | SkillCast | `ALightningStrikeActor` (`BP_LightningStrike`) | 천벌 — 번개 낙하 |
 | `SkillBlaze` | SkillInstant | `ABlazeProjectile` (`BP_SkillBlaze`) | 블레이즈 — 발사체 화염 |
+| `SkillExplosion` | SkillCast | `AExplosionMeteorActor` (`BP_Explosion`) | 익스플로전 — 캐릭터 앞에서 커서 방향 직선 메테오 |
+| `SkillInferno` | SkillInstant | `AInfernoZoneActor` (`BP_SkillInferno`) | 인페르노 — 커서 위치 장판 + 위로 솟구치는 폭발 |
 
-#### SkillCast 공통 동작 패턴 (종말의 날·천벌)
-- **사거리 초과 시**: `bMovingToRange=true`, `bIsActive=true` 설정 → `ForceMoveTo(PendingCastTarget)`
-- **OnKeyHeld에서 거리 체크**: 사거리 진입 시 `bMovingToRange=false`, `CancelMovement()`, `Super::OnKeyDown()` 호출
-- **OnKeyUp 이동 중 취소**: `bMovingToRange=false`, `bIsActive=false`, `CancelMovement()` → 쿨타임 발동
-- **캐스팅 중 이동 입력**: `LoAPlayerController::OnInputStarted()` → `SkillManagerComponent::CancelActiveCastSkill()` → `ForceCancel()` + `StartCooldown()`
-- **취소/완료 모두 설정된 쿨타임 적용** (bIsActive=true 상태에서 HandleKeyUp → Cast/Charge 타입이면 StartCooldown)
+#### SkillCast 공통 동작 패턴 (2026-06-16 기준)
+- **사거리 초과 시**: `bMovingToRange=true` (bIsActive는 건드리지 않음) → `ForceMoveTo(PendingCastTarget)`
+- **OnKeyHeld에서 거리 체크**: 사거리 진입 시 `bMovingToRange=false`, `CancelMovement()`, `Super::OnKeyDown()` 호출 (캐스팅 타이머 시작)
+- **OnKeyUp 이동 중 취소**: `bMovingToRange=false`, `CancelMovement()`, return — `bIsActive=false`이므로 HandleKeyUp도 쿨타임 미발동
+- **캐스팅 완료/취소 쿨타임**: `bIsActive=true` 상태에서 HandleKeyUp → Cast 타입이면 StartCooldown
+- **캐스팅 중 이동 입력**: `OnInputStarted()` → `CancelActiveCastSkill()` → `ForceCancel()` + `StartCooldown()`
+- **이동 중 마우스 클릭**: `OnInputStarted()` → `CancelActiveCastSkill()` 에서 `IsMovingToRange()`도 체크하여 `CancelRangeMove()` 호출 (쿨타임 없음)
 - `ForceCancel()`: `SkillBase`에 virtual 선언, bIsActive=false + ElapsedTime=0 리셋
-- `CancelActiveCastSkill()`: `SkillManagerComponent`에서 활성 Cast 스킬 찾아 ForceCancel + StartCooldown
+- `CancelActiveCastSkill()`: 활성 Cast → ForceCancel+StartCooldown / 범위이동 중 Cast → CancelRangeMove(쿨타임 없음)
 
-#### 범위 VFX 자동 스케일 (DoomsdayMeteor · LightningStrikeActor)
-- **패턴**: 캐스팅 완료 → `CircleShowTime`초 동안 발판 원 VFX → 메테오/번개 낙하
+#### SkillInstant 사거리 자동이동 패턴 (2026-06-16 기준)
+- **사거리 초과 시**: `bMovingToRange=true` → `ForceMoveTo(PendingTarget)` → `SkillManagerComponent::PendingRangeMoveSlot` 등록
+- **SkillManagerComponent 틱**: `PendingRangeMoveSlot` 슬롯의 `OnKeyHeld` 호출 → 사거리 진입 감지 → `Execute()` 직접 호출 → `StartCooldown()`
+- **원프레스**: 키를 뗀 뒤에도 틱이 계속 처리하므로 한 번만 눌러도 자동이동 후 발동
+- **이동 중 마우스 클릭**: `OnInputStarted()` → `CancelPendingRangeMove()` → `CancelRangeMove()` 호출, 슬롯 클리어 (쿨타임 없음)
+- **OnKeyUp 처리**: `bMovingToRange=true`면 그냥 return (취소 안 함 — 틱이 처리)
+
+#### SkillBase 가상 함수 (사거리 자동이동 관련)
+- `virtual bool IsMovingToRange() const` — 자동이동 중 여부, 각 스킬에서 `return bMovingToRange` 오버라이드
+- `virtual void CancelRangeMove(AActor* Owner)` — 이동 취소 (bMovingToRange=false + CancelMovement), 쿨타임 없음
+
+#### SkillManagerComponent 자동이동 필드
+- `int32 PendingRangeMoveSlot = -1` — 원프레스 대기 중인 Instant 슬롯 (-1=없음)
+- `TickComponent` — PendingRangeMoveSlot 있으면 OnKeyHeld 호출, 도달 시 StartCooldown + 슬롯 클리어
+- `CancelPendingRangeMove()` — 슬롯 취소 (쿨타임 없음), OnInputStarted에서 호출
+- Cast/Charge 타입은 PendingRangeMoveSlot 미등록 (HandleKeyHeld 경로로만 처리)
+
+#### 범위 VFX 자동 스케일 (DoomsdayMeteor · LightningStrikeActor · InfernoZoneActor)
+- **패턴**: 캐스팅 완료 → `CircleShowTime`초 동안 발판 원 VFX → 효과 발동
 - **스케일 공식**: `AutoScale = ExplosionRadius / CircleBaseRadius`
 - `CircleBaseRadius`: 에디터에서 Scale=1.0으로 재생해 실측 후 BP에서 설정
 - Niagara 파라미터는 **개별 이미터 파라미터만** 설정 (Scale_All과 동시 설정 시 제곱되어 너무 커짐)
 - 메테오 원 (`NS_MeteorCircle`) 파라미터: `User.Scale_Circle`, `User.Scale_Mesh1`, `User.Scale_Ray`, `User.Scale_Sparks1`, `User.Scale_Sparks2`
 - 천벌 원 (`NS_LightningCircle`) 파라미터: `User.Scale_Circle`, `User.Scale_Smoke`, `User.Scale_Sparks1`, `User.Scale_Spiral1`
+- 인페르노 원 (`NS_InfernoCircle`) 파라미터: 동일 패턴, CircleBaseRadius BP에서 별도 측정 필요
+
+#### AExplosionMeteorActor (익스플로전)
+- 캐릭터 허리 위치(`CharWaistLoc`)에서 커서 방향으로 `SpawnForwardOffset`만큼 앞에 스폰
+- `SetActorRotation((Target-Spawn).GetSafeNormal().Rotation())` — VFX 방향 정렬
+- 발판 원 VFX → `CircleShowTime` 후 `StartFlying()`: `MeteorVFXComponent` 활성화 + Tick 시작
+- `Tick`: 직선이동, `ArrivalThreshold` 이내 도달 시 `Land()` 호출
+- `Land()`: 비행 VFX 종료 → `ExplosionVFXSystem` 착탄 위치에 별도 스폰 → `ApplyRadialDamage`
+- VFX 구성: `NS_Explosion_Projectile`(비행) + `NS_Explosion_Impact`(폭발) — Mixed_Magic_VFX_Pack/Sperate_VFX
+
+#### AInfernoZoneActor (인페르노)
+- 스폰 즉시 `Activate()`: 원 VFX 표시 + `CircleShowTime` 타이머 → `Explode()` 1회 호출
+- `Explode()`: `ExplosionVFXSystem`(`NS_Inferno_Impact`) 스폰 + `ApplyRadialDamage`
+- `NS_Inferno_Impact`: `NS_Magma_Shot_Impact` 복제 후 AddVelocity Z값을 양수로 수정하여 위로 솟구치게 변경 (Niagara 에디터 작업)
 
 ### UI 시스템 (MVVM)
 - `WBP_HUD` — HP/MP 바, HUD_ViewModel 바인딩
@@ -74,7 +108,18 @@
   - Cast to SkillDragDropOperation → SkillRowName 직접 참조 (EntryViewModel 경유 시 null)
   - SkillSlotBorders 배열 순회 → AbsoluteToLocal+GetLocalSize로 히트 판정 → AssignSkillToSlot
 
-## 구현된 기능 (2026-06-15 기준)
+## 스킬 타입별 사거리 동작 (2026-06-16 기준)
+| 상황 | Cast 스킬 (종말·천벌·익스플로전) | Instant 스킬 (인페르노) |
+|---|---|---|
+| 사거리 안, 키 누름 | 캐스팅 타이머 시작 | 즉시 발동 |
+| 사거리 안, 키 홀드 | 타이머 채우는 중 | — |
+| 사거리 안, 키 해제 | 취소 (설정 쿨타임) | — |
+| 사거리 밖, 키 누름+홀드 | 홀드 중에만 사거리 방향 이동 | 한 번만 눌러도 자동이동 |
+| 사거리 밖, 사거리 진입 | 이동 멈추고 캐스팅 시작 | 즉시 발동 |
+| 사거리 밖, 키 해제 | 이동 취소, 쿨타임 없음 | 이동 취소, 쿨타임 없음 |
+| 이동 중 마우스 클릭 | 취소, 쿨타임 없음 | 취소, 쿨타임 없음 |
+
+## 구현된 기능 (2026-06-16 기준)
 - [x] 마우스 클릭 이동
 - [x] 대시 (스페이스바)
 - [x] 스킬 시스템 (즉발/캐스팅/차지/콤보)
@@ -86,14 +131,19 @@
 - [x] 종말의 날 (SkillDoomsday) — 캐스팅 스킬, 사거리 자동이동 후 메테오 낙하
 - [x] 천벌 (SkillCheonbeol) — 캐스팅 스킬, 사거리 자동이동 후 번개 낙하
 - [x] 블레이즈 (SkillBlaze) — 즉발 발사체 스킬
+- [x] 익스플로전 (SkillExplosion) — 캐스팅 스킬, 캐릭터 앞 직선 메테오 발사 + 범위 폭발
+- [x] 인페르노 (SkillInferno) — 즉발 스킬, 커서 위치 장판 + 위로 솟구치는 폭발
 - [x] 캐스팅 스킬 취소 시 설정 쿨타임 적용
 - [x] 캐스팅 중 이동 입력 시 캐스팅 취소 + 쿨타임
-- [x] 범위 발판 VFX (CircleShowTime — 원 표시 후 낙하)
+- [x] 범위 발판 VFX (CircleShowTime — 원 표시 후 효과)
 - [x] VFX 스케일 ExplosionRadius 기반 자동 비례 계산
-- [ ] DT_Skills SkillName/Icon/SkillTypeLabel 데이터 입력 필요 (종말의 날·천벌 포함)
+- [x] 사거리 자동이동 시스템 (Cast: 홀드 필요 / Instant: 원프레스)
+- [x] 이동 중 마우스 클릭 시 대기 스킬 취소 (쿨타임 없음)
+- [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (익스플로전·인페르노 포함)
 - [ ] 스킬 레벨에 따른 데미지 계수 연동
 - [ ] AvailableSkillPoints UI 표시 연동
-- [ ] NS_Magma_Shot World Space VFX 스케일 문제 미해결
+- [ ] NS_Inferno_Impact AddVelocity Z값 Niagara 에디터에서 조정 필요
+- [ ] PER_Lava_Brutal 이미터 스케일 조정 (NS_Explosion_Impact 잔상 크기)
 
 ## 자주 쓰는 빌드 명령
 ```
