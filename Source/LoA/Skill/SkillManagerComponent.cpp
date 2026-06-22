@@ -140,20 +140,22 @@ void USkillManagerComponent::HandleKeyDown(int32 SlotIndex)
     Skill->OnKeyDown(GetOwner());
 
     // 사거리 자동이동 상태:
-    // - Cast/Charge: HandleKeyHeld가 처리 (홀드 중에만 이동 + 캐스팅)
+    // - Cast/Charge/Hold: HandleKeyHeld가 처리
     // - Instant 등: 틱에 위임 (원프레스 자동이동)
     if (Skill->IsMovingToRange())
     {
         const bool bIsCastCharge = Skill->SkillData.InputType == ESkillInputType::Cast
-                                || Skill->SkillData.InputType == ESkillInputType::Charge;
+                                || Skill->SkillData.InputType == ESkillInputType::Charge
+                                || Skill->SkillData.InputType == ESkillInputType::Hold;
         if (!bIsCastCharge)
             PendingRangeMoveSlot = SlotIndex;
         return;
     }
 
-    // Charge, Cast는 완료/취소 시점에 쿨타임 시작
+    // Charge, Cast, Hold는 완료/취소 시점에 쿨타임 시작
     const bool bDeferCooldown = Skill->SkillData.InputType == ESkillInputType::Charge
-                             || Skill->SkillData.InputType == ESkillInputType::Cast;
+                             || Skill->SkillData.InputType == ESkillInputType::Cast
+                             || Skill->SkillData.InputType == ESkillInputType::Hold;
     if (!bDeferCooldown)
     {
         StartCooldown(SlotIndex);
@@ -168,11 +170,12 @@ void USkillManagerComponent::HandleKeyHeld(int32 SlotIndex, float DeltaTime)
     const bool bWasActive = Skill->IsActive();
     Skill->OnKeyHeld(GetOwner(), DeltaTime);
 
-    // Charge/Cast가 자동 완료된 경우 즉시 쿨타임 시작
+    // Charge/Cast/Hold가 자동 완료된 경우 즉시 쿨타임 시작
     const bool bAutoCompleted = bWasActive && !Skill->IsActive();
     if (bAutoCompleted &&
         (Skill->SkillData.InputType == ESkillInputType::Charge ||
-         Skill->SkillData.InputType == ESkillInputType::Cast))
+         Skill->SkillData.InputType == ESkillInputType::Cast    ||
+         Skill->SkillData.InputType == ESkillInputType::Hold))
     {
         StartCooldown(SlotIndex);
     }
@@ -186,11 +189,12 @@ void USkillManagerComponent::HandleKeyUp(int32 SlotIndex)
     const bool bWasActive = Skill->IsActive();
     Skill->OnKeyUp(GetOwner());
 
-    // Charge/Cast 모두: 키 해제 시 쿨타임 시작 (취소든 완료 후 해제든)
-    // Cast 자동 완료는 HandleKeyHeld에서도 처리하지만, 그 시점엔 bIsActive=false라 여기선 중복 호출 안 됨
+    // Charge/Cast/Hold 모두: 키 해제 시 쿨타임 시작 (취소든 완료 후 해제든)
+    // Cast/Hold 자동 완료는 HandleKeyHeld에서도 처리하지만, 그 시점엔 bIsActive=false라 여기선 중복 호출 안 됨
     if (bWasActive &&
         (Skill->SkillData.InputType == ESkillInputType::Charge ||
-         Skill->SkillData.InputType == ESkillInputType::Cast))
+         Skill->SkillData.InputType == ESkillInputType::Cast    ||
+         Skill->SkillData.InputType == ESkillInputType::Hold))
     {
         StartCooldown(SlotIndex);
     }
@@ -213,7 +217,8 @@ void USkillManagerComponent::CancelActiveCastSkill()
         if (!Skill) continue;
 
         const bool bIsCastCharge = Skill->SkillData.InputType == ESkillInputType::Cast
-                                || Skill->SkillData.InputType == ESkillInputType::Charge;
+                                || Skill->SkillData.InputType == ESkillInputType::Charge
+                                || Skill->SkillData.InputType == ESkillInputType::Hold;
         if (!bIsCastCharge) continue;
 
         if (Skill->IsActive())

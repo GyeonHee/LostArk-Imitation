@@ -18,7 +18,8 @@ enum class ESkillInputType : uint8
     Instant   UMETA(DisplayName = "즉발"),
     Cast      UMETA(DisplayName = "캐스팅"),
     Charge    UMETA(DisplayName = "차지"),
-    Combo     UMETA(DisplayName = "콤보")
+    Combo     UMETA(DisplayName = "콤보"),
+    Hold      UMETA(DisplayName = "홀딩")
 };
 
 USTRUCT(BlueprintType)
@@ -43,6 +44,9 @@ struct FSkillData : public FTableRowBase
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly)
     float ChargeMaxTime = 2.0f;     // Charge 전용
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    float HoldMaxTime = 4.0f;       // Hold 전용 — 최대 홀딩 시간
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly)
     int32 ComboMaxStep = 3;         // Combo 전용
