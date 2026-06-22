@@ -80,6 +80,10 @@ public:
     UFUNCTION(BlueprintCallable, Category="Skills")
     void TriggerCooldown(int32 SlotIndex) { StartCooldown(SlotIndex); }
 
+    // 스킬 후딜레이 — Instant/Cast/Charge 완료 후 다음 스킬 입력을 받는 창 (초)
+    UPROPERTY(EditAnywhere, Category="Skills")
+    float SkillPostDelay = 0.3f;
+
     // 슬롯 아이콘 텍스처 반환 (없으면 nullptr)
     UFUNCTION(BlueprintCallable, Category="Skills")
     UTexture2D* GetSlotIcon(int32 SlotIndex) const;
@@ -136,6 +140,13 @@ private:
     // 사거리 자동이동 대기 중인 슬롯 인덱스 (-1 = 없음)
     int32 PendingRangeMoveSlot = -1;
 
+    // 다음 스킬 큐 슬롯 (-1 = 없음) — 잠금 중 입력된 스킬 1개 저장
+    int32 QueuedSkillSlot = -1;
+
+    // 스킬 완료 후딜레이 중 여부
+    bool bPostDelaying = false;
+    FTimerHandle PostDelayTimer;
+
     // 콤보 상태
     int32 ComboSlotIndex = -1;
     int32 ComboStep = 0;
@@ -146,4 +157,10 @@ private:
     void StartCooldown(int32 SlotIndex);
     void HandleComboInput(int32 SlotIndex);
     void ResetCombo();
+
+    // 잠금 시스템
+    bool IsSkillLocked() const;
+    void TryActivateSkill(int32 SlotIndex);
+    void ReleaseSkillLock(bool bWithPostDelay);
+    void OnSkillLockReleased();
 };

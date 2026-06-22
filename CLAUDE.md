@@ -38,6 +38,7 @@
 | `SkillInferno` | SkillInstant | `AInfernoZoneActor` (`BP_SkillInferno`) | 인페르노 — 커서 위치 장판 + 위로 솟구치는 폭발 |
 | `SkillFrostCall` | SkillBase (Hold) | `AFrostCallZoneActor` (`BP_FrostCall`) | 혹한의 부름 — 커서 위치 장판 홀딩, 틱 데미지 + 고드름 낙하 |
 | `SkillIceArrow` | SkillInstant | `AIceArrowZoneActor` (`BP_IceArrow`) | 아이스 에로우 — 커서 위치 원형 범위, 45도 고드름 낙하 4틱 |
+| `SkillGust` | SkillInstant | `AGustTornadoActor` (`BP_Gust`) | 돌풍 — 커서 방향 회전 후 캐릭터 앞 토네이도 존, 틱 데미지 |
 
 #### SkillCast 공통 동작 패턴 (2026-06-16 기준)
 - **사거리 초과 시**: `bMovingToRange=true` (bIsActive는 건드리지 않음) → `ForceMoveTo(PendingCastTarget)`
@@ -144,7 +145,18 @@
 | 사거리 밖, 키 해제 | 이동 취소, 쿨타임 없음 | 이동 취소, 쿨타임 없음 | — |
 | 이동 중 마우스 클릭 | 취소, 쿨타임 없음 | 취소, 쿨타임 없음 | — |
 
-## 구현된 기능 (2026-06-22 기준)
+## 스킬 잠금 시스템 (2026-06-23 기준)
+- `IsSkillLocked()` — 어느 슬롯이든 IsActive/IsMovingToRange이거나 PostDelay 중이면 잠금
+- `QueuedSkillSlot` — 잠금 중 입력된 다음 스킬 슬롯 1개 저장 (덮어쓰기)
+- `ReleaseSkillLock(bWithPostDelay)` — 잠금 해제 + PostDelay 타이머 예약
+- `OnSkillLockReleased()` — PostDelay 완료 후 큐된 슬롯 자동 발동
+- **Instant 완료** → `SkillPostDelay`(기본 0.3s) 후 잠금 해제 → 큐 발동
+- **Cast/Charge 완료·취소** → PostDelay 후 잠금 해제 → 큐 발동
+- **Hold 완료·취소** → 즉시 잠금 해제 (PostDelay 없음)
+- **Hold 활성 중** → 다른 스킬 키 완전 씹힘 (큐 등록조차 안 됨)
+- **사거리 이동 취소** → 즉시 잠금 해제 + 쿨타임 없음
+
+## 구현된 기능 (2026-06-23 기준)
 - [x] 마우스 클릭 이동
 - [x] 대시 (스페이스바)
 - [x] 스킬 시스템 (즉발/캐스팅/차지/콤보/홀딩)
@@ -160,6 +172,8 @@
 - [x] 인페르노 (SkillInferno) — 즉발 스킬, 커서 위치 장판 + 위로 솟구치는 폭발
 - [x] 혹한의 부름 (SkillFrostCall) — 홀딩 스킬, 커서 위치 장판 유지 + 틱 데미지 + 고드름 낙하 VFX
 - [x] 아이스 에로우 (SkillIceArrow) — 즉발 스킬, 원프레스 자동이동, 45도 고드름 4틱 낙하
+- [x] 돌풍 (SkillGust) — 즉발 스킬, 커서 방향 회전 + 이동 정지, 캐릭터 앞 전방 박스 콜리전 토네이도 존 1회 데미지
+- [x] 스킬 잠금 시스템 — 시전 중 다른 스킬 입력 차단 + 큐 등록, Hold 활성 중 완전 씹힘, PostDelay 후 자동 발동
 - [x] 캐스팅 스킬 취소 시 설정 쿨타임 적용
 - [x] 캐스팅 중 이동 입력 시 캐스팅 취소 + 쿨타임
 - [x] 범위 발판 VFX (CircleShowTime — 원 표시 후 효과)
@@ -167,8 +181,8 @@
 - [x] 사거리 자동이동 시스템 (Cast: 홀드 필요 / Instant: 원프레스)
 - [x] 이동 중 마우스 클릭 시 대기 스킬 취소 (쿨타임 없음)
 - [x] ESkillInputType::Hold 추가, FSkillData::HoldMaxTime 필드 추가
-- [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (혹한의 부름·아이스 에로우 포함)
-- [ ] BP_FrostCall / BP_IceArrow ZoneClass·VFX 에셋 할당 + CircleBaseRadius 실측
+- [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (혹한의 부름·아이스 에로우·돌풍 포함)
+- [ ] BP_FrostCall / BP_IceArrow / BP_Gust ZoneClass·VFX 에셋 할당
 - [ ] 스킬 레벨에 따른 데미지 계수 연동
 - [ ] AvailableSkillPoints UI 표시 연동
 - [ ] NS_Inferno_Impact AddVelocity Z값 Niagara 에디터에서 조정 필요

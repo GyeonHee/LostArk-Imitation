@@ -20,7 +20,7 @@ void USkillManagerComponent::BeginPlay()
 	Super::BeginPlay();
 
 	// ...
-	
+
     SlotInstances.SetNum(19);
     CooldownEndTimes.Init(0.0f, 19);
     CooldownDurations.Init(1.0f, 19);
@@ -101,15 +101,80 @@ void USkillManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
     Skill->OnKeyHeld(GetOwner(), DeltaTime);
 
-    // 이번 틱에 사거리 진입하여 스킬 발동됐으면 쿨타임 시작
+    // 이번 틱에 사거리 진입하여 스킬 발동됐으면 쿨타임 + 잠금 해제
     if (!Skill->IsMovingToRange())
     {
-        StartCooldown(PendingRangeMoveSlot);
+        const int32 CompletedSlot = PendingRangeMoveSlot;
         PendingRangeMoveSlot = -1;
+        StartCooldown(CompletedSlot);
+        ReleaseSkillLock(true);
     }
 }
 
+// ─── 잠금 시스템 ─────────────────────────────────────────────────────────────
+
+bool USkillManagerComponent::IsSkillLocked() const
+{
+    if (bPostDelaying) return true;
+    if (PendingRangeMoveSlot != -1) return true;
+    for (const TObjectPtr<USkillBase>& Skill : SlotInstances)
+        if (Skill && (Skill->IsActive() || Skill->IsMovingToRange())) return true;
+    return false;
+}
+
+void USkillManagerComponent::ReleaseSkillLock(bool bWithPostDelay)
+{
+    GetWorld()->GetTimerManager().ClearTimer(PostDelayTimer);
+
+    if (bWithPostDelay && SkillPostDelay > 0.f)
+    {
+        bPostDelaying = true;
+        GetWorld()->GetTimerManager().SetTimer(
+            PostDelayTimer, this, &USkillManagerComponent::OnSkillLockReleased,
+            SkillPostDelay, false);
+    }
+    else
+    {
+        OnSkillLockReleased();
+    }
+}
+
+void USkillManagerComponent::OnSkillLockReleased()
+{
+    bPostDelaying = false;
+
+    if (QueuedSkillSlot != -1)
+    {
+        const int32 Queued = QueuedSkillSlot;
+        QueuedSkillSlot = -1;
+        TryActivateSkill(Queued);
+    }
+}
+
+// ─── 스킬 발동 ───────────────────────────────────────────────────────────────
+
 void USkillManagerComponent::HandleKeyDown(int32 SlotIndex)
+{
+    if (!IsValidSlot(SlotIndex)) return;
+    if (IsOnCooldown(SlotIndex)) return;
+
+    if (IsSkillLocked())
+    {
+        // Hold 활성 중이면 완전 씹힘 (큐 등록 안 함)
+        for (const TObjectPtr<USkillBase>& S : SlotInstances)
+        {
+            if (S && S->IsActive() && S->SkillData.InputType == ESkillInputType::Hold)
+                return;
+        }
+        // 그 외 잠금 중엔 큐에 등록 (마지막 입력이 우선 — 덮어쓰기)
+        QueuedSkillSlot = SlotIndex;
+        return;
+    }
+
+    TryActivateSkill(SlotIndex);
+}
+
+void USkillManagerComponent::TryActivateSkill(int32 SlotIndex)
 {
     if (!IsValidSlot(SlotIndex)) return;
     if (IsOnCooldown(SlotIndex)) return;
@@ -139,9 +204,7 @@ void USkillManagerComponent::HandleKeyDown(int32 SlotIndex)
 
     Skill->OnKeyDown(GetOwner());
 
-    // 사거리 자동이동 상태:
-    // - Cast/Charge/Hold: HandleKeyHeld가 처리
-    // - Instant 등: 틱에 위임 (원프레스 자동이동)
+    // 사거리 자동이동 중 — Cast/Charge/Hold는 HandleKeyHeld가 처리, Instant는 틱에 위임
     if (Skill->IsMovingToRange())
     {
         const bool bIsCastCharge = Skill->SkillData.InputType == ESkillInputType::Cast
@@ -149,17 +212,19 @@ void USkillManagerComponent::HandleKeyDown(int32 SlotIndex)
                                 || Skill->SkillData.InputType == ESkillInputType::Hold;
         if (!bIsCastCharge)
             PendingRangeMoveSlot = SlotIndex;
+        // 이동 중에는 IsSkillLocked()가 IsMovingToRange()를 감지하여 잠금 유지
         return;
     }
 
-    // Charge, Cast, Hold는 완료/취소 시점에 쿨타임 시작
-    const bool bDeferCooldown = Skill->SkillData.InputType == ESkillInputType::Charge
-                             || Skill->SkillData.InputType == ESkillInputType::Cast
-                             || Skill->SkillData.InputType == ESkillInputType::Hold;
-    if (!bDeferCooldown)
+    // Instant: 즉시 쿨타임 + PostDelay 잠금
+    if (Skill->SkillData.InputType == ESkillInputType::Instant)
     {
         StartCooldown(SlotIndex);
+        ReleaseSkillLock(true);
+        return;
     }
+
+    // Cast/Charge/Hold: 완료/취소 시 HandleKeyUp 또는 HandleKeyHeld에서 잠금 해제
 }
 
 void USkillManagerComponent::HandleKeyHeld(int32 SlotIndex, float DeltaTime)
@@ -170,7 +235,7 @@ void USkillManagerComponent::HandleKeyHeld(int32 SlotIndex, float DeltaTime)
     const bool bWasActive = Skill->IsActive();
     Skill->OnKeyHeld(GetOwner(), DeltaTime);
 
-    // Charge/Cast/Hold가 자동 완료된 경우 즉시 쿨타임 시작
+    // Charge/Cast/Hold가 자동 완료된 경우 쿨타임 + 잠금 해제
     const bool bAutoCompleted = bWasActive && !Skill->IsActive();
     if (bAutoCompleted &&
         (Skill->SkillData.InputType == ESkillInputType::Charge ||
@@ -178,6 +243,8 @@ void USkillManagerComponent::HandleKeyHeld(int32 SlotIndex, float DeltaTime)
          Skill->SkillData.InputType == ESkillInputType::Hold))
     {
         StartCooldown(SlotIndex);
+        // Hold 자동 완료는 PostDelay 없이 즉시 해제
+        ReleaseSkillLock(Skill->SkillData.InputType != ESkillInputType::Hold);
     }
 }
 
@@ -189,14 +256,14 @@ void USkillManagerComponent::HandleKeyUp(int32 SlotIndex)
     const bool bWasActive = Skill->IsActive();
     Skill->OnKeyUp(GetOwner());
 
-    // Charge/Cast/Hold 모두: 키 해제 시 쿨타임 시작 (취소든 완료 후 해제든)
-    // Cast/Hold 자동 완료는 HandleKeyHeld에서도 처리하지만, 그 시점엔 bIsActive=false라 여기선 중복 호출 안 됨
+    // Charge/Cast/Hold 키 해제 시 쿨타임 + 잠금 해제
     if (bWasActive &&
         (Skill->SkillData.InputType == ESkillInputType::Charge ||
          Skill->SkillData.InputType == ESkillInputType::Cast    ||
          Skill->SkillData.InputType == ESkillInputType::Hold))
     {
         StartCooldown(SlotIndex);
+        ReleaseSkillLock(Skill->SkillData.InputType != ESkillInputType::Hold);
     }
 }
 
@@ -206,7 +273,8 @@ void USkillManagerComponent::CancelPendingRangeMove()
     if (IsValidSlot(PendingRangeMoveSlot))
         SlotInstances[PendingRangeMoveSlot]->CancelRangeMove(GetOwner());
     PendingRangeMoveSlot = -1;
-    // 쿨타임 시작하지 않음
+    // 쿨타임 없음, 잠금 즉시 해제
+    OnSkillLockReleased();
 }
 
 void USkillManagerComponent::CancelActiveCastSkill()
@@ -225,51 +293,20 @@ void USkillManagerComponent::CancelActiveCastSkill()
         {
             Skill->ForceCancel(GetOwner());
             StartCooldown(i);
+            ReleaseSkillLock(true);
             return;
         }
         // 사거리 이동 중 마우스 클릭: 취소만 하고 쿨타임 없음
         if (Skill->IsMovingToRange())
         {
             Skill->CancelRangeMove(GetOwner());
+            OnSkillLockReleased();
             return;
         }
     }
 }
 
-void USkillManagerComponent::HandleComboInput(int32 SlotIndex)
-{
-    USkillCombo* ComboSkill = Cast<USkillCombo>(SlotInstances[SlotIndex]);
-    if (!ComboSkill) return;
-
-    // 다른 슬롯 누름 → 콤보 리셋 후 새로 시작
-    if (ComboSlotIndex != SlotIndex)
-    {
-        ResetCombo();
-        ComboSlotIndex = SlotIndex;
-    }
-
-    ComboSkill->CurrentComboStep = ComboStep;
-    ComboSkill->OnKeyDown(GetOwner());
-
-    ComboStep++;
-
-    if (ComboStep >= ComboSkill->SkillData.ComboMaxStep)
-    {
-        StartCooldown(SlotIndex);
-        ResetCombo();
-    }
-    else
-    {
-        // 콤보 창 타이머 재시작
-        GetWorld()->GetTimerManager().ClearTimer(ComboWindowTimer);
-        GetWorld()->GetTimerManager().SetTimer(
-            ComboWindowTimer,
-            this, &USkillManagerComponent::ResetCombo,
-            ComboSkill->SkillData.ComboWindow,
-            false
-        );
-    }
-}
+// ─── 쿨타임 ──────────────────────────────────────────────────────────────────
 
 float USkillManagerComponent::GetCooldownRatio(int32 SlotIndex) const
 {
@@ -363,7 +400,7 @@ UTexture2D* USkillManagerComponent::GetSlotIcon(int32 SlotIndex) const
     return nullptr;
 }
 
-// ─── 스킬트리 ───────────────────────────────────────────────────────────────
+// ─── 스킬트리 ────────────────────────────────────────────────────────────────
 
 int32 USkillManagerComponent::GetSkillLevel(FName RowName) const
 {
@@ -431,7 +468,42 @@ bool USkillManagerComponent::AssignSkillToSlot(FName RowName, int32 SlotIndex)
     return true;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
+// ─── 콤보 ────────────────────────────────────────────────────────────────────
+
+void USkillManagerComponent::HandleComboInput(int32 SlotIndex)
+{
+    USkillCombo* ComboSkill = Cast<USkillCombo>(SlotInstances[SlotIndex]);
+    if (!ComboSkill) return;
+
+    // 다른 슬롯 누름 → 콤보 리셋 후 새로 시작
+    if (ComboSlotIndex != SlotIndex)
+    {
+        ResetCombo();
+        ComboSlotIndex = SlotIndex;
+    }
+
+    ComboSkill->CurrentComboStep = ComboStep;
+    ComboSkill->OnKeyDown(GetOwner());
+
+    ComboStep++;
+
+    if (ComboStep >= ComboSkill->SkillData.ComboMaxStep)
+    {
+        StartCooldown(SlotIndex);
+        ResetCombo();
+    }
+    else
+    {
+        // 콤보 창 타이머 재시작
+        GetWorld()->GetTimerManager().ClearTimer(ComboWindowTimer);
+        GetWorld()->GetTimerManager().SetTimer(
+            ComboWindowTimer,
+            this, &USkillManagerComponent::ResetCombo,
+            ComboSkill->SkillData.ComboWindow,
+            false
+        );
+    }
+}
 
 void USkillManagerComponent::ResetCombo()
 {
@@ -449,4 +521,3 @@ void USkillManagerComponent::ResetCombo()
     ComboSlotIndex = -1;
     ComboStep = 0;
 }
-
