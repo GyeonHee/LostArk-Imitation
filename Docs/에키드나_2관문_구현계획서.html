@@ -1,0 +1,1813 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>에키드나 2관문 구현 계획서</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #f8f9fc;
+  }
+
+  /* 커버 페이지 */
+  .cover {
+    width: 100%;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 60px 40px;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cover::before {
+    content: '';
+    position: absolute;
+    width: 600px; height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(148,0,211,0.15) 0%, transparent 70%);
+    top: -100px; right: -100px;
+  }
+
+  .cover::after {
+    content: '';
+    position: absolute;
+    width: 400px; height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,200,150,0.1) 0%, transparent 70%);
+    bottom: -50px; left: -50px;
+  }
+
+  .cover-badge {
+    background: rgba(148,0,211,0.3);
+    border: 1px solid rgba(148,0,211,0.6);
+    color: #cc88ff;
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    padding: 6px 20px;
+    border-radius: 20px;
+    margin-bottom: 40px;
+  }
+
+  .cover h1 {
+    font-size: 44px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    text-shadow: 0 0 40px rgba(148,0,211,0.5);
+  }
+
+  .cover h1 span {
+    color: #cc88ff;
+  }
+
+  .cover-subtitle {
+    font-size: 18px;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 60px;
+  }
+
+  .cover-meta {
+    display: flex;
+    gap: 60px;
+    margin-top: 20px;
+  }
+
+  .cover-meta-item {
+    text-align: center;
+  }
+
+  .cover-meta-item .label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .cover-meta-item .value {
+    font-size: 14px;
+    color: rgba(255,255,255,0.85);
+    font-weight: 600;
+  }
+
+  .cover-divider {
+    width: 80px;
+    height: 2px;
+    background: linear-gradient(to right, transparent, #9400d3, transparent);
+    margin: 40px auto;
+  }
+
+  /* 목차 */
+  .toc-page {
+    page-break-after: always;
+    padding: 60px 60px;
+    background: #fff;
+    min-height: 100vh;
+  }
+
+  /* 본문 페이지 */
+  .page {
+    background: #fff;
+    padding: 50px 60px;
+    margin-bottom: 0;
+    page-break-after: always;
+    min-height: 100vh;
+  }
+
+  .page:last-child {
+    page-break-after: auto;
+  }
+
+  /* 섹션 헤더 */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 32px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #f0e6ff;
+  }
+
+  .section-num {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, #6b21a8, #9400d3);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 800;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .section-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a1a2e;
+  }
+
+  .section-title small {
+    font-size: 13px;
+    font-weight: 400;
+    color: #888;
+    margin-left: 10px;
+  }
+
+  /* 서브 섹션 */
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #302b63;
+    margin: 28px 0 12px 0;
+    padding-left: 12px;
+    border-left: 3px solid #9400d3;
+  }
+
+  h4 {
+    font-size: 13px;
+    font-weight: 700;
+    color: #444;
+    margin: 20px 0 8px 0;
+  }
+
+  p {
+    color: #444;
+    margin-bottom: 10px;
+  }
+
+  /* 테이블 */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px 0;
+    font-size: 12.5px;
+  }
+
+  thead tr {
+    background: linear-gradient(135deg, #302b63, #6b21a8);
+    color: #fff;
+  }
+
+  thead th {
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  tbody tr:nth-child(even) {
+    background: #f9f5ff;
+  }
+
+  tbody tr:hover {
+    background: #f0e6ff;
+  }
+
+  tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #ece6f5;
+    vertical-align: top;
+  }
+
+  /* 카드 */
+  .card {
+    background: #faf7ff;
+    border: 1px solid #e8dcf5;
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 14px 0;
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #6b21a8;
+    margin-bottom: 8px;
+  }
+
+  /* 패턴 카드 */
+  .pattern-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+
+  .pattern-card {
+    border: 1px solid #e8dcf5;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .pattern-card-header {
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .phase1-header { background: linear-gradient(135deg, #1a6b2e, #2d9e4a); }
+  .phase2-header { background: linear-gradient(135deg, #7b1a1a, #c0392b); }
+  .both-header   { background: linear-gradient(135deg, #302b63, #6b21a8); }
+
+  .pattern-card-header .pname {
+    font-weight: 700;
+    color: #fff;
+    font-size: 13px;
+  }
+
+  .pattern-card-header .ptag {
+    margin-left: auto;
+    font-size: 10px;
+    color: rgba(255,255,255,0.7);
+    background: rgba(0,0,0,0.2);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .pattern-card-body {
+    padding: 12px 16px;
+    background: #fff;
+    font-size: 12px;
+    color: #444;
+    line-height: 1.8;
+  }
+
+  .pattern-card-body strong {
+    color: #302b63;
+  }
+
+  /* 배지 */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
+  .badge-phase1 { background: #d4edda; color: #155724; }
+  .badge-phase2 { background: #f8d7da; color: #721c24; }
+  .badge-both   { background: #e0d7f5; color: #4a235a; }
+  .badge-instant { background: #cce5ff; color: #004085; }
+  .badge-channel { background: #fff3cd; color: #856404; }
+  .badge-counter { background: #f8d7da; color: #721c24; }
+  .badge-danger  { background: #f8d7da; color: #721c24; }
+  .badge-ok      { background: #d4edda; color: #155724; }
+  .badge-warn    { background: #fff3cd; color: #856404; }
+
+  /* 마일스톤 타임라인 */
+  .timeline {
+    position: relative;
+    padding-left: 40px;
+    margin: 20px 0;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, #9400d3, #302b63);
+  }
+
+  .timeline-item {
+    position: relative;
+    margin-bottom: 24px;
+  }
+
+  .timeline-dot {
+    position: absolute;
+    left: -34px;
+    top: 4px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #9400d3;
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 2px #9400d3;
+  }
+
+  .timeline-phase {
+    font-size: 11px;
+    color: #9400d3;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+
+  .timeline-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 6px;
+  }
+
+  .timeline-desc {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.7;
+  }
+
+  /* 코드 블록 */
+  .code-block {
+    background: #1e1e2e;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    font-family: 'Consolas', 'D2Coding', monospace;
+    font-size: 12px;
+    color: #cdd6f4;
+    overflow-x: auto;
+    line-height: 1.8;
+  }
+
+  .code-block .kw  { color: #cba6f7; }
+  .code-block .ty  { color: #89b4fa; }
+  .code-block .cm  { color: #6c7086; font-style: italic; }
+  .code-block .str { color: #a6e3a1; }
+  .code-block .num { color: #fab387; }
+
+  /* 목차 스타일 */
+  .toc-title {
+    font-size: 28px;
+    font-weight: 800;
+    color: #1a1a2e;
+    margin-bottom: 10px;
+  }
+
+  .toc-subtitle {
+    color: #888;
+    font-size: 13px;
+    margin-bottom: 40px;
+  }
+
+  .toc-list {
+    list-style: none;
+  }
+
+  .toc-list > li {
+    margin-bottom: 6px;
+  }
+
+  .toc-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px dashed #e8dcf5;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .toc-item .toc-num {
+    font-size: 12px;
+    font-weight: 700;
+    color: #9400d3;
+    min-width: 24px;
+  }
+
+  .toc-item .toc-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a1a2e;
+    flex: 1;
+  }
+
+  .toc-sub {
+    list-style: none;
+    padding-left: 32px;
+  }
+
+  .toc-sub li {
+    padding: 4px 0;
+    border-bottom: 1px dashed #f0e6ff;
+    font-size: 12.5px;
+    color: #555;
+  }
+
+  .toc-sub li::before {
+    content: '└ ';
+    color: #c084fc;
+  }
+
+  /* 정보 박스 */
+  .info-box {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 12.5px;
+    color: #1e40af;
+  }
+
+  .warn-box {
+    background: #fffbeb;
+    border-left: 4px solid #f59e0b;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 12.5px;
+    color: #92400e;
+  }
+
+  .danger-box {
+    background: #fef2f2;
+    border-left: 4px solid #ef4444;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 12.5px;
+    color: #991b1b;
+  }
+
+  /* 구현 체크리스트 */
+  .checklist {
+    list-style: none;
+    margin: 12px 0;
+  }
+
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid #f5f0ff;
+    font-size: 12.5px;
+    color: #333;
+  }
+
+  .check-box {
+    width: 18px; height: 18px;
+    border: 2px solid #c084fc;
+    border-radius: 4px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* 페이즈 다이어그램 */
+  .phase-diagram {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 20px 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #e0d7f5;
+  }
+
+  .phase-block {
+    flex: 1;
+    padding: 18px 16px;
+    position: relative;
+  }
+
+  .phase-block::after {
+    content: '▶';
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #9400d3;
+    font-size: 14px;
+    z-index: 1;
+  }
+
+  .phase-block:last-child::after { display: none; }
+
+  .phase1-block { background: linear-gradient(180deg, #e8f5e9, #f1f8e9); }
+  .phase-mid-block { background: linear-gradient(180deg, #ede7f6, #f3e5f5); }
+  .phase2-block { background: linear-gradient(180deg, #fce4ec, #fbe9e7); }
+
+  .phase-block .ph-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .phase-block .ph-title {
+    font-size: 14px;
+    font-weight: 800;
+    margin-bottom: 6px;
+  }
+
+  .phase1-block .ph-title { color: #2d7a3a; }
+  .phase-mid-block .ph-title { color: #6b21a8; }
+  .phase2-block .ph-title { color: #c0392b; }
+
+  .phase-block .ph-hp {
+    font-size: 22px;
+    font-weight: 900;
+    margin-bottom: 8px;
+  }
+
+  .phase1-block .ph-hp { color: #1a6b2e; }
+  .phase-mid-block .ph-hp { color: #9400d3; }
+  .phase2-block .ph-hp { color: #8b0000; }
+
+  .phase-block .ph-desc {
+    font-size: 11.5px;
+    color: #555;
+    line-height: 1.6;
+  }
+
+  /* 스탯 그리드 */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  .stat-item {
+    background: #faf7ff;
+    border: 1px solid #e8dcf5;
+    border-radius: 8px;
+    padding: 14px;
+    text-align: center;
+  }
+
+  .stat-item .stat-label {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 4px;
+  }
+
+  .stat-item .stat-value {
+    font-size: 20px;
+    font-weight: 800;
+    color: #6b21a8;
+  }
+
+  .stat-item .stat-unit {
+    font-size: 11px;
+    color: #aaa;
+  }
+
+  /* 우선순위 뱃지 */
+  .priority-high   { color: #c0392b; font-weight: 700; }
+  .priority-mid    { color: #e67e22; font-weight: 700; }
+  .priority-low    { color: #27ae60; font-weight: 700; }
+
+  /* 아키텍처 다이어그램 */
+  .arch-diagram {
+    background: #1e1e2e;
+    border-radius: 10px;
+    padding: 24px;
+    margin: 16px 0;
+    font-family: 'Consolas', 'D2Coding', monospace;
+    font-size: 12px;
+    color: #cdd6f4;
+    line-height: 2;
+  }
+
+  .arch-diagram .ad-class   { color: #89b4fa; font-weight: 700; }
+  .arch-diagram .ad-inherit { color: #cba6f7; }
+  .arch-diagram .ad-field   { color: #a6e3a1; }
+  .arch-diagram .ad-method  { color: #f9e2af; }
+  .arch-diagram .ad-comment { color: #6c7086; font-style: italic; }
+
+  /* 푸터 */
+  .page-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid #e8dcf5;
+    font-size: 11px;
+    color: #aaa;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* 인쇄 최적화 */
+  @media print {
+    body { background: #fff; }
+    .cover { min-height: auto; padding: 80px 60px; }
+    .page { page-break-after: always; }
+    .pattern-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  ul.plain { list-style: disc; padding-left: 20px; }
+  ul.plain li { margin-bottom: 4px; font-size: 12.5px; color: #444; }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px; height: 24px;
+    background: #9400d3;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 50%;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+
+  .impl-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin-bottom: 20px;
+    padding: 16px;
+    background: #faf7ff;
+    border-radius: 10px;
+    border: 1px solid #e8dcf5;
+  }
+
+  .impl-step-content {
+    flex: 1;
+  }
+
+  .impl-step-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #302b63;
+    margin-bottom: 6px;
+  }
+
+  .impl-step-desc {
+    font-size: 12px;
+    color: #555;
+    line-height: 1.7;
+  }
+
+  .impl-step-tags {
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 커버                                               -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="cover">
+  <div class="cover-badge">LoA Project · Raid Design Document</div>
+  <h1>에키드나 <span>2관문</span><br>구현 계획서</h1>
+  <div class="cover-subtitle">Lost Ark — Echidna Gate 2 | Unreal Engine 5.7</div>
+  <div class="cover-divider"></div>
+  <div class="cover-meta">
+    <div class="cover-meta-item">
+      <div class="label">작성일</div>
+      <div class="value">2026-07-02</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="label">엔진</div>
+      <div class="value">UE 5.7</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="label">작성자</div>
+      <div class="value">GyeonHee</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="label">버전</div>
+      <div class="value">v1.0</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 목차                                               -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="toc-page">
+  <div class="toc-title">목차</div>
+  <div class="toc-subtitle">Table of Contents</div>
+
+  <ul class="toc-list">
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">1</span>
+        <span class="toc-text">프로젝트 개요 및 범위</span>
+      </div>
+    </li>
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">2</span>
+        <span class="toc-text">보스 기획 — 에키드나 스탯 & 페이즈</span>
+      </div>
+      <ul class="toc-sub">
+        <li>2.1 기본 스탯</li>
+        <li>2.2 페이즈 시스템</li>
+        <li>2.3 아레나 레이아웃</li>
+      </ul>
+    </li>
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">3</span>
+        <span class="toc-text">패턴 설계 — 전체 패턴 목록 & 상세</span>
+      </div>
+      <ul class="toc-sub">
+        <li>3.1 Phase 1 패턴</li>
+        <li>3.2 Phase 2 추가 패턴</li>
+        <li>3.3 페이즈 전환 시퀀스</li>
+        <li>3.4 패턴 선택 알고리즘</li>
+      </ul>
+    </li>
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">4</span>
+        <span class="toc-text">기술 설계 — 아키텍처 & 클래스 구조</span>
+      </div>
+      <ul class="toc-sub">
+        <li>4.1 전체 아키텍처</li>
+        <li>4.2 ABossBase / ABossEchidna</li>
+        <li>4.3 UBossPatternBase 및 파생 클래스</li>
+        <li>4.4 ARaidManager</li>
+        <li>4.5 UI / MVVM</li>
+      </ul>
+    </li>
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">5</span>
+        <span class="toc-text">VFX & 사운드 에셋 목록</span>
+      </div>
+    </li>
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">6</span>
+        <span class="toc-text">구현 단계별 계획 (스프린트)</span>
+      </div>
+    </li>
+    <li>
+      <div class="toc-item">
+        <span class="toc-num">7</span>
+        <span class="toc-text">미결 항목 & 리스크</span>
+      </div>
+    </li>
+  </ul>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>v1.0 · 2026-07-02</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 1. 프로젝트 개요                                   -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">1</div>
+    <div class="section-title">프로젝트 개요 및 범위</div>
+  </div>
+
+  <h3>1.1 구현 목표</h3>
+  <p>
+    기존 LoA 솔로 플레이어 탑다운 ARPG 위에 <strong>보스 레이드 시스템</strong>을 신규 구축하고,
+    로스트아크 에키드나 2관문의 핵심 패턴을 재해석하여 싱글플레이어 경험으로 이식한다.
+    범용 몬스터 AI 시스템을 먼저 만드는 것이 아니라, 보스 전용 경량 아키텍처로 설계하여
+    최단 경로로 플레이 가능한 보스전을 완성하는 것을 목표로 한다.
+  </p>
+
+  <h3>1.2 구현 범위</h3>
+  <div class="two-col">
+    <div>
+      <h4>✅ 포함</h4>
+      <ul class="plain">
+        <li>보스 기본 클래스 (ABossBase)</li>
+        <li>에키드나 보스 액터 (ABossEchidna)</li>
+        <li>패턴 시스템 (UBossPatternBase + 파생)</li>
+        <li>페이즈 1 / 페이즈 2 구분</li>
+        <li>보스 HP 바 UI (MVVM)</li>
+        <li>레이드 매니저 (시작/종료 조건)</li>
+        <li>AoE 패턴 액터 (장판, 발사체)</li>
+        <li>카운터 게이지 시스템</li>
+        <li>와이프 / 클리어 처리</li>
+      </ul>
+    </div>
+    <div>
+      <h4>❌ 제외 (추후)</h4>
+      <ul class="plain">
+        <li>멀티플레이어 / 파티 시스템</li>
+        <li>범용 몬스터 AI (NavMesh 기반)</li>
+        <li>레이드 진입 게이트 UI</li>
+        <li>드랍 / 보상 시스템</li>
+        <li>전투 로그 / 딜 미터</li>
+        <li>에키드나 전용 보이스</li>
+        <li>2페이즈 이상 추가 패턴</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>1.3 기존 시스템과의 관계</h3>
+  <table>
+    <thead>
+      <tr><th>기존 시스템</th><th>레이드에서의 역할</th><th>변경 필요 여부</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LoACharacter (플레이어)</td><td>TakeDamage 수신, HP 감소</td><td class="badge badge-ok">없음</td></tr>
+      <tr><td>SkillManagerComponent</td><td>플레이어 스킬로 보스에 데미지</td><td class="badge badge-ok">없음</td></tr>
+      <tr><td>ApplyRadialDamage</td><td>AoE 패턴 데미지 적용</td><td class="badge badge-ok">없음</td></tr>
+      <tr><td>HUD_ViewModel</td><td>플레이어 HP/MP 바 (그대로 사용)</td><td class="badge badge-ok">없음</td></tr>
+      <tr><td>LoAPlayerController</td><td>레이드 중 이동/스킬 입력 유지</td><td class="badge badge-ok">없음</td></tr>
+      <tr><td>TrainingDummy</td><td>보스 데미지 수신 참고 구조</td><td><span class="badge badge-warn">참고만</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="info-box">
+    💡 <strong>설계 원칙:</strong> 플레이어 측 코드는 건드리지 않는다. 보스 시스템은 완전히 독립된 디렉터리(<code>Source/LoA/Boss/</code>, <code>Source/LoA/Raid/</code>)에 구축하여 기존 기능에 영향을 주지 않는다.
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>1. 프로젝트 개요</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 2. 보스 기획                                       -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">2</div>
+    <div class="section-title">보스 기획 — 에키드나 스탯 & 페이즈</div>
+  </div>
+
+  <h3>2.1 기본 스탯</h3>
+  <div class="stat-grid">
+    <div class="stat-item">
+      <div class="stat-label">최대 HP</div>
+      <div class="stat-value">50,000</div>
+      <div class="stat-unit">HP (플레이어 공격력 기준 조정 예정)</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">공격력 계수</div>
+      <div class="stat-value">1.0×</div>
+      <div class="stat-unit">플레이어 DamageCoefficient 기준</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">이동 속도</div>
+      <div class="stat-value">0</div>
+      <div class="stat-unit">보스 고정 위치 (이동 없음)</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">카운터 게이지</div>
+      <div class="stat-value">100</div>
+      <div class="stat-unit">패턴 중 카운터 가능 구간 존재</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">스태거 게이지</div>
+      <div class="stat-value">200</div>
+      <div class="stat-unit">일부 패턴에 스태거 취약 구간</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Phase 전환 HP</div>
+      <div class="stat-value">60%</div>
+      <div class="stat-unit">HP 30,000 도달 시</div>
+    </div>
+  </div>
+
+  <h3>2.2 페이즈 시스템</h3>
+  <div class="phase-diagram">
+    <div class="phase-block phase1-block">
+      <div class="ph-label">Phase 1</div>
+      <div class="ph-title">각성 이전</div>
+      <div class="ph-hp">100% → 60%</div>
+      <div class="ph-desc">
+        기본 공격 패턴 활성<br>
+        패턴 선택 주기: <strong>4~6초</strong><br>
+        패턴 풀: 4종<br>
+        독뱀 소환 포함
+      </div>
+    </div>
+    <div class="phase-block phase-mid-block">
+      <div class="ph-label">전환</div>
+      <div class="ph-title">각성 시퀀스</div>
+      <div class="ph-hp">HP 60%</div>
+      <div class="ph-desc">
+        전환 연출 (4초)<br>
+        무적 상태<br>
+        카메라 셰이크<br>
+        환경 색조 변화
+      </div>
+    </div>
+    <div class="phase-block phase2-block">
+      <div class="ph-label">Phase 2</div>
+      <div class="ph-title">각성 이후</div>
+      <div class="ph-hp">60% → 0%</div>
+      <div class="ph-desc">
+        Phase 1 패턴 유지 + 신규 2종<br>
+        패턴 선택 주기: <strong>2.5~4초</strong><br>
+        독 데미지 계수 1.3× 증가<br>
+        넥서스 패턴 해금
+      </div>
+    </div>
+  </div>
+
+  <h3>2.3 아레나 레이아웃</h3>
+  <div class="card">
+    <div class="card-title">전투 공간 구성</div>
+    <table>
+      <thead>
+        <tr><th>요소</th><th>크기 / 설명</th><th>구현 방식</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>아레나 반경</td><td>3,000cm (원형)</td><td>BP_RaidArena — StaticMesh 바닥 + Cylinder Collision 경계</td></tr>
+        <tr><td>경계 넘기</td><td>즉사 처리 (DeathTrigger)</td><td>ABossArena — OverlapBegin → OnPlayerExitArena()</td></tr>
+        <tr><td>에키드나 위치</td><td>중앙 고정</td><td>SetActorEnableCollision + 이동 없음, 방향만 플레이어 추적</td></tr>
+        <tr><td>조명</td><td>보라/초록 분위기</td><td>Blueprint DirectionalLight + PointLight (Phase2 색조 변경)</td></tr>
+        <tr><td>카메라</td><td>기존 탑다운 유지</td><td>별도 카메라 전환 없음 (페이즈 전환 셰이크만)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>2. 보스 기획</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 3. 패턴 설계                                       -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">3</div>
+    <div class="section-title">패턴 설계 — 전체 패턴 목록 & 상세</div>
+  </div>
+
+  <h3>3.1 전체 패턴 목록</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>패턴 이름</th><th>클래스</th><th>타입</th><th>페이즈</th>
+        <th>경고 시간</th><th>데미지</th><th>카운터</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>P1</td><td><strong>꼬리 휩쓸기</strong></td><td>UPatternTailSwipe</td>
+        <td><span class="badge badge-instant">즉발 AoE</span></td>
+        <td><span class="badge badge-both">1+2</span></td>
+        <td>0.8s</td><td>중</td><td>❌</td>
+      </tr>
+      <tr>
+        <td>P2</td><td><strong>독 투척</strong></td><td>UPatternPoisonThrow</td>
+        <td><span class="badge badge-instant">발사체 x3</span></td>
+        <td><span class="badge badge-both">1+2</span></td>
+        <td>0.5s</td><td>중</td><td>❌</td>
+      </tr>
+      <tr>
+        <td>P3</td><td><strong>독꽃 (비너스)</strong></td><td>UPatternPoisonFlower</td>
+        <td><span class="badge badge-channel">지연 폭발</span></td>
+        <td><span class="badge badge-both">1+2</span></td>
+        <td>2.0s</td><td>중</td><td>❌</td>
+      </tr>
+      <tr>
+        <td>P4</td><td><strong>독뱀 소환</strong></td><td>UPatternSummon</td>
+        <td><span class="badge badge-channel">잡몹 소환</span></td>
+        <td><span class="badge badge-phase1">1</span></td>
+        <td>1.0s</td><td>소환체</td><td>❌</td>
+      </tr>
+      <tr>
+        <td>P5</td><td><strong>독 브레스</strong></td><td>UPatternPoisonBreath</td>
+        <td><span class="badge badge-channel">지속 채널링</span></td>
+        <td><span class="badge badge-both">1+2</span></td>
+        <td>1.0s</td><td>고 (DoT)</td><td>✅</td>
+      </tr>
+      <tr>
+        <td>P6</td><td><strong>흡기 (넥서스)</strong></td><td>UPatternNexus</td>
+        <td><span class="badge badge-channel">당기기+폭발</span></td>
+        <td><span class="badge badge-phase2">2</span></td>
+        <td>1.5s</td><td>매우 고</td><td>✅</td>
+      </tr>
+      <tr>
+        <td>P7</td><td><strong>독 장막</strong></td><td>UPatternPoisonWall</td>
+        <td><span class="badge badge-channel">회전 벽</span></td>
+        <td><span class="badge badge-phase2">2</span></td>
+        <td>1.0s</td><td>중</td><td>❌</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>3.2 Phase 1 패턴 상세</h3>
+  <div class="pattern-grid">
+
+    <div class="pattern-card">
+      <div class="pattern-card-header phase1-header">
+        <span class="pname">P1. 꼬리 휩쓸기</span>
+        <span class="ptag">TailSwipe</span>
+      </div>
+      <div class="pattern-card-body">
+        <strong>트리거:</strong> 보스 좌/우 120도 부채꼴 범위<br>
+        <strong>경고:</strong> 0.8s — 부채꼴 VFX 마커 표시<br>
+        <strong>데미지 범위:</strong> 반경 1,200cm, 각도 120도<br>
+        <strong>데미지:</strong> 플레이어 AttackPower × 1.5<br>
+        <strong>쿨타임:</strong> 8s<br>
+        <strong>완료 조건:</strong> 애니메이션 노티파이 수신<br>
+        <strong>구현:</strong> AoE 콜리전 박스 스폰 → Overlap → ReceiveDamage
+      </div>
+    </div>
+
+    <div class="pattern-card">
+      <div class="pattern-card-header phase1-header">
+        <span class="pname">P2. 독 투척</span>
+        <span class="ptag">PoisonThrow</span>
+      </div>
+      <div class="pattern-card-body">
+        <strong>트리거:</strong> 플레이어 방향 기준 부채꼴 3방향<br>
+        <strong>경고:</strong> 0.5s — 예측선 표시<br>
+        <strong>발사체:</strong> APoisonBallActor 3개 순차 발사 (0.2s 간격)<br>
+        <strong>착지 시:</strong> 독 장판 생성 → 2s 지속 → DoT 0.5s마다<br>
+        <strong>데미지:</strong> 직접 피격 중, 장판 DoT 소<br>
+        <strong>쿨타임:</strong> 6s<br>
+        <strong>완료 조건:</strong> 3발 모두 착지
+      </div>
+    </div>
+
+    <div class="pattern-card">
+      <div class="pattern-card-header phase1-header">
+        <span class="pname">P3. 독꽃 (비너스 플라이트랩)</span>
+        <span class="ptag">PoisonFlower</span>
+      </div>
+      <div class="pattern-card-body">
+        <strong>배치:</strong> 아레나 내 무작위 위치 5곳에 꽃 마커<br>
+        <strong>경고:</strong> 원형 마커 2s 표시 (기존 CircleShowTime 패턴)<br>
+        <strong>폭발:</strong> 반경 400cm ApplyRadialDamage<br>
+        <strong>데미지:</strong> 플레이어 AttackPower × 1.2<br>
+        <strong>쿨타임:</strong> 10s<br>
+        <strong>완료 조건:</strong> 전체 폭발 완료 (0.3s 간격 순차 폭발)<br>
+        <strong>VFX:</strong> NS_PoisonFlower (기존 InfernoZone 참고)
+      </div>
+    </div>
+
+    <div class="pattern-card">
+      <div class="pattern-card-header phase1-header">
+        <span class="pname">P4. 독뱀 소환</span>
+        <span class="ptag">Summon</span>
+      </div>
+      <div class="pattern-card-body">
+        <strong>소환 수:</strong> Phase1 2마리, Phase2 3마리<br>
+        <strong>소환 위치:</strong> 아레나 경계 근처 무작위<br>
+        <strong>독뱀 행동:</strong> 플레이어 추적 이동 → 근접 시 공격<br>
+        <strong>독뱀 HP:</strong> 500 (소환체)<br>
+        <strong>완료 조건:</strong> 전체 독뱀 처치 or 30s 타임아웃<br>
+        <strong>쿨타임:</strong> 20s<br>
+        <strong>구현:</strong> APoisonSnakeActor (심플 AI — 플레이어 추적)
+      </div>
+    </div>
+
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>3. 패턴 설계 (1/2)</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 3. 패턴 설계 (계속)                                -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">3</div>
+    <div class="section-title">패턴 설계 — 계속</div>
+  </div>
+
+  <h3>3.3 공통 패턴 — 독 브레스 (카운터 가능)</h3>
+  <div class="card">
+    <div class="card-title">P5. 독 브레스 (UPatternPoisonBreath)</div>
+    <table>
+      <thead><tr><th>항목</th><th>내용</th></tr></thead>
+      <tbody>
+        <tr><td>발동</td><td>보스가 플레이어 방향을 향해 채널링 모션 시작</td></tr>
+        <tr><td>경고</td><td>1.0s — 보스 입에서 보라빛 차지 이펙트</td></tr>
+        <tr><td>카운터 구간</td><td>채널링 시작 ~ 0.5s 이내 카운터 스킬 명중 시 패턴 중단 + 보스 다운</td></tr>
+        <tr><td>카운터 성공</td><td>보스 3s 다운 (스턴) → 추가 딜 타임</td></tr>
+        <tr><td>카운터 실패</td><td>전방 직선 2,000cm × 300cm 범위 DoT 브레스 3초 지속</td></tr>
+        <tr><td>데미지</td><td>0.5s 틱마다 플레이어 AttackPower × 0.8 (6틱 = × 4.8 총합)</td></tr>
+        <tr><td>쿨타임</td><td>15s</td></tr>
+        <tr><td>완료 조건</td><td>채널링 완료 or 카운터 성공</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>3.4 Phase 2 추가 패턴</h3>
+  <div class="pattern-grid">
+
+    <div class="pattern-card">
+      <div class="pattern-card-header phase2-header">
+        <span class="pname">P6. 흡기 (넥서스)</span>
+        <span class="ptag">Nexus — 카운터 가능</span>
+      </div>
+      <div class="pattern-card-body">
+        <strong>단계 1:</strong> 1.5s 경고 — 보스 중심 소용돌이 VFX<br>
+        <strong>단계 2:</strong> 2s 흡기 — 플레이어에게 지속적인 인력 가속도 적용 (ForcePull)<br>
+        <strong>단계 3:</strong> 폭발 — 보스 주변 반경 800cm AoE<br>
+        <strong>카운터:</strong> 흡기 시작 0.7s 이내 카운터 → 패턴 취소<br>
+        <strong>데미지:</strong> 폭발 플레이어 MaxHP × 40% (생존 보장: 최소 HP 1 유지)<br>
+        <strong>쿨타임:</strong> 25s<br>
+        <strong>구현:</strong> AddActorWorldOffset 매 틱 적용 (기존 ForceMoveTo 역방향 활용)
+      </div>
+    </div>
+
+    <div class="pattern-card">
+      <div class="pattern-card-header phase2-header">
+        <span class="pname">P7. 독 장막</span>
+        <span class="ptag">PoisonWall</span>
+      </div>
+      <div class="pattern-card-body">
+        <strong>생성:</strong> 보스 중심에서 4방향 독 벽 회전 스폰<br>
+        <strong>회전:</strong> 시계/반시계 방향 50deg/s 회전<br>
+        <strong>데미지:</strong> 독 벽 통과 시 틱당 플레이어 MaxHP × 5%<br>
+        <strong>지속:</strong> 6초 후 소멸<br>
+        <strong>완료 조건:</strong> 6s 타이머 완료<br>
+        <strong>쿨타임:</strong> 20s<br>
+        <strong>구현:</strong> APoisonWallActor — RotatingMovement 컴포넌트 활용
+      </div>
+    </div>
+
+  </div>
+
+  <h3>3.5 페이즈 전환 시퀀스 (HP 60%)</h3>
+  <div class="timeline">
+    <div class="timeline-item">
+      <div class="timeline-dot"></div>
+      <div class="timeline-phase">T = 0.0s</div>
+      <div class="timeline-title">페이즈 전환 트리거</div>
+      <div class="timeline-desc">HP 30,000 도달 → ABossEchidna::TransitionToPhase(2) 호출 → 보스 무적 처리 (bIsInvincible=true)</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-dot"></div>
+      <div class="timeline-phase">T = 0.0s ~ 0.5s</div>
+      <div class="timeline-title">현재 패턴 강제 취소</div>
+      <div class="timeline-desc">ActivePattern→Cancel() 호출 → 진행 중인 AoE 액터 모두 Destroy</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-dot"></div>
+      <div class="timeline-phase">T = 0.5s ~ 1.0s</div>
+      <div class="timeline-title">카메라 셰이크 + VFX</div>
+      <div class="timeline-desc">UCameraShakeBase 발동 (진폭 20, 주기 0.15s) + NS_PhaseTransition 전신 이펙트</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-dot"></div>
+      <div class="timeline-phase">T = 1.0s ~ 3.0s</div>
+      <div class="timeline-title">무적 구간</div>
+      <div class="timeline-desc">보스 특수 포즈 유지, 조명 보라 → 빨강 전환 (FLinearColor Lerp)</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-dot"></div>
+      <div class="timeline-phase">T = 3.0s</div>
+      <div class="timeline-title">Phase 2 개시</div>
+      <div class="timeline-desc">bIsInvincible=false → Phase2 패턴 풀 전환 → ScheduleNextPattern() 재시작</div>
+    </div>
+  </div>
+
+  <h3>3.6 패턴 선택 알고리즘</h3>
+  <div class="code-block">
+<span class="kw">void</span> <span class="ty">ABossBase</span>::ScheduleNextPattern()
+{
+    <span class="cm">// 가중치 기반 랜덤 선택 — 직전 패턴은 제외 (동일 패턴 연속 방지)</span>
+    TArray&lt;<span class="ty">FPatternEntry</span>&gt;&amp; Pool = CurrentPhasePatterns;
+    <span class="kw">float</span> TotalWeight = <span class="num">0</span>;
+    <span class="kw">for</span> (<span class="kw">auto</span>&amp; Entry : Pool)
+        <span class="kw">if</span> (Entry.Pattern != LastPattern &amp;&amp; Entry.Pattern-&gt;IsCooldownReady())
+            TotalWeight += Entry.Weight;
+
+    <span class="kw">float</span> Roll = FMath::FRandRange(<span class="num">0</span>, TotalWeight);
+    <span class="kw">float</span> Accum = <span class="num">0</span>;
+    <span class="kw">for</span> (<span class="kw">auto</span>&amp; Entry : Pool) {
+        <span class="kw">if</span> (Entry.Pattern == LastPattern) <span class="kw">continue</span>;
+        Accum += Entry.Weight;
+        <span class="kw">if</span> (Roll &lt;= Accum) { ActivePattern = Entry.Pattern; <span class="kw">break</span>; }
+    }
+
+    <span class="cm">// PostDelay(2~4s 랜덤) 후 Execute</span>
+    <span class="kw">float</span> Delay = FMath::FRandRange(MinPatternDelay, MaxPatternDelay);
+    GetWorldTimerManager().SetTimer(PatternTimer, <span class="kw">this</span>,
+        &amp;<span class="ty">ABossBase</span>::ExecuteActivePattern, Delay, <span class="kw">false</span>);
+}
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>3. 패턴 설계 (2/2)</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 4. 기술 설계                                       -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">4</div>
+    <div class="section-title">기술 설계 — 아키텍처 & 클래스 구조</div>
+  </div>
+
+  <h3>4.1 전체 아키텍처</h3>
+  <div class="arch-diagram">
+<span class="ad-comment">// ── 레이드 흐름 ─────────────────────────────────────────</span>
+<span class="ad-class">ARaidManager</span> (AActor)
+  ├── <span class="ad-field">ABossEchidna*</span>  Boss
+  ├── <span class="ad-field">ALoACharacter*</span> Player
+  ├── <span class="ad-method">StartRaid()</span>  <span class="ad-comment">→ 보스 스폰, 레이드 BGM, UI 활성화</span>
+  ├── <span class="ad-method">OnBossPhaseTransition(int32)</span>
+  ├── <span class="ad-method">OnPlayerDied()</span>  <span class="ad-comment">→ 와이프 → 리셋 or 메뉴</span>
+  └── <span class="ad-method">OnBossDefeated()</span>  <span class="ad-comment">→ 클리어 UI → 보상</span>
+
+<span class="ad-comment">// ── 보스 본체 ────────────────────────────────────────────</span>
+<span class="ad-class">ABossBase</span> : ACharacter
+  ├── <span class="ad-field">float</span> HP, MaxHP, <span class="kw">bool</span> bIsInvincible
+  ├── <span class="ad-field">int32</span> CurrentPhase
+  ├── <span class="ad-field">UBossPatternBase*</span> ActivePattern
+  ├── <span class="ad-field">TArray&lt;FPatternEntry&gt;</span> Phase1Patterns, Phase2Patterns
+  ├── <span class="ad-method">TakeDamage()</span>  <span class="ad-comment">→ bIsInvincible 체크 → HP 감소 → OnBossHPChanged</span>
+  ├── <span class="ad-method">ScheduleNextPattern()</span>
+  ├── <span class="ad-method">ExecuteActivePattern()</span>
+  ├── <span class="ad-method">OnPatternComplete()</span>  <span class="ad-comment">→ LastPattern 갱신 → ScheduleNextPattern</span>
+  └── <span class="ad-method">TransitionToPhase(int32)</span>
+
+<span class="ad-class">ABossEchidna</span> : ABossBase
+  ├── <span class="ad-method">BeginPlay()</span>  <span class="ad-comment">→ 패턴 인스턴스 생성 + 풀 등록</span>
+  └── <span class="ad-method">TransitionToPhase(2) override</span>  <span class="ad-comment">→ 연출 시퀀스</span>
+
+<span class="ad-comment">// ── 패턴 ────────────────────────────────────────────────</span>
+<span class="ad-class">UBossPatternBase</span> : UObject
+  ├── <span class="ad-method">virtual Execute(ABossBase*)</span>
+  ├── <span class="ad-method">virtual Cancel()</span>
+  ├── <span class="ad-method">virtual bool IsComplete() const</span>
+  ├── <span class="ad-field">float</span> Cooldown, LastUsedTime
+  └── <span class="ad-method">bool IsCooldownReady() const</span>
+
+<span class="ad-class">UPatternTailSwipe</span>, <span class="ad-class">UPatternPoisonThrow</span>, <span class="ad-class">UPatternPoisonFlower</span>,
+<span class="ad-class">UPatternSummon</span>, <span class="ad-class">UPatternPoisonBreath</span>,
+<span class="ad-class">UPatternNexus</span>, <span class="ad-class">UPatternPoisonWall</span>  : UBossPatternBase
+  </div>
+
+  <h3>4.2 주요 필드 & 함수 상세</h3>
+  <div class="two-col">
+    <div>
+      <h4>ABossBase 핵심 필드</h4>
+      <table>
+        <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td>HP / MaxHP</td><td>float</td><td>현재/최대 HP</td></tr>
+          <tr><td>CurrentPhase</td><td>int32</td><td>1 or 2</td></tr>
+          <tr><td>bIsInvincible</td><td>bool</td><td>페이즈 전환 중 무적</td></tr>
+          <tr><td>ActivePattern</td><td>UBossPatternBase*</td><td>현재 실행 중인 패턴</td></tr>
+          <tr><td>LastPattern</td><td>UBossPatternBase*</td><td>직전 패턴 (연속 방지)</td></tr>
+          <tr><td>PatternTimer</td><td>FTimerHandle</td><td>패턴 스케줄 타이머</td></tr>
+          <tr><td>MinPatternDelay</td><td>float</td><td>Phase1: 4s / Phase2: 2.5s</td></tr>
+          <tr><td>OnBossHPChanged</td><td>Delegate</td><td>UI ViewModel 바인딩용</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h4>UBossPatternBase 핵심 필드</h4>
+      <table>
+        <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td>Cooldown</td><td>float</td><td>패턴 쿨타임 (초)</td></tr>
+          <tr><td>LastUsedTime</td><td>float</td><td>마지막 사용 시각</td></tr>
+          <tr><td>Weight</td><td>float</td><td>선택 가중치</td></tr>
+          <tr><td>WarningTime</td><td>float</td><td>경고 마커 표시 시간</td></tr>
+          <tr><td>bIsActive</td><td>bool</td><td>실행 중 여부</td></tr>
+          <tr><td>OwnerBoss</td><td>ABossBase*</td><td>보스 참조</td></tr>
+          <tr><td>OnComplete</td><td>Delegate</td><td>완료 콜백 → OnPatternComplete</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>4. 기술 설계 (1/2)</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 4. 기술 설계 (계속)                                -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">4</div>
+    <div class="section-title">기술 설계 — 계속</div>
+  </div>
+
+  <h3>4.3 신규 AoE 액터 목록</h3>
+  <table>
+    <thead>
+      <tr><th>클래스</th><th>BP 이름</th><th>기반</th><th>역할</th><th>기존 유사 클래스</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>APoisonBallActor</td><td>BP_PoisonBall</td><td>AActor</td>
+        <td>독구슬 발사체 — 착지 시 장판 스폰</td>
+        <td>ABlazeProjectile 참고</td>
+      </tr>
+      <tr>
+        <td>APoisonZoneActor</td><td>BP_PoisonZone</td><td>AActor</td>
+        <td>독 장판 — 틱 DoT, 타임아웃 자동 소멸</td>
+        <td>AFrostCallZoneActor 참고</td>
+      </tr>
+      <tr>
+        <td>APoisonFlowerActor</td><td>BP_PoisonFlower</td><td>AActor</td>
+        <td>독꽃 마커 → CircleShowTime → 폭발</td>
+        <td>AInfernoZoneActor 패턴 동일</td>
+      </tr>
+      <tr>
+        <td>APoisonSnakeActor</td><td>BP_PoisonSnake</td><td>ACharacter</td>
+        <td>독뱀 소환체 — 플레이어 추적, 근접 공격</td>
+        <td>신규 (심플 AI)</td>
+      </tr>
+      <tr>
+        <td>APoisonBreathActor</td><td>BP_PoisonBreath</td><td>AActor</td>
+        <td>전방 직선 채널링 브레스 존</td>
+        <td>AGustTornadoActor 참고 (박스 콜리전)</td>
+      </tr>
+      <tr>
+        <td>APoisonWallActor</td><td>BP_PoisonWall</td><td>AActor</td>
+        <td>회전하는 독 장벽 4개</td>
+        <td>신규 (RotatingMovement 컴포넌트)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>4.4 ARaidManager 구조</h3>
+  <div class="card">
+    <div class="card-title">레이드 흐름 관리</div>
+    <div class="code-block">
+<span class="kw">UCLASS</span>()
+<span class="kw">class</span> <span class="ty">ARaidManager</span> : <span class="kw">public</span> <span class="ty">AActor</span>
+{
+    <span class="cm">// ── 참조 ──────────────────────────────────────────</span>
+    <span class="ty">ABossEchidna</span>*  Boss;
+    <span class="ty">ALoACharacter</span>* Player;
+    <span class="ty">ABossArena</span>*    Arena;
+
+    <span class="cm">// ── 상태 ──────────────────────────────────────────</span>
+    <span class="ty">ERaidState</span> State;  <span class="cm">// Idle / InProgress / Clear / Wipe</span>
+
+    <span class="cm">// ── 인터페이스 ────────────────────────────────────</span>
+    <span class="kw">void</span> StartRaid();
+    <span class="kw">void</span> OnPlayerDied();    <span class="cm">// → Wipe 처리</span>
+    <span class="kw">void</span> OnBossDefeated();  <span class="cm">// → Clear 처리</span>
+    <span class="kw">void</span> ResetRaid();       <span class="cm">// 보스 HP 리셋, 플레이어 부활</span>
+};
+    </div>
+  </div>
+
+  <h3>4.5 UI / MVVM 설계</h3>
+  <table>
+    <thead>
+      <tr><th>클래스</th><th>타입</th><th>바인딩 필드</th><th>위젯</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>UBossHP_ViewModel</td><td>ViewModel</td>
+        <td>BossCurrentHP, BossMaxHP, BossPhase, StaggerGauge</td>
+        <td>WBP_BossHPBar</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="info-box">
+    <strong>WBP_BossHPBar 레이아웃:</strong> 화면 상단 중앙 고정 | 보스 이름 "에키드나" | HP 프로그레스 바 (빨강) | Phase 아이콘 | 카운터 게이지 (별도 바, 파랑) — 기존 HUD_ViewModel / WBP_HUD 구조 동일하게 구현
+  </div>
+
+  <h3>4.6 카운터 시스템</h3>
+  <p>카운터 가능 패턴(PoisonBreath, Nexus) 실행 중 <code>bCounterWindowOpen = true</code> 플래그를 열고,
+  플레이어의 기본 공격 또는 특정 스킬이 보스에 명중 시 <code>ABossBase::TryCounter()</code>를 호출한다.
+  성공 시 패턴 <code>Cancel()</code> + 보스 다운 상태 3초 적용.</p>
+
+  <div class="warn-box">
+    ⚠️ <strong>구현 주의:</strong> 카운터는 플레이어 스킬의 <code>ApplyRadialDamage</code> 결과가 보스에 닿을 때 확인한다. 별도의 카운터 전용 스킬 타입은 만들지 않고, 보스의 <code>TakeDamage</code> 내에서 <code>bCounterWindowOpen</code> 체크 후 처리한다.
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>4. 기술 설계 (2/2)</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 5. VFX & 사운드                                    -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">5</div>
+    <div class="section-title">VFX & 사운드 에셋 목록</div>
+  </div>
+
+  <h3>5.1 Niagara 시스템 목록</h3>
+  <table>
+    <thead>
+      <tr><th>에셋 이름</th><th>용도</th><th>기반</th><th>우선순위</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>NS_BossEchidna_Idle</td><td>보스 대기 이펙트 (보라 오라)</td><td>신규</td>
+        <td><span class="priority-low">낮음</span></td>
+      </tr>
+      <tr>
+        <td>NS_TailSwipe_Warning</td><td>꼬리 패턴 경고 부채꼴 마커</td><td>신규</td>
+        <td><span class="priority-high">높음</span></td>
+      </tr>
+      <tr>
+        <td>NS_PoisonBall</td><td>독구슬 발사체 비행 이펙트</td><td>신규 (NS_Blaze 참고)</td>
+        <td><span class="priority-high">높음</span></td>
+      </tr>
+      <tr>
+        <td>NS_PoisonZone</td><td>독 장판 루핑 (NS_FrostCallCircle 참고)</td><td>NS_FrostCallCircle 복제</td>
+        <td><span class="priority-high">높음</span></td>
+      </tr>
+      <tr>
+        <td>NS_PoisonFlower</td><td>독꽃 경고 원 + 폭발</td><td>NS_InfernoCircle 참고</td>
+        <td><span class="priority-high">높음</span></td>
+      </tr>
+      <tr>
+        <td>NS_PoisonBreath</td><td>직선 브레스 이펙트</td><td>신규 (Ribbon Emitter)</td>
+        <td><span class="priority-mid">중간</span></td>
+      </tr>
+      <tr>
+        <td>NS_Nexus_Suction</td><td>흡기 소용돌이 이펙트</td><td>신규</td>
+        <td><span class="priority-mid">중간</span></td>
+      </tr>
+      <tr>
+        <td>NS_Nexus_Explosion</td><td>흡기 폭발 이펙트</td><td>NS_Magma_Shot_Impact 참고</td>
+        <td><span class="priority-mid">중간</span></td>
+      </tr>
+      <tr>
+        <td>NS_PoisonWall</td><td>회전 독 장막</td><td>신규</td>
+        <td><span class="priority-low">낮음</span></td>
+      </tr>
+      <tr>
+        <td>NS_PhaseTransition</td><td>Phase 전환 전신 이펙트</td><td>신규</td>
+        <td><span class="priority-mid">중간</span></td>
+      </tr>
+      <tr>
+        <td>NS_CounterSuccess</td><td>카운터 성공 플래시</td><td>신규 (단순 버스트)</td>
+        <td><span class="priority-mid">중간</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>5.2 사운드 목록</h3>
+  <table>
+    <thead>
+      <tr><th>에셋 이름</th><th>용도</th><th>우선순위</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SFX_TailSwipe_Whoosh</td><td>꼬리 휩쓸기 효과음</td><td><span class="priority-high">높음</span></td></tr>
+      <tr><td>SFX_PoisonBall_Launch</td><td>독구슬 발사 효과음</td><td><span class="priority-high">높음</span></td></tr>
+      <tr><td>SFX_PoisonBall_Impact</td><td>독구슬 착탄 효과음</td><td><span class="priority-high">높음</span></td></tr>
+      <tr><td>SFX_Nexus_Suction</td><td>흡기 앰비언트 루프</td><td><span class="priority-mid">중간</span></td></tr>
+      <tr><td>SFX_Nexus_Explosion</td><td>흡기 폭발음</td><td><span class="priority-mid">중간</span></td></tr>
+      <tr><td>SFX_PhaseTransition</td><td>페이즈 전환 드라마틱 음</td><td><span class="priority-mid">중간</span></td></tr>
+      <tr><td>BGM_EchidnaPhase1</td><td>Phase 1 배경 음악</td><td><span class="priority-low">낮음</span></td></tr>
+      <tr><td>BGM_EchidnaPhase2</td><td>Phase 2 배경 음악 (강화)</td><td><span class="priority-low">낮음</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="info-box">
+    💡 <strong>에셋 우선순위 기준:</strong> 게임플레이에 직접 관련된 경고 마커/데미지 VFX → 높음. 연출/분위기 관련 → 낮음. 초기 구현에서는 높음 우선순위만 먼저 제작하고 나머지는 플레이스홀더 사용 가능.
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>5. VFX & 사운드</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 6. 구현 단계별 계획                                -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">6</div>
+    <div class="section-title">구현 단계별 계획 (스프린트)</div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">1</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">보스 기반 클래스 뼈대 구축</div>
+      <div class="impl-step-desc">
+        <code>ABossBase</code>, <code>UBossPatternBase</code> C++ 클래스 작성. HP 관리, TakeDamage 오버라이드,
+        패턴 스케줄러(ScheduleNextPattern / ExecuteActivePattern / OnPatternComplete) 기본 흐름 구현.
+        <code>ABossEchidna</code> 파생 클래스 생성 및 BP_BossEchidna 배치.
+        <code>ARaidManager</code> 뼈대 작성 (StartRaid / OnBossDefeated / OnPlayerDied).
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-both">C++ 위주</span>
+        <span class="badge badge-ok">플레이어 코드 무변경</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">2</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">보스 HP 바 UI (BossHP_ViewModel)</div>
+      <div class="impl-step-desc">
+        <code>UBossHP_ViewModel</code> MVVM 클래스 작성 (BossCurrentHP, BossMaxHP, BossPhase FieldNotify).
+        <code>WBP_BossHPBar</code> 위젯 제작 — 화면 상단 중앙 배치, HP 프로그레스 바, Phase 텍스트.
+        RaidManager의 StartRaid에서 위젯 AddToViewport.
+        ABossBase::TakeDamage에서 ViewModel 갱신 연결.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-both">C++ + Blueprint</span>
+        <span class="badge badge-ok">기존 HUD_ViewModel 패턴 동일</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">3</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">P3. 독꽃 패턴 (UPatternPoisonFlower + APoisonFlowerActor)</div>
+      <div class="impl-step-desc">
+        가장 단순한 구조이며 기존 <code>AInfernoZoneActor</code>와 거의 동일한 패턴.
+        <code>APoisonFlowerActor</code> 구현 — CircleShowTime 동안 경고 원 VFX → ApplyRadialDamage.
+        <code>UPatternPoisonFlower</code>에서 5개 위치 무작위 선택 → 0.3s 간격 순차 스폰.
+        패턴 완료 조건: 전체 APoisonFlowerActor 폭발 완료 카운트.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-phase1">Phase 1</span>
+        <span class="badge badge-ok">InfernoZoneActor 거의 동일 구조</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">4</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">P2. 독 투척 (UPatternPoisonThrow + APoisonBallActor + APoisonZoneActor)</div>
+      <div class="impl-step-desc">
+        <code>APoisonBallActor</code> — BlazeProjectile 구조 참고, 플레이어 방향으로 포물선 이동.
+        착지 시 <code>APoisonZoneActor</code> 스폰 (FrostCallZoneActor 참고 — 루핑 DoT, 2s 후 자동 소멸).
+        <code>UPatternPoisonThrow</code> — 플레이어 좌/중/우 3방향으로 0.2s 간격 발사.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-phase1">Phase 1+2</span>
+        <span class="badge badge-warn">발사체 2종 필요</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">5</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">P1. 꼬리 휩쓸기 (UPatternTailSwipe)</div>
+      <div class="impl-step-desc">
+        경고 마커(부채꼴 DecalComponent 또는 Niagara) 0.8s 표시 후
+        전방 120도 부채꼴 범위 TriggerVolume Overlap → ReceiveDamage 호출.
+        보스 애니메이션 노티파이("Notify_TailSwipe_Hit")로 완료 조건 연동.
+        애니메이션이 없을 경우 0.8s + 0.5s(히트 판정) 타이머로 대체.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-phase1">Phase 1+2</span>
+        <span class="badge badge-warn">애니메이션 BP 연동 필요</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">6</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">P5. 독 브레스 + 카운터 시스템</div>
+      <div class="impl-step-desc">
+        <code>APoisonBreathActor</code> — GustTornadoActor 참고 (직선 박스 콜리전 + 틱 DoT).
+        <code>ABossBase::bCounterWindowOpen</code> 플래그 + <code>TryCounter()</code> 함수 추가.
+        TakeDamage에서 카운터 윈도우 열려 있으면 카운터 성공 처리.
+        성공 시 ActivePattern→Cancel() + 보스 3s 스턴(이동/공격 정지).
+        WBP_BossHPBar에 카운터 게이지 표시 추가.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-phase1">Phase 1+2</span>
+        <span class="badge badge-counter">카운터 구현</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">7</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">P4. 독뱀 소환 (UPatternSummon + APoisonSnakeActor)</div>
+      <div class="impl-step-desc">
+        <code>APoisonSnakeActor</code> (ACharacter 기반) — 심플 추적 AI.
+        Tick에서 플레이어 방향으로 AddMovementInput, 근접 거리(200cm) 이내 주기적 근접 공격.
+        HP 500, TakeDamage로 처치 가능. 30s 타임아웃 시 자동 소멸.
+        UPatternSummon 완료 조건: 전체 독뱀 처치 or 타임아웃.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-phase1">Phase 1</span>
+        <span class="badge badge-warn">AI 구현 필요 (심플)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">8</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">페이즈 전환 시퀀스 + Phase 2 개시</div>
+      <div class="impl-step-desc">
+        ABossEchidna::TransitionToPhase(2) 오버라이드.
+        카메라 셰이크, NS_PhaseTransition, 조명 색조 변환 (Timeline or Lerp).
+        무적 4초 → Phase2 패턴 풀 활성 → 패턴 주기 단축.
+        WBP_BossHPBar Phase 표시 갱신.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-both">C++ + Blueprint</span>
+        <span class="badge badge-mid">연출</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">9</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">P6+P7. Phase 2 신규 패턴 (넥서스 + 독 장막)</div>
+      <div class="impl-step-desc">
+        <strong>넥서스:</strong> 흡기 중 플레이어에게 매 틱 보스 방향 AddActorWorldOffset 적용.
+        폭발은 AInfernoZoneActor 구조 그대로 유사 구현.
+        <strong>독 장막:</strong> APoisonWallActor 4개 — URotatingMovementComponent 활용.
+        오버랩 시 DoT 적용.
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-phase2">Phase 2</span>
+        <span class="badge badge-danger">가장 복잡</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="impl-step">
+    <span class="step-number">10</span>
+    <div class="impl-step-content">
+      <div class="impl-step-title">클리어 / 와이프 처리 + 폴리싱</div>
+      <div class="impl-step-desc">
+        보스 HP 0 → OnBossDefeated → 클리어 UI (WBP_RaidClear) 표시.
+        플레이어 HP 0 → OnPlayerDied → 와이프 UI + ResetRaid 선택.
+        전체 패턴 조율 (쿨타임, 가중치, 데미지 수치 밸런싱).
+        VFX/SFX 에셋 교체 (플레이스홀더 → 실제 에셋).
+      </div>
+      <div class="impl-step-tags">
+        <span class="badge badge-ok">마무리</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>6. 구현 단계별 계획</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- 7. 미결 항목 & 리스크                              -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="section-header">
+    <div class="section-num">7</div>
+    <div class="section-title">미결 항목 & 리스크</div>
+  </div>
+
+  <h3>7.1 결정 필요 항목</h3>
+  <table>
+    <thead>
+      <tr><th>#</th><th>항목</th><th>선택지</th><th>영향</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>D1</td>
+        <td>보스 스켈레탈 메시</td>
+        <td>① Fab에서 뱀 캐릭터 에셋 구입 ② 기존 마네킹으로 임시 대체</td>
+        <td>애니메이션 노티파이 연동 범위 결정</td>
+      </tr>
+      <tr>
+        <td>D2</td>
+        <td>카운터 스킬 지정 방식</td>
+        <td>① 모든 스킬이 카운터 가능 ② 특정 스킬(기본 공격)만 카운터 가능</td>
+        <td>TryCounter 호출 위치 결정</td>
+      </tr>
+      <tr>
+        <td>D3</td>
+        <td>와이프 후 처리</td>
+        <td>① 같은 레벨에서 즉시 리셋 ② 레벨 재로드</td>
+        <td>ResetRaid 구현 복잡도</td>
+      </tr>
+      <tr>
+        <td>D4</td>
+        <td>독뱀 소환체 AI</td>
+        <td>① 단순 Tick 추적 (NavMesh 없음) ② ABehaviorTree 도입</td>
+        <td>추적 정밀도 vs 구현 공수</td>
+      </tr>
+      <tr>
+        <td>D5</td>
+        <td>레이드 진입 방식</td>
+        <td>① 레벨에 보스 미리 배치 (BP_BossEchidna + BP_RaidManager) ② 별도 레벨로 이동</td>
+        <td>레벨 구성 방식</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>7.2 기술 리스크</h3>
+
+  <div class="danger-box">
+    <strong>HIGH — 독뱀 소환체 NavMesh 충돌:</strong> 현재 프로젝트가 NavMesh 없이 <code>RequestDirectMove</code>로 이동하므로, 소환체도 NavMesh 없이 직접 AddMovementInput으로 추적해야 한다. 장애물 우회 불가 — 보스 아레나를 장애물 없는 평탄한 원형으로 설계하여 회피.
+  </div>
+
+  <div class="warn-box">
+    <strong>MID — 흡기(넥서스) 당기기 구현:</strong> AddActorWorldOffset으로 플레이어를 보스 방향으로 당기면 기존 이동 시스템(<code>ControllerMoveVelocity</code>)과 충돌 가능. 흡기 중 PlayerController 이동 입력을 일시 차단하거나, LaunchCharacter를 활용하는 방식 검토 필요.
+  </div>
+
+  <div class="warn-box">
+    <strong>MID — 보스 크기와 카메라 거리:</strong> 보스가 대형일 경우 기존 스프링암 거리(기본값)에서 화면에 잘 안 보일 수 있음. 레이드 진입 시 CameraBoom ArmLength를 일시적으로 증가시키는 처리 필요.
+  </div>
+
+  <div class="info-box">
+    <strong>LOW — 패턴 동시 처리:</strong> 현재 설계는 한 번에 하나의 패턴만 실행(ActivePattern). 독뱀 소환 패턴이 완료 대기 중에 다른 패턴이 겹치지 않도록 IsComplete() 구현 주의 필요. 독뱀 타임아웃(30s) 안에 다음 패턴이 시작되지 않아야 함.
+  </div>
+
+  <h3>7.3 구현 체크리스트</h3>
+  <ul class="checklist">
+    <li><div class="check-box"></div>ABossBase + UBossPatternBase C++ 클래스 생성</li>
+    <li><div class="check-box"></div>ABossEchidna BP 배치 및 기본 스탯 설정</li>
+    <li><div class="check-box"></div>ARaidManager 배치 및 StartRaid 연결</li>
+    <li><div class="check-box"></div>WBP_BossHPBar 위젯 제작 및 ViewModel 바인딩</li>
+    <li><div class="check-box"></div>APoisonFlowerActor 구현 (UPatternPoisonFlower)</li>
+    <li><div class="check-box"></div>APoisonBallActor + APoisonZoneActor 구현 (UPatternPoisonThrow)</li>
+    <li><div class="check-box"></div>꼬리 휩쓸기 부채꼴 AoE 콜리전 구현 (UPatternTailSwipe)</li>
+    <li><div class="check-box"></div>APoisonBreathActor + 카운터 시스템 구현 (UPatternPoisonBreath)</li>
+    <li><div class="check-box"></div>APoisonSnakeActor 심플 추적 AI (UPatternSummon)</li>
+    <li><div class="check-box"></div>Phase 전환 시퀀스 (카메라 셰이크 + 무적 + 패턴 전환)</li>
+    <li><div class="check-box"></div>UPatternNexus 흡기 + 폭발 구현</li>
+    <li><div class="check-box"></div>APoisonWallActor + RotatingMovement 구현 (UPatternPoisonWall)</li>
+    <li><div class="check-box"></div>클리어 / 와이프 UI 및 ResetRaid</li>
+    <li><div class="check-box"></div>Niagara VFX 에셋 제작 (우선순위 높음 5종)</li>
+    <li><div class="check-box"></div>전체 패턴 밸런스 조정 (쿨타임, 데미지 수치)</li>
+  </ul>
+
+  <div class="page-footer">
+    <span>LoA Project — 에키드나 2관문 구현 계획서</span>
+    <span>7. 미결 항목 & 리스크 · END</span>
+  </div>
+</div>
+
+</body>
+</html>

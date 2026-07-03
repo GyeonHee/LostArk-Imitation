@@ -22,6 +22,7 @@
 | `HUD_ViewModel` | MVVM — HP/MP 바 |
 | `SkillTree_ViewModel` | MVVM — 스킬트리 창 전체 |
 | `SkillTreeEntry_ViewModel` | MVVM — 스킬트리 행(Row) 단위 |
+| `AHexArena` | 에키드나 2관문 육각형 타일 아레나 + 외곽 벽 |
 
 ### 스킬 시스템
 - `SkillBase` → `SkillInstant` / `SkillCast` / `SkillCharge` / `SkillCombo` / (Hold는 SkillBase 직접 상속)
@@ -156,7 +157,45 @@
 - **Hold 활성 중** → 다른 스킬 키 완전 씹힘 (큐 등록조차 안 됨)
 - **사거리 이동 취소** → 즉시 잠금 해제 + 쿨타임 없음
 
-## 구현된 기능 (2026-06-23 기준)
+## 레이드 맵 — AHexArena (`Source/LoA/Raid/HexArena.h/.cpp`) — 2026-07-03
+
+### 구조
+- `UHierarchicalInstancedStaticMeshComponent` (HexMeshes) — 타일 HISC, 단일 드로우콜
+- `UHierarchicalInstancedStaticMeshComponent` (WallMeshes) — 외곽 벽 HISC, 단일 드로우콜
+- `OnConstruction` — 에디터에서 파라미터 변경 시 실시간 리빌드
+
+### 타일 그리드 수학
+- **좌표계**: Pointy-top Axial (q, r)
+- **World 변환**: `X = D*(q + r*0.5)`, `Y = D*√3/2*r`, `D = TileSpacing + HexGap`
+- **루프 범위**: q ∈ [-R, R], r ∈ [max(-R,-q-R), min(R,-q+R)], R = SideCount-1
+- **총 타일 수**: 3R²+3R+1 (SideCount=4 → R=3 → 37개)
+- `TileYaw=30°` — Modeling Mode 기본 Flat-top 메시를 Pointy-top으로 회전
+
+### 외곽 벽 (타일 변 단위)
+- 6방향 이웃 벡터 `GDQ[6], GDR[6]` + 외향 법선 각도 `GEdgeAngle[6]`
+- **노출 변 판정**: `IsValidTile(q+dq, r+dr, R)` 불만족 시 해당 방향에 벽 배치
+- SideCount=4 기준 외곽 노출 변 **24개** (코너 타일 6×2 + 일반 경계 타일 12×1)
+- **벽 중심 거리**: `TileSpacing*0.5 + WallThickness*0.5 + WallOffset` (안쪽 면이 타일 외곽선에 정렬)
+- **벽 길이**: `WallLengthOverride > 0` 이면 직접 지정, 아니면 `TileSpacing / √3` (자동)
+- **스케일**: `(WallThickness, EdgeLength, WallHeight)` — SM_HexWall은 반드시 1×1×1 단위 박스
+
+### BP_HexArena 파라미터
+| 카테고리 | 파라미터 | 기본값 | 설명 |
+|---|---|---|---|
+| Hex Grid | SideCount | 4 | 한 변의 타일 수 |
+| Hex Grid | TileSpacing | 520 | 중심간 거리 cm (flat-to-flat과 일치) |
+| Hex Grid | HexGap | 10 | 타일 사이 틈 cm |
+| Hex Grid | TileYaw | 30 | 타일 회전 (Flat→Pointy top) |
+| Hex Wall | WallMesh | — | 1×1×1 단위 박스 메시 할당 |
+| Hex Wall | WallHeight | 400 | 벽 높이 cm |
+| Hex Wall | WallThickness | 30 | 벽 두께 cm |
+| Hex Wall | WallOffset | 0 | 외곽선 기준 추가 오프셋 cm |
+| Hex Wall | WallLengthOverride | 0 | 0=자동, 양수=직접 지정 cm |
+
+### 레벨
+- `Echidna2-1.umap` — 에키드나 2관문 메인 레벨, BP_HexArena 배치됨
+
+## 구현된 기능 (2026-07-03 기준)
 - [x] 마우스 클릭 이동
 - [x] 대시 (스페이스바)
 - [x] 스킬 시스템 (즉발/캐스팅/차지/콤보/홀딩)
@@ -181,6 +220,10 @@
 - [x] 사거리 자동이동 시스템 (Cast: 홀드 필요 / Instant: 원프레스)
 - [x] 이동 중 마우스 클릭 시 대기 스킬 취소 (쿨타임 없음)
 - [x] ESkillInputType::Hold 추가, FSkillData::HoldMaxTime 필드 추가
+- [x] AHexArena — 37타일 육각형 아레나 (HISC, Axial 좌표계, OnConstruction 실시간 리빌드)
+- [x] AHexArena 외곽 벽 — 타일 변 단위 24개 벽 조각 (HISC, 노출 변 자동 판정)
+- [ ] SM_HexTile 머티리얼 슬롯 분리 (윗면 MI_Rock_Inst_5, 옆면 어두운 색)
+- [ ] SM_HexWall 머티리얼 적용 (실제 벽 비주얼)
 - [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (혹한의 부름·아이스 에로우·돌풍 포함)
 - [ ] BP_FrostCall / BP_IceArrow / BP_Gust ZoneClass·VFX 에셋 할당
 - [ ] 스킬 레벨에 따른 데미지 계수 연동

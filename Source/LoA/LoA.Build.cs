@@ -31,6 +31,7 @@ public class LoA : ModuleRules
 			"LoA/UI",
 			"LoA/Skill",
 			"LoA/Status",
+			"LoA/Raid",
 			"LoA/Variant_Strategy",
 			"LoA/Variant_Strategy/UI",
 			"LoA/Variant_TwinStick",
