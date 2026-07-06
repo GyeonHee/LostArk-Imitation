@@ -13,6 +13,7 @@ class USpringArmComponent;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHPChanged, float /*NewHP*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMPChanged, float /*NewMP*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnCharmGaugeChanged, int32 /*NewCharmGauge*/);
 
 /**
  *  A controllable top-down perspective character
@@ -58,8 +59,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
 	float MaxMP;
 
+	// 매혹 게이지 — 특수 타일(똥장판 등)에 의해 누적, 가득 차면 별도 디버프 트리거용
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
+	int32 CharmGauge = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
+	int32 MaxCharmGauge = 10;
+
 	FOnHPChanged OnHPChanged;
 	FOnMPChanged OnMPChanged;
+	FOnCharmGaugeChanged OnCharmGaugeChanged;
 
 	/** Controller가 매 프레임 설정하는 원하는 이동 속도벡터 (ZeroVector = 이동 없음) */
 	FVector ControllerMoveVelocity = FVector::ZeroVector;
@@ -102,6 +111,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual void RestoreMP(float Amount);
+
+	/** 매혹 게이지 누적 (MaxCharmGauge에서 클램프) */
+	UFUNCTION(BlueprintCallable, Category="Stats")
+	virtual void AddCharmGauge(int32 Amount);
 
 	/** Returns the camera component **/
 	UCameraComponent* GetTopDownCameraComponent() const { return TopDownCameraComponent.Get(); }

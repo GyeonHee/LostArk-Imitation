@@ -127,3 +127,9 @@ void ALoACharacter::RestoreMP(float Amount)
 	MP = FMath::Min(MP + Amount, MaxMP);
 	OnMPChanged.Broadcast(MP);
 }
+
+void ALoACharacter::AddCharmGauge(int32 Amount)
+{
+	CharmGauge = FMath::Clamp(CharmGauge + Amount, 0, MaxCharmGauge);
+	OnCharmGaugeChanged.Broadcast(CharmGauge);
+}

@@ -157,12 +157,13 @@
 - **Hold 활성 중** → 다른 스킬 키 완전 씹힘 (큐 등록조차 안 됨)
 - **사거리 이동 취소** → 즉시 잠금 해제 + 쿨타임 없음
 
-## 레이드 맵 — AHexArena (`Source/LoA/Raid/HexArena.h/.cpp`) — 2026-07-03
+## 레이드 맵 — AHexArena (`Source/LoA/Raid/HexArena.h/.cpp`) — 2026-07-04
 
 ### 구조
 - `UHierarchicalInstancedStaticMeshComponent` (HexMeshes) — 타일 HISC, 단일 드로우콜
-- `UHierarchicalInstancedStaticMeshComponent` (WallMeshes) — 외곽 벽 HISC, 단일 드로우콜
+- `UProceduralMeshComponent` (WallMeshes) — 외곽 벽, 미터(miter) 접합 사다리꼴 지오메트리 실시간 생성
 - `OnConstruction` — 에디터에서 파라미터 변경 시 실시간 리빌드
+- 플러그인/모듈 의존성 추가: `.uproject`에 `ProceduralMeshComponent` 플러그인, `LoA.Build.cs`에 동일 모듈
 
 ### 타일 그리드 수학
 - **좌표계**: Pointy-top Axial (q, r)
@@ -171,13 +172,18 @@
 - **총 타일 수**: 3R²+3R+1 (SideCount=4 → R=3 → 37개)
 - `TileYaw=30°` — Modeling Mode 기본 Flat-top 메시를 Pointy-top으로 회전
 
-### 외곽 벽 (타일 변 단위)
+### 외곽 벽 (타일 변 단위, 미터 접합 사다리꼴) — 2026-07-04
 - 6방향 이웃 벡터 `GDQ[6], GDR[6]` + 외향 법선 각도 `GEdgeAngle[6]`
 - **노출 변 판정**: `IsValidTile(q+dq, r+dr, R)` 불만족 시 해당 방향에 벽 배치
 - SideCount=4 기준 외곽 노출 변 **24개** (코너 타일 6×2 + 일반 경계 타일 12×1)
-- **벽 중심 거리**: `TileSpacing*0.5 + WallThickness*0.5 + WallOffset` (안쪽 면이 타일 외곽선에 정렬)
-- **벽 길이**: `WallLengthOverride > 0` 이면 직접 지정, 아니면 `TileSpacing / √3` (자동)
-- **스케일**: `(WallThickness, EdgeLength, WallHeight)` — SM_HexWall은 반드시 1×1×1 단위 박스
+- **문제였던 것**: 이전엔 HISM 박스 인스턴싱(균일 스케일)이라 바깥쪽 모서리가 직각으로 남아 인접 벽끼리 안 맞물림
+- **해결**: 각 노출 변의 실제 타일 꼭짓점(`RHex = TileSpacing/√3`, 중심 기준 코너 각도 = `GEdgeAngle[d]±30°`)을 구하고,
+  인접한 변들이 만나는 꼭짓점을 허용오차(`WeldTolerance = clamp(HexGap*2, 1, 50)`) 내에서 용접(weld)
+- **미터 오프셋**: 한 꼭짓점에 모이는 변들의 외향 노멀 합 → 이등분 방향(`MiterDir`), 거리 배율 `1/cos(반각)`(`MiterFactor`)
+  → `InnerPoint = Vertex + MiterDir*WallOffset*MiterFactor`, `OuterPoint = Vertex + MiterDir*(WallOffset+WallThickness)*MiterFactor`
+  → 안쪽 변 길이는 그대로, 바깥쪽 변이 자동으로 늘어나 인접 조각과 꼭짓점을 정확히 공유 (사다리꼴)
+- **메시**: 변 하나당 Top/Outer/Inner 3개 쿼드 (`AddQuad` 헬퍼가 지정한 Normal 기준으로 winding 자동 보정), 닫힌 루프라 이음매(end cap) 불필요
+- **콜리전**: `bUseComplexAsSimpleCollision = true`
 
 ### BP_HexArena 파라미터
 | 카테고리 | 파라미터 | 기본값 | 설명 |
@@ -186,14 +192,49 @@
 | Hex Grid | TileSpacing | 520 | 중심간 거리 cm (flat-to-flat과 일치) |
 | Hex Grid | HexGap | 10 | 타일 사이 틈 cm |
 | Hex Grid | TileYaw | 30 | 타일 회전 (Flat→Pointy top) |
-| Hex Wall | WallMesh | — | 1×1×1 단위 박스 메시 할당 |
+| Hex Tile | TileClass | `AHexTile` | BeginPlay에 스폰할 개별 타일 클래스 (BP_HexTile로 서브클래싱해 메시 할당) |
+| Hex Wall | WallMaterial | — | 벽 머티리얼 (기존 WallMesh 스태틱메시 프로퍼티 대체, BP에서 재할당 필요) |
 | Hex Wall | WallHeight | 400 | 벽 높이 cm |
 | Hex Wall | WallThickness | 30 | 벽 두께 cm |
 | Hex Wall | WallOffset | 0 | 외곽선 기준 추가 오프셋 cm |
-| Hex Wall | WallLengthOverride | 0 | 0=자동, 양수=직접 지정 cm |
 
 ### 레벨
 - `Echidna2-1.umap` — 에키드나 2관문 메인 레벨, BP_HexArena 배치됨
+
+## 개별 타일 관리 — AHexTile (`Source/LoA/Raid/HexTile.h/.cpp`) — 2026-07-07
+
+### 왜 필요했나
+- 기존 `HexMeshes`(HISM)는 타일들이 인스턴스 트랜스폼 배열일 뿐이라 개별 오버랩 이벤트/상태를 가질 수 없음
+- 요구사항: 특정 타일(똥장판) 위에 서 있으면 매혹 게이지 누적 + 데미지, 똥장판에 둘러싸인 타일엔 거대한 꽃이 피어야 함 → 타일 단위의 콜리전 이벤트와 상태(enum)가 필요
+
+### 설계 — "에디터는 HISM, 플레이는 개별 액터"
+- `OnConstruction`(에디터/디자인 타임)은 그대로 `HexMeshes`로 프리뷰 — 슬라이더 조작마다 액터를 스폰/파괴하면 에디터가 무거워지고 아웃라이너가 지저분해지므로 여기선 손대지 않음
+- `BeginPlay`(런타임)에서만 `HexMeshes`를 `SetVisibility(false)` + 콜리전 끄고, 좌표(q,r)마다 실제 `AHexTile` 액터를 스폰해 게임플레이를 이 액터들이 전담
+- `EndPlay`에서 스폰된 타일 전부 `Destroy()` (PIE 종료/레벨 전환 시 정리)
+
+### AHexTile 구조
+- `TileMesh` (`UStaticMeshComponent`, 루트) — 콜리전 `BlockAll` 유지 (걷는 바닥 역할, 기존 HISM과 동일)
+- `OverlapBox` (`UBoxComponent`) — `OverlapAllDynamic`, 캐릭터가 타일 위에 "서 있는지"만 감지 (Block 없음)
+- `Coord` (`FIntPoint`) — 이 타일의 (q,r), `OwnerArena`가 이웃 조회할 때 사용
+- `TileType` (`EHexTileType`: Normal/PoopZone/Flower) — `SetTileType()`으로 전환. 메시는 고정(`TileMesh` 컴포넌트에 SM_HexTile 직접 할당), 타입별로 `NormalMaterial`/`PoopMaterial`/`FlowerMaterial` 중 하나만 `TileMesh->SetMaterial(0, ...)`로 교체 (BP_HexTile 기본값에서 3개 머티리얼 할당 필요)
+- `OnTileTypeChanged(NewType)` — `BlueprintImplementableEvent`, 꽃 개화·똥장판 이펙트 등 연출은 BP_HexTile에서 구현
+- **PoopZone 틱 효과**: `HandleBeginOverlap`에서 캐릭터 감지 시 즉시 1틱 + `PoopTickInterval`(기본 1s) 반복 타이머 시작 → `ApplyPoopTick()`에서 `Character->AddCharmGauge(PoopCharmGaugePerTick)` + `Character->ReceiveDamage(PoopTickDamage)`, `HandleEndOverlap`에서 타이머 클리어 (혹한의 부름과 동일한 "독립 타이머 틱" 패턴)
+
+### AHexArena 쪽 변경
+- `TileClass` (`TSubclassOf<AHexTile>`) — BP에서 BP_HexTile 등 서브클래스 지정 가능, 비어 있으면 `AHexTile` 기본 클래스 사용
+- `TileMap` (`TMap<FIntPoint, TObjectPtr<AHexTile>>`) — 좌표→타일 액터 매핑, `SpawnGameplayTiles()`가 채움
+- `ComputeTileLocalTransform(q, r)` — 기존 `RebuildGrid()` 안에 있던 좌표 계산식을 분리해 `SpawnGameplayTiles()`와 공유 (HISM 프리뷰와 실제 스폰 위치가 항상 일치하도록)
+- `GetTile(Coord)` — 좌표로 타일 액터 조회, `BlueprintCallable`
+- `NotifyTileTypeChanged(ChangedCoord)` — `AHexTile::SetTileType()`이 호출. 바뀐 타일의 6방향 이웃마다 "그 이웃이 실제로 가진 이웃(그리드 밖 제외) 전부가 PoopZone인가"를 검사해서, 조건을 만족하는 Normal 타일을 자동으로 Flower로 전환 (기존 `GDQ/GDR` 이웃 벡터 재사용) — 외곽/코너 타일은 실제 이웃이 3~5개뿐이라 그 개수만큼만 만족해도 개화, 모든 타일이 개화 가능
+
+### 사용 흐름 (스킬/기믹 쪽에서 호출할 때)
+1. 보스 기믹이 특정 좌표를 똥장판으로 만들고 싶으면 `Arena->GetTile(FIntPoint(q, r))->SetTileType(EHexTileType::PoopZone)` 호출
+2. 캐릭터가 그 타일 위를 지나가면 `OverlapBox`가 감지 → 매혹 게이지 누적 + 데미지 자동 진행
+3. 여러 개의 똥장판이 한 타일을 완전히 둘러싸면 `NotifyTileTypeChanged`가 자동으로 그 타일을 Flower로 전환 (별도 호출 불필요)
+
+### ALoACharacter 추가 (`LoACharacter.h/.cpp`)
+- `CharmGauge`/`MaxCharmGauge` (기본 0/10), `OnCharmGaugeChanged` 델리게이트 — HP/MP와 동일한 패턴
+- `AddCharmGauge(int32 Amount)` — 클램프 누적 + 델리게이트 브로드캐스트 (게이지 가득 찼을 때의 디버프 효과는 아직 미구현)
 
 ## 구현된 기능 (2026-07-03 기준)
 - [x] 마우스 클릭 이동
@@ -221,9 +262,15 @@
 - [x] 이동 중 마우스 클릭 시 대기 스킬 취소 (쿨타임 없음)
 - [x] ESkillInputType::Hold 추가, FSkillData::HoldMaxTime 필드 추가
 - [x] AHexArena — 37타일 육각형 아레나 (HISC, Axial 좌표계, OnConstruction 실시간 리빌드)
-- [x] AHexArena 외곽 벽 — 타일 변 단위 24개 벽 조각 (HISC, 노출 변 자동 판정)
+- [x] AHexArena 외곽 벽 — 타일 변 단위 24개 벽 조각, 미터 접합 사다리꼴 프로시저럴 메시로 인접 조각과 완전히 맞물림
+- [x] AHexTile — 개별 타일 액터 (BeginPlay 스폰), 타입별 오버랩 이벤트 + 비주얼 전환 (Normal/PoopZone/Flower)
+- [x] 매혹 게이지 (CharmGauge) — ALoACharacter, PoopZone 틱마다 누적 + 데미지
+- [x] 똥장판에 둘러싸인 타일 자동 Flower 전환 (AHexArena::NotifyTileTypeChanged)
 - [ ] SM_HexTile 머티리얼 슬롯 분리 (윗면 MI_Rock_Inst_5, 옆면 어두운 색)
-- [ ] SM_HexWall 머티리얼 적용 (실제 벽 비주얼)
+- [ ] BP_HexArena에서 WallMaterial 재할당 (기존 WallMesh 프로퍼티가 프로시저럴 메시 전환으로 제거됨)
+- [ ] BP_HexTile 서브클래스 생성 + NormalMesh/PoopMesh/FlowerMesh 할당 (NormalMesh는 기존 HISM 메시와 동일하게)
+- [ ] 매혹 게이지 가득 찼을 때의 디버프 효과 미구현 (현재는 누적만 됨)
+- [ ] 꽃 개화/똥장판 VFX 연출 (AHexTile::OnTileTypeChanged BlueprintImplementableEvent에서 구현 필요)
 - [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (혹한의 부름·아이스 에로우·돌풍 포함)
 - [ ] BP_FrostCall / BP_IceArrow / BP_Gust ZoneClass·VFX 에셋 할당
 - [ ] 스킬 레벨에 따른 데미지 계수 연동
