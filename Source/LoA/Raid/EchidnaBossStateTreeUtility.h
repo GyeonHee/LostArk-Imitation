@@ -7,6 +7,8 @@
 #include "EchidnaBossStateTreeUtility.generated.h"
 
 class AEchidnaBoss;
+class AEchidnaMirrorActor;
+class AAIController;
 
 /**
  * FStateTreeCondition_BossLineThreshold의 Instance Data
@@ -114,6 +116,98 @@ struct FStateTreeTask_WaitRandomDuration : public FStateTreeTaskCommonBase
 
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeTask_EchidnaFourMirrorPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaFourMirrorPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Mirror")
+	TSubclassOf<AEchidnaMirrorActor> MirrorClass;
+
+	// 보스 중심에서 거울까지 배치 거리 (cm) — 보스 정면 기준 대각 4방향(45/135/225/315도)에 배치
+	UPROPERTY(EditAnywhere, Category = "Mirror")
+	float MirrorSpawnRadius = 500.f;
+
+	UPROPERTY(EditAnywhere, Category = "Mirror")
+	float Damage = 10.f;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaMirrorActor>> SpawnedMirrors;
+};
+
+/**
+ * "4거울" 짤패턴 — 보스 정면 기준 대각 4방향(45/135/225/315도)에 거울을 동시에 스폰한다.
+ * 각 거울은 스폰 직후부터 개별적으로 플레이어를 추적 조준하다가 스스로 빛줄기를 발사한다
+ * (거울 개별 동작은 AEchidnaMirrorActor 참조). 이 Task는 스폰만 담당하고,
+ * 스폰된 거울 전부가 발사를 마칠 때까지 State를 Running으로 유지한다.
+ */
+USTRUCT(meta = (DisplayName = "Echidna Four Mirror Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaFourMirrorPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaFourMirrorPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeTask_EchidnaPatrol의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaPatrolInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 보스 현재 위치 기준으로 패트롤 목표 지점을 고를 반경 (cm)
+	UPROPERTY(EditAnywhere, Category = "Patrol")
+	float PatrolRadius = 600.f;
+
+	// 목표 지점 도착 판정 반경 (cm)
+	UPROPERTY(EditAnywhere, Category = "Patrol")
+	float AcceptanceRadius = 50.f;
+};
+
+/**
+ * 쿨다운(짤패턴 사이 대기) 중 보스가 제자리에 멈춰있지 않도록 무작위 지점으로 걸어가게 하는 패트롤.
+ * 목적지에 도착하거나(Succeeded) State가 중간에 다른 이유로 끝나면(ExitState에서 StopMovement) 종료.
+ * 레벨에 Nav Mesh Bounds Volume이 없으면 MoveToLocation이 실패해서 보스가 움직이지 않는다.
+ */
+USTRUCT(meta = (DisplayName = "Echidna Patrol", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaPatrol : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaPatrolInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;

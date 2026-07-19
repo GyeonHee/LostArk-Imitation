@@ -21,7 +21,8 @@ public class LoA : ModuleRules
 			"Niagara",
 			"UMG",
 			"Slate",
-			"ModelViewViewModel"
+			"ModelViewViewModel",
+			"ProceduralMeshComponent"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

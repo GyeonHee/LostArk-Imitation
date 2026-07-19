@@ -23,6 +23,9 @@
 | `SkillTree_ViewModel` | MVVM — 스킬트리 창 전체 |
 | `SkillTreeEntry_ViewModel` | MVVM — 스킬트리 행(Row) 단위 |
 | `AHexArena` | 에키드나 2관문 육각형 타일 아레나 + 외곽 벽 |
+| `AEchidnaBoss` | 에키드나 보스 — HP-줄 조회, 대형 패턴 발동 추적 |
+| `AEchidnaBossAIController` | 에키드나 보스 AI — StateTreeAIComponent 보유 |
+| `AEchidnaMirrorActor` | 에키드나 "4거울" 짤패턴 — 추적 장판 + 레이저 발사 |
 
 ### 스킬 시스템
 - `SkillBase` → `SkillInstant` / `SkillCast` / `SkillCharge` / `SkillCombo` / (Hold는 SkillBase 직접 상속)
@@ -236,6 +239,35 @@
 - `CharmGauge`/`MaxCharmGauge` (기본 0/10), `OnCharmGaugeChanged` 델리게이트 — HP/MP와 동일한 패턴
 - `AddCharmGauge(int32 Amount)` — 클램프 누적 + 델리게이트 브로드캐스트 (게이지 가득 찼을 때의 디버프 효과는 아직 미구현)
 
+## 에키드나 보스 짤패턴 — 4거울 (`Source/LoA/Raid/EchidnaMirrorActor.h/.cpp`, `EchidnaBossStateTreeUtility.h/.cpp`) — 2026-07-19
+
+### 패턴 개요
+- 짤패턴 State 진입 시 보스 정면 기준 대각 4방향(45/135/225/315도)에 거울 4개를 동시 스폰 (`FStateTreeTask_EchidnaFourMirrorPattern`)
+- 각 거울(`AEchidnaMirrorActor`)은 스폰 직후부터 독립적으로 Tracking → Firing 2단계를 자체 진행, StateTree는 전부 `IsFinished()`(레이저까지 끝남) 될 때까지 Running 유지
+
+### AEchidnaMirrorActor 2단계 동작
+- **Tracking (기본 3초, `TrackingDuration`)**: 거울에서 플레이어 방향/거리로 뻗은 직사각형 장판(`ZoneMeshComp`)이 실시간으로 따라옴
+  - 회전은 `FMath::RInterpConstantTo`로 `TrackingRotationSpeed`(기본 60도/초) 각속도 제한 — 즉시 스냅 안 하게 해서 대시 같은 순간이동에도 즉시 안 꺾임
+  - 장판 길이는 매 틱 플레이어까지 실제 거리로 갱신 (`MaxRange`로 클램프)
+- **Firing (기본 3초, `FiringDuration`)**: 방향 고정, 장판 길이가 `MaxRange`까지 고정 연장 → 레이저로 전환
+  - 데미지: `LaserDamageTickInterval`(기본 0.5s)마다 반복 판정
+  - 넉백: 데미지 틱과 **별도 타이머**로 `KnockbackTickInterval`(기본 1s)마다 `LaunchCharacter(빔 진행방향*KnockbackStrength + 위로*KnockbackUpwardStrength)` — 혹한의 부름의 "독립 타이머 틱" 패턴과 동일
+  - 판정: `GetActorsInBeamBox()`로 박스 오버랩 공통화 (데미지/넉백 둘 다 재사용)
+- 완료 후 `LifeAfterBeam` 뒤 소멸
+
+### 비주얼 — 별도 에셋 없이도 즉시 보이게
+- `MirrorMeshComp`(엔진 Sphere) / `ZoneMeshComp`(엔진 Plane) — 생성자에서 `/Engine/BasicShapes/*` + `BasicShapeMaterial`을 기본으로 박아둠 (VFX 미할당이어도 스폰만 되면 무조건 보임)
+- 색상: `TrackingColor`(노랑)/`FiringColor`(빨강)를 `UMaterialInstanceDynamic`으로 `ColorParameterName`(기본 `"Color"`) Vector Parameter에 주입 — **머티리얼에 해당 이름의 파라미터가 있어야 실제로 색이 바뀜** (BasicShapeMaterial은 파라미터 없어서 안 바뀜, `M_MirrorLaser` 같은 커스텀 머티리얼 필요)
+- 반투명: `ZoneOpacity`(기본 0.35)를 Color의 Alpha로 전달 — **머티리얼 Blend Mode가 Translucent이고 Alpha가 Opacity 핀에 연결돼 있어야** 실제로 투명해짐 (Opaque면 Alpha 무시됨, UE 기본 제약)
+- `M_MirrorLaser` (`Content/Free_Magic/Demo/LevelPrototyping/Materials/`) — Vector Parameter 이름이 `"Color"`가 아니라 **`"Base Color"`**(공백 포함)라 `ColorParameterName`을 이거에 맞춰 BP에서 재설정함
+
+### 쿨다운 & 패턴 로테이션 (StateTree `ST_Echidna`)
+- `SmallPatternRotation`(패턴 후보들) 밖에 형제 State로 `Cooldown`(`Wait Random Duration` Min=3/Max=3)을 둠 — 안에 넣으면 In Order 선택 시 패턴보다 먼저 뽑힐 수 있어서 반드시 밖에 둬야 함
+- 각 패턴 State는 Task가 자체 완료 조건을 가진 것 **하나만** 남기고 (`Echidna Four Mirror Pattern` 등), On State Completed → `Cooldown`으로 연결
+- **버그였던 것**: 패턴 State 안에 `Wait Random Duration`을 공격 Task와 나란히(병렬) 넣고 Tasks 완료 정책이 "Any"였던 탓에, Wait(2~4초)가 레이저(6초)보다 먼저 끝나버려서 레이저 끝나기 전에 다음 패턴으로 넘어감 → Wait를 패턴 State에서 제거하고 `Cooldown`으로 분리해서 해결
+- `FStateTreeTask_EchidnaPatrol` — Cooldown 중 보스가 제자리에 멈춰있지 않도록 `PatrolRadius`(기본 600cm) 안 무작위 지점으로 `AIController->MoveToLocation()` 이동. **레벨에 Nav Mesh Bounds Volume 필요** (없으면 MoveToLocation 실패, 조용히 안 움직임)
+- Debug Text 같은 "완료를 리턴 안 하는" Task 하나만 State에 남기면 그 State는 영원히 안 끝남 (Cooldown 전이가 아예 안 됨) — 짤패턴 자리를 임시로 비워둘 땐 Wait 계열처럼 실제로 완료되는 Task를 최소 하나는 남겨야 함
+
 ## 구현된 기능 (2026-07-03 기준)
 - [x] 마우스 클릭 이동
 - [x] 대시 (스페이스바)
@@ -266,6 +298,10 @@
 - [x] AHexTile — 개별 타일 액터 (BeginPlay 스폰), 타입별 오버랩 이벤트 + 비주얼 전환 (Normal/PoopZone/Flower)
 - [x] 매혹 게이지 (CharmGauge) — ALoACharacter, PoopZone 틱마다 누적 + 데미지
 - [x] 똥장판에 둘러싸인 타일 자동 Flower 전환 (AHexArena::NotifyTileTypeChanged)
+- [x] 에키드나 보스 짤패턴 "4거울" — 대각 4방향 거울 동시 스폰, 추적(장판 따라옴) → 발사(레이저 고정) 2단계, 데미지+넉백 독립 틱
+- [x] 보스 쿨다운 중 패트롤 (FStateTreeTask_EchidnaPatrol)
+- [x] 짤패턴 로테이션 Cooldown 분리 (3초 텀 후 다음 패턴)
+- [ ] **넉백 판정 수정 필요** — 현재 구현 확인 중, 다음 작업 우선순위
 - [ ] SM_HexTile 머티리얼 슬롯 분리 (윗면 MI_Rock_Inst_5, 옆면 어두운 색)
 - [ ] BP_HexArena에서 WallMaterial 재할당 (기존 WallMesh 프로퍼티가 프로시저럴 메시 전환으로 제거됨)
 - [ ] BP_HexTile 서브클래스 생성 + NormalMesh/PoopMesh/FlowerMesh 할당 (NormalMesh는 기존 HISM 메시와 동일하게)
