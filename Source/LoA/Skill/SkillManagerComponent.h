@@ -25,9 +25,10 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 public:
-    // 슬롯 인덱스 상수 (0~17 = 스킬 18개, 18 = 대시)
+    // 슬롯 인덱스 상수 (0~17 = 스킬 18개, 18 = 대시, 19 = 즉시 기상)
     static constexpr int32 BasicAttackSlotIndex = 8;
     static constexpr int32 DashSlotIndex = 18;
+    static constexpr int32 GetUpSlotIndex = 19;
 
     // 스킬 데이터 테이블 (FSkillData 기반)
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Skills")
@@ -48,6 +49,15 @@ public:
     // DT_Skills에서 대시 행 이름
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Skills")
     FName DashRowName = FName("Dash");
+
+    // DT_Skills에서 즉시 기상 행 이름 — 대시와 동일한 패턴(인스턴스 없이 DT의 쿨타임/아이콘만 사용).
+    // 해당 이름의 행이 DT에 없으면 GetUpCooldownFallback 값으로 동작 (아이콘 없이)
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Skills")
+    FName GetUpRowName = FName("InstantGetUp");
+
+    // DT_Skills에 GetUpRowName 행이 없을 때 쓰는 기본 쿨타임 (초)
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Skills")
+    float GetUpCooldownFallback = 15.f;
 
     // 컨트롤러가 호출하는 함수
     void HandleKeyDown(int32 SlotIndex);

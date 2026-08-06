@@ -21,9 +21,10 @@ void USkillManagerComponent::BeginPlay()
 
 	// ...
 
-    SlotInstances.SetNum(19);
-    CooldownEndTimes.Init(0.0f, 19);
-    CooldownDurations.Init(1.0f, 19);
+    SlotInstances.SetNum(20);
+    CooldownEndTimes.Init(0.0f, 20);
+    CooldownDurations.Init(1.0f, 20);
+    CooldownDurations[GetUpSlotIndex] = GetUpCooldownFallback;
 
     for (int32 i = 0; i < 8; i++)
     {
@@ -86,6 +87,16 @@ void USkillManagerComponent::BeginPlay()
     else if (DashClass)
     {
         SlotInstances[DashSlotIndex] = NewObject<USkillBase>(GetOwner(), DashClass);
+    }
+
+    // 즉시 기상 슬롯 (인덱스 19) - 대시와 동일하게 인스턴스 없이 DT의 쿨타임/아이콘만 사용
+    if (SkillDataTable && !GetUpRowName.IsNone())
+    {
+        if (FSkillData* Row = SkillDataTable->FindRow<FSkillData>(GetUpRowName, TEXT("")))
+        {
+            CooldownDurations[GetUpSlotIndex] = Row->Cooldown;
+            UE_LOG(LogTemp, Log, TEXT("[SkillManager] 즉시 기상 DT 로드 성공 (쿨타임: %.1f초)"), Row->Cooldown);
+        }
     }
 }
 
@@ -353,10 +364,15 @@ FSkillData USkillManagerComponent::GetSlotSkillData(int32 SlotIndex) const
     if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])
         return SlotInstances[SlotIndex]->SkillData;
 
-    // 인스턴스 없이 DT만 쓰는 슬롯 (대시 등) 처리
+    // 인스턴스 없이 DT만 쓰는 슬롯 (대시, 즉시 기상) 처리
     if (SlotIndex == DashSlotIndex && SkillDataTable && !DashRowName.IsNone())
     {
         if (FSkillData* Row = SkillDataTable->FindRow<FSkillData>(DashRowName, TEXT("")))
+            return *Row;
+    }
+    if (SlotIndex == GetUpSlotIndex && SkillDataTable && !GetUpRowName.IsNone())
+    {
+        if (FSkillData* Row = SkillDataTable->FindRow<FSkillData>(GetUpRowName, TEXT("")))
             return *Row;
     }
 
@@ -390,10 +406,15 @@ UTexture2D* USkillManagerComponent::GetSlotIcon(int32 SlotIndex) const
     if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])
         return SlotInstances[SlotIndex]->SkillData.Icon.LoadSynchronous();
 
-    // 인스턴스 없이 DT만 쓰는 슬롯 (대시 등) 처리
+    // 인스턴스 없이 DT만 쓰는 슬롯 (대시, 즉시 기상) 처리
     if (SlotIndex == DashSlotIndex && SkillDataTable && !DashRowName.IsNone())
     {
         if (FSkillData* Row = SkillDataTable->FindRow<FSkillData>(DashRowName, TEXT("")))
+            return Row->Icon.LoadSynchronous();
+    }
+    if (SlotIndex == GetUpSlotIndex && SkillDataTable && !GetUpRowName.IsNone())
+    {
+        if (FSkillData* Row = SkillDataTable->FindRow<FSkillData>(GetUpRowName, TEXT("")))
             return Row->Icon.LoadSynchronous();
     }
 

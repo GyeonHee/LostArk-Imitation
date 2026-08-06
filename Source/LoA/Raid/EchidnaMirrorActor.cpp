@@ -8,6 +8,7 @@
 #include "Engine/OverlapResult.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/Character.h"
+#include "LoACharacter.h"
 #include "LoA.h"
 
 AEchidnaMirrorActor::AEchidnaMirrorActor()
@@ -135,7 +136,8 @@ void AEchidnaMirrorActor::BeginFiring()
 
 	BP_OnBeginFiring(GetActorLocation(), GetActorForwardVector());
 
-	MaxDamageTicks = FMath::Max(1, FMath::RoundToInt(FiringDuration / FMath::Max(LaserDamageTickInterval, 0.01f)));
+	// 맞는 순간 즉시 1틱 + 그 뒤로 Interval마다 반복이라 총 틱 수는 "간격 개수(floor) + 1"
+	MaxDamageTicks = FMath::Max(1, FMath::FloorToInt(FiringDuration / FMath::Max(LaserDamageTickInterval, 0.01f) + KINDA_SMALL_NUMBER) + 1);
 	CurrentDamageTick = 0;
 
 	ApplyLaserDamageTick();
@@ -146,14 +148,6 @@ void AEchidnaMirrorActor::BeginFiring()
 			DamageTimerHandle, this,
 			&AEchidnaMirrorActor::ApplyLaserDamageTick,
 			LaserDamageTickInterval, true);
-	}
-
-	if (Phase == EEchidnaMirrorPhase::Firing && KnockbackTickInterval > 0.f)
-	{
-		GetWorldTimerManager().SetTimer(
-			KnockbackTimerHandle, this,
-			&AEchidnaMirrorActor::ApplyKnockbackTick,
-			KnockbackTickInterval, true);
 	}
 }
 
@@ -211,6 +205,13 @@ void AEchidnaMirrorActor::ApplyLaserDamageTick()
 		UGameplayStatics::ApplyDamage(
 			HitActor, TickDamage, InstigatorController.Get(),
 			this, UDamageType::StaticClass());
+
+		// 맞을 때마다 넉다운(뒤로 튕겨나감) — 착지하기 전에 다음 틱이 오면 계속 다시 띄워지므로
+		// 4틱(1초)을 맞는 동안은 쭉 공중에 떠 있다가, 마지막 틱 이후 착지하면서 실제로 넘어짐
+		if (ALoACharacter* HitCharacter = Cast<ALoACharacter>(HitActor))
+		{
+			HitCharacter->ApplyKnockdown(GetActorLocation());
+		}
 	}
 
 	if (CurrentDamageTick >= MaxDamageTicks)
@@ -219,27 +220,9 @@ void AEchidnaMirrorActor::ApplyLaserDamageTick()
 	}
 }
 
-void AEchidnaMirrorActor::ApplyKnockbackTick()
-{
-	if (Phase != EEchidnaMirrorPhase::Firing) return;
-
-	const FVector LaunchVelocity = GetActorForwardVector() * KnockbackStrength + FVector(0.f, 0.f, KnockbackUpwardStrength);
-
-	TArray<AActor*> HitActors;
-	GetActorsInBeamBox(HitActors);
-	for (AActor* HitActor : HitActors)
-	{
-		if (ACharacter* HitCharacter = Cast<ACharacter>(HitActor))
-		{
-			HitCharacter->LaunchCharacter(LaunchVelocity, true, false);
-		}
-	}
-}
-
 void AEchidnaMirrorActor::FinishFiring()
 {
 	GetWorldTimerManager().ClearTimer(DamageTimerHandle);
-	GetWorldTimerManager().ClearTimer(KnockbackTimerHandle);
 	Phase = EEchidnaMirrorPhase::Done;
 
 	if (ZoneMeshComp)

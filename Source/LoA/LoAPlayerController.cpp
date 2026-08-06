@@ -298,6 +298,11 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(ControlledPawn->GetMovementComponent());
 	if (!CMC) return;
 
+	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn); Char && Char->IsKnockedDown())
+	{
+		return;
+	}
+
 	if (bDashSuppressed)
 	{
 		if (DashSuppressFrames > 0)
@@ -366,6 +371,11 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 void ALoAPlayerController::OnInputStarted()
 {
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	{
+		return;
+	}
+
 	if (USkillManagerComponent* SM = GetSkillManager())
 	{
 		SM->CancelActiveCastSkill();
@@ -391,6 +401,11 @@ void ALoAPlayerController::OnInputStarted()
 
 void ALoAPlayerController::OnSetDestinationTriggered()
 {
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	{
+		return;
+	}
+
 	bAutoMoving = false;
 	bHoldMoving = true;
 
@@ -471,7 +486,16 @@ void ALoAPlayerController::UpdateCachedDestination()
 void ALoAPlayerController::OnDashInput()
 {
 	ALoACharacter* Char = GetPawn<ALoACharacter>();
-	if (!Char || !Char->SkillManager) return;
+	if (!Char) return;
+
+	// 넉다운 중엔 스페이스바가 대시가 아니라 즉시 기상 — InstantGetUpCooldown이 다 찼을 때만 성공
+	if (Char->IsKnockedDown())
+	{
+		Char->TryInstantGetUp();
+		return;
+	}
+
+	if (!Char->SkillManager) return;
 	if (Char->SkillManager->IsSlotOnCooldown(USkillManagerComponent::DashSlotIndex)) return;
 
 	FHitResult HitResult;
@@ -492,6 +516,11 @@ void ALoAPlayerController::OnDashInput()
 
 void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 {
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	{
+		return;
+	}
+
 	if (USkillManagerComponent* SM = GetSkillManager())
 	{
 		SM->HandleKeyDown(SlotIndex);
@@ -500,6 +529,11 @@ void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 
 void ALoAPlayerController::OnSkillKeyHeld(int32 SlotIndex)
 {
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	{
+		return;
+	}
+
 	if (USkillManagerComponent* SM = GetSkillManager())
 	{
 		SM->HandleKeyHeld(SlotIndex, GetWorld()->GetDeltaSeconds());

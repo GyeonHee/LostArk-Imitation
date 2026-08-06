@@ -50,27 +50,17 @@ public:
 
 	// 추적 중 회전 속도 (도/초) — 낮을수록 천천히 따라옴. 대시 같은 순간이동에도 즉시 안 꺾이고 일정 속도로 쫓아옴
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float TrackingRotationSpeed = 60.f;
+	float TrackingRotationSpeed = 50.f;
 
 	// 방향 고정 후 레이저를 계속 유지/판정하는 시간 (초)
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float FiringDuration = 3.0f;
+	float FiringDuration = 1.0f;
 
-	// 레이저 판정 반복 간격 (초)
+	// 레이저 판정 반복 간격 (초) — 기본값(FiringDuration/3)은 맞는 순간 1틱 + 이 간격으로 3틱 더 = 1초간 총 4틱.
+	// 각 틱마다 ALoACharacter는 ApplyKnockdown으로 넉다운(뒤로 튕겨나감)도 같이 발생 — 착지 전에 다음 틱이 오면
+	// 계속 다시 띄워지므로 4틱을 맞는 동안은 쭉 공중에 떠 있는 것처럼 보임
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float LaserDamageTickInterval = 0.5f;
-
-	// 넉백 판정 반복 간격 (초) — 데미지 틱과 독립적으로 동작
-	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float KnockbackTickInterval = 1.0f;
-
-	// 넉백 세기 (빔 진행 방향으로 미는 힘)
-	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float KnockbackStrength = 800.f;
-
-	// 넉백 시 위로 띄우는 힘
-	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float KnockbackUpwardStrength = 300.f;
+	float LaserDamageTickInterval = 1.f / 3.f;
 
 	// 장판/레이저 최대 사거리 (cm) — 추적 중엔 플레이어까지 거리로 클램프, 발사 중엔 이 값 고정 사용
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
@@ -138,13 +128,11 @@ private:
 	int32 MaxDamageTicks = 1;
 
 	FTimerHandle DamageTimerHandle;
-	FTimerHandle KnockbackTimerHandle;
 	FTimerHandle StopFiringTimerHandle;
 
 	void UpdateZoneTransform(float CurrentDistance);
 	void BeginFiring();
 	void ApplyLaserDamageTick();
-	void ApplyKnockbackTick();
 	void FinishFiring();
 	void ApplyPhaseVisuals(UMaterialInterface* BaseMaterial, const FLinearColor& Color);
 	void GetActorsInBeamBox(TArray<AActor*>& OutActors) const;

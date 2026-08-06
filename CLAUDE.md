@@ -11,7 +11,7 @@
 ### 입력 시스템
 - `IMC_LoADefault` — 기본 이동/클릭 매핑
 - `SkillMappingContext` — 스킬 키 (Q/W/E/R/A/S/D/F)
-- 스킬 슬롯: 0=Q, 1=W, 2=E, 3=R, 4=A, 5=S, 6=D, 7=F, 8=기본공격, 18=대시
+- 스킬 슬롯: 0=Q, 1=W, 2=E, 3=R, 4=A, 5=S, 6=D, 7=F, 8=기본공격, 18=대시, 19=즉시 기상 (SkillManagerComponent 슬롯 시스템에 얹혀있을 뿐 실제 스킬은 아님 — 아래 "넉다운 시스템" 참조)
 
 ### 주요 클래스
 | 파일 | 역할 |
@@ -26,6 +26,7 @@
 | `AEchidnaBoss` | 에키드나 보스 — HP-줄 조회, 대형 패턴 발동 추적 |
 | `AEchidnaBossAIController` | 에키드나 보스 AI — StateTreeAIComponent 보유 |
 | `AEchidnaMirrorActor` | 에키드나 "4거울" 짤패턴 — 추적 장판 + 레이저 발사 |
+| `AEchidnaFanZoneActor` | 에키드나 "뒤로 빠지며 좌우장판" 짤패턴 — 예고 후 고리 단위 확장 부채꼴 장판 |
 
 ### 스킬 시스템
 - `SkillBase` → `SkillInstant` / `SkillCast` / `SkillCharge` / `SkillCombo` / (Hold는 SkillBase 직접 상속)
@@ -249,10 +250,11 @@
 - **Tracking (기본 3초, `TrackingDuration`)**: 거울에서 플레이어 방향/거리로 뻗은 직사각형 장판(`ZoneMeshComp`)이 실시간으로 따라옴
   - 회전은 `FMath::RInterpConstantTo`로 `TrackingRotationSpeed`(기본 60도/초) 각속도 제한 — 즉시 스냅 안 하게 해서 대시 같은 순간이동에도 즉시 안 꺾임
   - 장판 길이는 매 틱 플레이어까지 실제 거리로 갱신 (`MaxRange`로 클램프)
-- **Firing (기본 3초, `FiringDuration`)**: 방향 고정, 장판 길이가 `MaxRange`까지 고정 연장 → 레이저로 전환
-  - 데미지: `LaserDamageTickInterval`(기본 0.5s)마다 반복 판정
-  - 넉백: 데미지 틱과 **별도 타이머**로 `KnockbackTickInterval`(기본 1s)마다 `LaunchCharacter(빔 진행방향*KnockbackStrength + 위로*KnockbackUpwardStrength)` — 혹한의 부름의 "독립 타이머 틱" 패턴과 동일
-  - 판정: `GetActorsInBeamBox()`로 박스 오버랩 공통화 (데미지/넉백 둘 다 재사용)
+- **Firing (기본 1초, `FiringDuration`)**: 방향 고정, 장판 길이가 `MaxRange`까지 고정 연장 → 레이저로 전환
+  - 데미지: `LaserDamageTickInterval`(기본 1/3초)마다 반복 판정 — 맞는 순간 즉시 1틱 + 그 뒤 3틱 = 1초간 총 4틱. `MaxDamageTicks`는 `floor(FiringDuration/Interval)+1`로 계산 (아래 "넉다운 시스템" 참조, 예전엔 `round()`라 "즉시 1틱+반복" 구조와 안 맞았음)
+  - 판정: `GetActorsInBeamBox()`로 박스 오버랩
+  - 별도 넉백 시스템(`KnockbackTickInterval`/`KnockbackStrength` 등)은 **제거됨** — 대신 데미지 틱마다 `ALoACharacter::ApplyKnockdown()` 호출로 통합 (아래 "넉다운 시스템" 참조)
+  - `TrackingRotationSpeed` 기본값 60 → 100 → 80 → **50**도/초로 재조정 (플레이어 피드백 기준)
 - 완료 후 `LifeAfterBeam` 뒤 소멸
 
 ### 비주얼 — 별도 에셋 없이도 즉시 보이게
@@ -267,6 +269,68 @@
 - **버그였던 것**: 패턴 State 안에 `Wait Random Duration`을 공격 Task와 나란히(병렬) 넣고 Tasks 완료 정책이 "Any"였던 탓에, Wait(2~4초)가 레이저(6초)보다 먼저 끝나버려서 레이저 끝나기 전에 다음 패턴으로 넘어감 → Wait를 패턴 State에서 제거하고 `Cooldown`으로 분리해서 해결
 - `FStateTreeTask_EchidnaPatrol` — Cooldown 중 보스가 제자리에 멈춰있지 않도록 `PatrolRadius`(기본 600cm) 안 무작위 지점으로 `AIController->MoveToLocation()` 이동. **레벨에 Nav Mesh Bounds Volume 필요** (없으면 MoveToLocation 실패, 조용히 안 움직임)
 - Debug Text 같은 "완료를 리턴 안 하는" Task 하나만 State에 남기면 그 State는 영원히 안 끝남 (Cooldown 전이가 아예 안 됨) — 짤패턴 자리를 임시로 비워둘 땐 Wait 계열처럼 실제로 완료되는 Task를 최소 하나는 남겨야 함
+
+## 에키드나 보스 짤패턴 — 뒤로 빠지며 좌우장판 (`Source/LoA/Raid/EchidnaFanZoneActor.h/.cpp`, `EchidnaBossStateTreeUtility.h/.cpp`) — 2026-08-05
+
+### 패턴 개요 (레퍼런스 이미지 "4. 뒤로 빠지며 좌우장판")
+- 보스는 제자리에 멈춘 채로 정면(플레이어 방향) 기준 **왼쪽으로 비스듬한 부채꼴(1)**을 먼저 터뜨리고,
+  이어서 **오른쪽으로 비스듬한 부채꼴(2)**을 터뜨린다 — 총 2회 순서대로 (`FStateTreeTask_EchidnaRetreatFanPattern`)
+- 각 장판(`AEchidnaFanZoneActor`)은 예고(Telegraph) 후 고리 단위로 확장하는 자체 완결형 액터 — 4거울과 동일하게 Task는 스폰만 담당, `IsFinished()` 폴링으로 완료 판정
+- 순서: 장판1(왼쪽) 예고+확장 → **판정이 시작되는 순간** 보스 후방 홉 → 장판2(오른쪽) 예고+확장 → 그 순간에도 후방 홉 → Succeeded (한쪽만 끝나면 안 되고 **둘 다 순차 완료**해야 State 종료)
+- 1번(왼쪽)과 2번(오른쪽)의 각도 차이가 부채꼴 절반각보다 작아서 **가운데(보스 정면)가 항상 겹침** — 레퍼런스의 "겹치는부분 주의" 경고와 동일, 그 구간에 서 있으면 1·2 두 번 다 맞을 수 있음
+
+### AEchidnaFanZoneActor 동작 — 예고 후 와이파이 아이콘처럼 계단식 확장 (2026-08-06)
+- **변천사**: (1) 예고 후 한 번에 폭발 → (2) 한 번에 터지는 느낌이 싫다고 해서 예고 없이 고리 단위 계단식 확장으로 재설계 → (3) 그래도 예고 단계가 있어야 한다고 해서 "예고(전체 부채꼴 표시) + 고리 단위 계단식 확장" 두 단계를 합친 현재 구조로 정착
+- **1) 예고 단계**: `Activate()` 호출 즉시 `BuildFanMesh(FanRange)`로 전체 부채꼴(`FanInnerRadius`~`FanRange`)을 `TelegraphColor`로 표시만 함, 데미지 없음. `TelegraphDuration`(기본 1초) 뒤 `BeginRingExpansion()`으로 전환
+- **2) 고리 확장 단계**: `ApplyMeshColor(FanColor)`로 색을 바꾸고 `RevealNextRing()` 1회 호출 → `FanInnerRadius`~`FanRange`를 `RingCount`(기본 5)등분한 첫 고리로 메시가 다시 줄어들었다가, `RingInterval`(기본 0.15초) 반복 타이머로 한 칸씩 다시 넓어짐 — 매번 `BuildFanMesh(NewOuterRadius)`로 그 시점까지 누적된 고리(0~N)를 다시 그림 (고리마다 별도 섹션이 아니라 매번 섹션 0을 통째로 재생성, 개수가 적어 성능 문제 없음). 예고 때 이미 전체가 넓게 표시돼 있다가 확장 단계 시작하면서 다시 작게 오므라들었다 넓어지는 모양이라, 결과적으로 "위험 범위를 미리 보여준 뒤 그 안에서 실제 타격이 안→밖으로 훑고 지나가는" 느낌이 됨
+- 데미지는 고리 단위로 1회만: `ApplyRingDamage(PrevOuterRadius, NewOuterRadius)`가 해당 구간(annulus) 안에 있는 대상만 판정 — 제자리에 서 있으면 자기 위치에 해당하는 고리가 열릴 때 딱 한 번만 맞음 (이미 지나간 안쪽 고리가 다시 판정하지 않음, 예고 단계에서는 아예 판정 자체가 없음)
+- 방향은 **스폰 시점의 플레이어 방향 + 좌/우 각도 오프셋**으로 고정 — 거울 패턴과 동일하게 Task의 `SpawnFan()`에서 보스 자체 회전이 아니라 플레이어 위치로 직접 재계산한 Rotation을 스폰 인자로 넘김 (1번은 왼쪽, 2번은 오른쪽으로 틀어서 씀 — 자세한 각도 계산은 아래 `FStateTreeTask_EchidnaRetreatFanPattern` 항목 참조)
+- 완료 판정: `IsFinished()` = `bExploded` — 마지막 고리까지 다 넓어진 시점에 true (그 뒤 `LifeAfterExplode` 동안의 소멸 대기는 기다리지 않고 StateTree는 바로 다음 단계로 넘어감)
+
+### 비주얼 — 부채꼴은 ProceduralMeshComponent로 직접 생성, VFX 없이 색상만
+- 부채꼴 모양은 엔진 기본 메시로 표현이 안 돼서(Cone을 눕혀 스케일로 흉내냈던 첫 버전은 탑다운 카메라에서 옆면이 둥글게 보여 폐기) `FanMeshComp`(`UProceduralMeshComponent`)로 런타임에 `CreateMeshSection()`으로 직접 지오메트리 생성 — `HexArena` 벽과 동일한 방식(모듈 의존성도 이미 있음)
+- `ArcSegments`(기본 24)개의 사다리꼴 쿼드를 이어붙여 부채꼴을 구성 — 조각 하나당 로컬 +X(정면) 기준 각도 A/B에서 `FanInnerRadius`~(그 시점) 바깥 반지름 사이 안쪽변/바깥변 4점으로 쿼드 생성. 쿼드 생성은 `HexArena.cpp`의 `AddQuad` 헬퍼와 동일한 패턴(로컬 anonymous namespace `AddFanQuad`) — 감김 방향을 앞/뒤 양쪽 다 추가해서 PMC의 front-face 방향에 상관없이 항상 양면이 보이게 함
+- `FanInnerRadius`(기본 60cm) — 0이면 뾰족한 삼각형, 0보다 크면 안쪽이 잘린 사다리꼴 형태 (레퍼런스 이미지의 "살짝 사다리꼴" 모양). 첫 고리도 이 반지름부터 시작하므로 데미지 판정도 동일하게 안쪽 한계선으로 적용됨
+- **VFX 없이 색상 하나로만 표현** — 예고는 `TelegraphColor`, 고리 확장은 `FanColor`를 `ColorParameterName`/`FanOpacity`와 함께 MID로 주입 (`ApplyMeshColor()`). Niagara는 전부 제거함. 커스텀 머티리얼 쓸 경우 `ColorParameterName`에 해당 이름의 Vector Parameter + Translucent Blend Mode 필요 (거울 패턴과 동일한 MID 주입 방식)
+
+### FStateTreeTask_EchidnaRetreatFanPattern — 제자리 캐스팅 + 판정 순간 후방 홉 (2026-08-06 재설계)
+- **변천사**: 처음엔 "AIController->MoveToLocation()으로 걸어서 후퇴 → 도착하면 캐스팅"을 캐스팅마다 반복하는 구조였는데, 걸어서 물러나는 느낌이 아니라 "멈춰서 캐스팅하다가 터지는 순간 점프하듯 뒤로 홉"하는 느낌을 원해서 나브메시 이동을 걷어내고 `LaunchCharacter` 기반으로 교체
+- `Phase`(Casting1→Casting2→Done) 상태머신만 남음 — Retreating 단계 자체가 없어짐, `AIController`는 State 진입 시 잔여 이동을 멈추는 용도(`StopMovement()`)로만 남아있고 더 이상 이동 명령에 쓰이지 않음
+- **좌/우 각도**: `SpawnFan(InstanceData, YawOffsetDeg)`가 `InstanceData.BaseAimRotation`(기준 조준 방향)에 추가 회전을 더함 — 1번은 `-FanYawOffset`(보스 기준 왼쪽), 2번은 `+FanYawOffset`(오른쪽). `FanYawOffset`(기본 32도)이 `AEchidnaFanZoneActor::FanAngle` 절반(기본 70/2=35도)보다 작아야 겹침 — 겹치는 폭은 `FanAngle - 2*FanYawOffset`(현재 70-64=6도)이라 값이 커질수록 겹치는 부분이 줄어듦 (100/35 → 70/18 → 70/28 → 70/32 순으로 레퍼런스에 맞춰 계속 좁힘)
+- **주의**: `ST_Echidna`에서 `Fan Yaw Offset`을 한 번이라도 에디터에서 직접 입력했다면 그 값이 인스턴스 오버라이드로 저장돼 코드 기본값을 바꿔도 반영되지 않음 — PIE에서 안 바뀌면 Task Details에서 이 필드에 노란 오버라이드 화살표가 떠 있는지 확인하고 우클릭 → Reset to Default 하거나 값을 직접 갱신해야 함
+- **기준 조준 방향은 패턴 시작 시 1회만 고정** (2026-08-06): 처음엔 `SpawnFan()`이 호출될 때마다 그 시점의 플레이어 위치로 매번 다시 조준했는데, 그러면 1번(왼쪽)과 2번(오른쪽) 사이에 플레이어가 움직일 경우 두 장판의 기준선이 서로 달라져서 "가운데가 겹치는" 디자인이 깨짐 — `ComputeAimRotation(Boss)`(플레이어 방향, 없으면 보스 현재 회전)를 `EnterState`에서 딱 한 번 호출해 `InstanceData.BaseAimRotation`에 저장해두고, 1번/2번 `SpawnFan()` 모두 이 고정값 + YawOffsetDeg만 사용. 장판 스폰 **위치**는 여전히 매번 그 시점 보스의 실제 위치(홉으로 물러난 후 위치)를 쓰고, 오직 **방향**만 고정됨
+- **보스가 쏘는 방향을 쳐다봄**: `SpawnFan()`에서 최종 Rotation을 계산한 직후 `Boss->SetActorRotation(FRotator(0, SpawnRotation.Yaw, 0))`로 보스 자신도 같은 Yaw로 즉시 회전시킴 — 이전엔 장판만 방향을 잡고 보스 모델은 계속 이전 방향에 고정돼 있던 버그
+- **후방 홉 타이밍**: Tick에서 매 프레임 `CurrentFan->HasStartedExploding()`을 폴링하다가, 처음 true가 되는 순간(예고가 끝나고 고리 확장이 막 시작된 시점 = "터지는 순간") `HopBackward()`를 **장판 하나당 딱 1번만** 실행 (`bHoppedForCurrentCast` 플래그로 중복 방지)
+- `HopBackward()`는 "플레이어 반대 방향"(장판 방향 계산과 동일한 방식)으로 `Boss->LaunchCharacter(AwayFromPlayer * HopBackStrength + Up * HopUpwardStrength, true, true)` 호출 — 순간이동이 아니라 실제 물리 launch라서 자연스럽게 포물선을 그리며 착지함 (거울 패턴의 `LaunchCharacter` 넉백과 동일한 함수, 대상만 플레이어→보스 자신)
+- **낙사 방지**: 홉을 실제로 실행하기 전에 `HasGroundBelow()`로 착지 예상 지점(`보스 위치 + AwayFromPlayer * HopCheckDistance`, 기본 350cm)에서 수직 라인트레이스(`ECC_Visibility`, 다른 스킬들의 커서 지면 판정과 동일 채널)를 쏴서 바닥이 없으면 `LaunchCharacter` 자체를 호출하지 않고 조용히 스킵 — 맵 끝자락에서 패턴이 나가도 그 자리에 멈춰있을 뿐 떨어지지 않음. `HopCheckDistance`는 실제 물리 이동 거리를 정확히 예측하는 값이 아니라 대략적인 안전 판정용 근사치
+- StateTree 배치는 4거울과 동일한 패턴: `SmallPatternRotation` 안에 이 Task 하나만 넣고 On State Completed → `Cooldown`으로 연결 (Wait를 나란히 넣지 말 것 — 4거울 문서의 "버그였던 것" 참조)
+- `FanZoneClass` 미할당 시 EnterState에서 바로 Failed (경고 로그로 원인 표시) — `AIController`는 이제 필수 아님(없어도 패턴 자체는 동작, 다만 잔여 이동을 못 멈춤)
+- **버그였던 것**: `SpawnFan()`에서 스폰 위치로 `Boss->GetActorLocation()`을 그대로 썼더니 장판이 공중에 떠 보임 — 이 값은 캡슐 **중심** 좌표(지면에서 캡슐 절반 높이만큼 위)라서, `GetCapsuleComponent()->GetScaledCapsuleHalfHeight()`만큼 Z를 빼서 발밑(지면) 높이로 보정 후 스폰
+
+## 넉다운 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `Skill/SkillManagerComponent.h/.cpp`) — 2026-08-06
+
+### 개요
+- 특정 패턴에 맞으면 뒤로 튕겨나가며 쓰러지고, 3초 뒤 자동 기상하거나 스페이스바로 즉시 기상(15초 쿨타임) 가능
+- 현재 fanzone(`AEchidnaFanZoneActor::ApplyRingDamage`)과 거울 레이저(`AEchidnaMirrorActor::ApplyLaserDamageTick`)에 연결됨 — 다른 패턴에서 걸고 싶으면 `Character->ApplyKnockdown(SourceLocation)` 호출하면 됨
+
+### ALoACharacter 상태 흐름
+- `ApplyKnockdown(SourceLocation)` — `SourceLocation` 반대 방향으로 `LaunchCharacter`, `KnockdownHopSettleTime`(기본 0.4초) 타이머 시작. **착지 여부(MovementMode) 폴링 방식은 폐기** — 여러 공격원(거울 4개 등)이 같은 프레임에 겹쳐 `LaunchCharacter`를 호출하면 엔진 내부 `PendingLaunchVelocity`가 서로 덮어써지고 `bForceNextFloorCheck` 때문에 Falling→Walking이 같은 프레임에 즉시 왕복돼버려서 폴링으로는 착지를 감지 못했음(항상 즉시 눕는 것처럼 오판) → 대신 맞을 때마다 정착 타이머를 새로 시작하는 방식으로 교체, 연속 타격 동안은 계속 "공중에 뜬 채" 유지됨
+- 생성자의 `bConstrainToPlane=true`(top-down 클릭이동을 위한 Z축 고정)가 `LaunchCharacter`의 수직 임펄스를 매 틱 평면으로 눌러버려서 뜨자마자 즉시 착지 판정이 나던 버그 있었음 — `ApplyKnockdown` 중엔 임시로 `false`, 정착 시(`SettleKnockdown()`) 다시 `true`로 복구
+- `GetUpFromKnockdown()` — 자동 기상(3초 타이머)/즉시 기상 공통 진입점
+- `TryInstantGetUp()` — 완전히 누운 뒤(공중에 뜬 상태 `bKnockdownAirborne`가 아닐 때)만 성공. 성공 시 캐릭터 함수가 아니라 **`SkillManager->TriggerCooldown(19)`를 호출** (아래 참조)
+- 컨트롤러 쪽: `IsKnockedDown()`인 동안 이동/스킬 입력 전부 차단, 스페이스바(`OnDashInput`)는 넉다운 중엔 대시 대신 `TryInstantGetUp()` 호출
+
+### 즉시 기상 쿨타임 = SkillManagerComponent 슬롯 19
+- 처음엔 `ALoACharacter`에 자체 쿨타임 필드(`InstantGetUpCooldown`, `LastInstantGetUpTime`)를 뒀었으나, 대시(슬롯18)와 완전히 동일한 UX/쿨타임 UI를 원해서 **`SkillManagerComponent`로 이관** — 대시와 같은 "인스턴스 없이 DT 쿨타임/아이콘만 쓰는 슬롯" 패턴 재사용
+- `GetUpSlotIndex=19`, `GetUpRowName`(기본 `"InstantGetUp"`), `GetUpCooldownFallback`(15초) — `DT_Skills`에 해당 이름 행이 없으면 폴백값으로 동작, 있으면 그 행의 Cooldown/Icon 사용
+- `GetSlotIcon`/`GetSlotSkillData`에 `DashSlotIndex`와 동일한 패턴으로 `GetUpSlotIndex` 분기 추가
+- **DT_Skills 연동 시 주의**: `FindRow`는 행 이름이 `GetUpRowName` 프로퍼티 값과 **정확히 일치**해야 함 (한글 행 이름 vs 영문 기본값 불일치로 한참 헤맴). 그리고 **Cooldown 컬럼이 비어있으면(0) 쿨타임이 사실상 즉시 끝나버려서 무한 재사용 가능** — 반드시 값 채울 것
+
+### WBP_HUD — 대시 UI를 그대로 복제해서 기상기 UI 구성 (Blueprint, C++ 아님)
+- `Border_Dash`/`Img_Dash`/`CooldownImg_Dash`/`CooldownTxt_Dash` 구조를 통째로 복제해 `Border_GetUp` 등 생성, Event Tick의 대시 전용 하드코딩 체인(쿨타임 텍스트/Border 표시/원형 머티리얼 채움)도 슬롯번호 18→19, 타겟 위젯 Dash→GetUp으로 바꿔 복제
+- 이 프로젝트의 스킬 슬롯 쿨타임 UI는 **재사용 함수가 아니라 슬롯마다 Event Tick에 하드코딩된 노드 뭉치**임 (`RefreshingSlot`/`Slot Images` 배열은 드래그앤드랍 아이콘 갱신용 별개 시스템, Q~F 전용) — 새 슬롯 UI 추가할 땐 기존 슬롯(대시)의 Tick 체인을 통째로 복사해서 슬롯번호만 바꾸는 게 이 코드베이스의 기존 패턴
+- **HorizontalBox 자동 중앙정렬**: 부모 Canvas 슬롯에 `Size To Content` + `Alignment(0.5,0.5)`를 걸면, 자식(Border_Dash/Border_GetUp) 중 Visibility가 **Collapsed**인 것은 레이아웃에서 완전히 빠지므로 1개만 보일 때 자동으로 정중앙에 옴 (Hidden은 자리를 계속 차지하니 안 됨). 자식 크기는 각각 `SizeBox`로 Width/Height Override 고정 — Auto로 두면 아이콘 텍스처 원본 해상도 그대로 desired size로 잡혀서 화면을 뒤덮을 만큼 커짐
+- **버그였던 것 (Q~F 아이콘이 전부 흰 박스로 나옴)**: Construct 그래프에서 기상기 아이콘 초기화 `Branch`(아이콘 유효성 체크)의 **True 쪽 체인 끝이 `Delay` 노드로 연결이 안 되어 있어서**, DT_Skills에 아이콘이 있어 True로 빠지는 경우 그 뒤에 있는 Q~F 아이콘 로딩 루프 전체가 실행되지 않음 (False만 연결해뒀던 게 원인 — True/False 둘 다 결국 같은 `Delay`로 합류하도록 고쳐야 함). Tick 이벤트 안에서는 **브레이크포인트가 정상 작동 안 할 때가 있어서**(에디터가 멈춘 채 진행 안 됨) True/False 양쪽에 각각 다른 문구 찍는 `Print String`으로 대체 디버깅
 
 ## 구현된 기능 (2026-07-03 기준)
 - [x] 마우스 클릭 이동
@@ -301,7 +365,14 @@
 - [x] 에키드나 보스 짤패턴 "4거울" — 대각 4방향 거울 동시 스폰, 추적(장판 따라옴) → 발사(레이저 고정) 2단계, 데미지+넉백 독립 틱
 - [x] 보스 쿨다운 중 패트롤 (FStateTreeTask_EchidnaPatrol)
 - [x] 짤패턴 로테이션 Cooldown 분리 (3초 텀 후 다음 패턴)
-- [ ] **넉백 판정 수정 필요** — 현재 구현 확인 중, 다음 작업 우선순위
+- [x] 에키드나 보스 짤패턴 "뒤로 빠지며 좌우장판" — 플레이어 반대로 후퇴하며 정면 부채꼴 장판(예고→폭발) 2회 순차 발동 (C++ 구현 완료, StateTree `ST_Echidna` 에디터 배치는 미완 — 아래 참조)
+- [x] 넉다운 시스템 — 뒤로 튕겨나가며 쓰러짐, 3초 자동/스페이스바 즉시(15초 쿨타임) 기상, fanzone·거울 레이저에 연결 (자세한 내용은 위 "넉다운 시스템" 섹션)
+- [x] 즉시 기상 쿨타임 UI — SkillManagerComponent 슬롯 19로 대시(슬롯18)와 동일하게 통합, WBP_HUD에 Border_GetUp 추가
+- [x] 거울 레이저 타이밍 재조정 — FiringDuration 3초→1초, 데미지 4틱, 추적 회전속도 60→50도/초, 별도 넉백 시스템 제거(넉다운으로 통합)
+- [ ] Border_GetUp UI 최종 위치/스타일 다듬기
+- [ ] DT_Skills에 `InstantGetUp` 행 Cooldown/Icon 값 채워졌는지 재확인 (비어있으면 쿨타임 무력화됨)
+- [ ] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 필요 — `SmallPatternRotation` 안에 4거울과 나란히 추가, `FanZoneClass`(BP_EchidnaFanZone 등)/Boss/AIController 바인딩, On State Completed → `Cooldown` 연결
+- [ ] BP_EchidnaFanZone 서브클래스 생성 + 부채꼴 전용 커스텀 머티리얼(Color Vector Parameter + Translucent) 할당 — VFX는 안 씀, 색상만으로 표현
 - [ ] SM_HexTile 머티리얼 슬롯 분리 (윗면 MI_Rock_Inst_5, 옆면 어두운 색)
 - [ ] BP_HexArena에서 WallMaterial 재할당 (기존 WallMesh 프로퍼티가 프로시저럴 메시 전환으로 제거됨)
 - [ ] BP_HexTile 서브클래스 생성 + NormalMesh/PoopMesh/FlowerMesh 할당 (NormalMesh는 기존 HISM 메시와 동일하게)

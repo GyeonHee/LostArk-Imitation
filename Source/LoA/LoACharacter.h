@@ -14,6 +14,7 @@ class USpringArmComponent;
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHPChanged, float /*NewHP*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMPChanged, float /*NewMP*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnCharmGaugeChanged, int32 /*NewCharmGauge*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnKnockdownChanged, bool /*bKnockedDown*/);
 
 /**
  *  A controllable top-down perspective character
@@ -34,6 +35,17 @@ private:
 	TObjectPtr<USpringArmComponent> CameraBoom;
 
 	float MPRegenAccum = 0.f;
+
+	// 눕는 단계 진입 후 KnockdownDuration 뒤 자동 기상시키는 타이머
+	FTimerHandle KnockdownTimerHandle;
+
+	// 마지막 타격 후 KnockdownHopSettleTime 뒤 실제로 눕는 단계로 전환시키는 타이머 — SettleKnockdown() 호출
+	FTimerHandle KnockdownSettleTimerHandle;
+
+	// 넉다운 중 아직 "튕겨나가는 중"(정착 타이머 대기)인지 — true인 동안 재히트하면 타이머가 갱신되어 계속 공중에 떠 있는 것처럼 보임
+	bool bKnockdownAirborne = false;
+
+	void SettleKnockdown();
 
 public:
 
@@ -66,9 +78,31 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
 	int32 MaxCharmGauge = 10;
 
+	// 넉다운 상태 여부 — 특정 패턴에 맞아 쓰러진 동안 true (이동/스킬 입력 차단은 컨트롤러 쪽에서 처리)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Knockdown")
+	bool bIsKnockedDown = false;
+
+	// 쓰러진 뒤 자동으로 일어나기까지 걸리는 시간 (초)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Knockdown")
+	float KnockdownDuration = 3.f;
+
+	// 넉다운 시 공격 반대 방향으로 튕겨나가는 수평 힘 (cm/s)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Knockdown")
+	float KnockdownHopStrength = 500.f;
+
+	// 넉다운 시 위로 띄우는 힘 (cm/s) — 있어야 제자리에서 즉시 넘어지지 않고 점프하듯 포물선을 그리며 넘어짐
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Knockdown")
+	float KnockdownHopUpwardStrength = 300.f;
+
+	// 마지막 타격 후 이 시간(초)이 지나야 실제로 눕는 단계로 전환됨 — MovementMode의 Falling→Walking 전환에
+	// 기대지 않고 타이머로 직접 보장. 이 시간 안에 다시 맞으면 타이머가 갱신되어 계속 "튕겨나가는 중"으로 유지됨
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Knockdown")
+	float KnockdownHopSettleTime = 0.4f;
+
 	FOnHPChanged OnHPChanged;
 	FOnMPChanged OnMPChanged;
 	FOnCharmGaugeChanged OnCharmGaugeChanged;
+	FOnKnockdownChanged OnKnockdownChanged;
 
 	/** Controller가 매 프레임 설정하는 원하는 이동 속도벡터 (ZeroVector = 이동 없음) */
 	FVector ControllerMoveVelocity = FVector::ZeroVector;
@@ -115,6 +149,29 @@ public:
 	/** 매혹 게이지 누적 (MaxCharmGauge에서 클램프) */
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual void AddCharmGauge(int32 Amount);
+
+	/** 넉다운 상태로 전환 — SourceLocation 반대 방향으로 뒤로 튕겨나가 넘어지고, KnockdownHopSettleTime 뒤 실제로 눕는 단계로 전환됨.
+	 * 이미 튕겨나가는 중일 때 다시 호출하면(연속 틱 데미지 등) 정착 타이머가 갱신되어 계속 공중에 떠 있는 것처럼 보임 —
+	 * 완전히 누운 뒤에는 재호출해도 무시됨 */
+	UFUNCTION(BlueprintCallable, Category="Knockdown")
+	virtual void ApplyKnockdown(const FVector& SourceLocation);
+
+	/** 넉다운 즉시 해제 (자동 기상/즉시 기상 공통 진입점) */
+	UFUNCTION(BlueprintCallable, Category="Knockdown")
+	virtual void GetUpFromKnockdown();
+
+	/** 스페이스바 즉시 기상 시도 — 넉다운 상태이고 SkillManager의 GetUpSlotIndex(19) 쿨타임이 다 찼을 때만 성공.
+	 * 쿨타임/아이콘은 대시(슬롯18)와 완전히 같은 방식으로 SkillManagerComponent가 관리 —
+	 * UI도 대시 쿨타임 UI와 똑같이 SkillManager->GetCooldownRatio(19) / IsSlotOnCooldown(19)에 바인딩하면 됨 */
+	UFUNCTION(BlueprintCallable, Category="Knockdown")
+	virtual bool TryInstantGetUp();
+
+	UFUNCTION(BlueprintPure, Category="Knockdown")
+	bool IsKnockedDown() const { return bIsKnockedDown; }
+
+	/** 넉다운 상태가 바뀔 때 호출 — 쓰러짐/기상 애니메이션은 BP에서 구현 */
+	UFUNCTION(BlueprintImplementableEvent, Category="Knockdown")
+	void OnKnockdownVisualChanged(bool bKnockedDown);
 
 	/** Returns the camera component **/
 	UCameraComponent* GetTopDownCameraComponent() const { return TopDownCameraComponent.Get(); }

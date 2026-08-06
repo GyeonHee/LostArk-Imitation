@@ -133,3 +133,89 @@ void ALoACharacter::AddCharmGauge(int32 Amount)
 	CharmGauge = FMath::Clamp(CharmGauge + Amount, 0, MaxCharmGauge);
 	OnCharmGaugeChanged.Broadcast(CharmGauge);
 }
+
+void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
+{
+	// 이미 완전히 누운 상태면 재입력 무시. 정착 타이머 대기 중(bKnockdownAirborne)엔 재히트를 허용해서
+	// 타이머를 계속 갱신 — 거울 레이저처럼 틱마다 맞는 패턴은 그동안 계속 공중에 떠 있는 것처럼 보임
+	if (bIsKnockedDown && !bKnockdownAirborne) return;
+
+	const bool bFirstHit = !bIsKnockedDown;
+
+	bIsKnockedDown = true;
+	bKnockdownAirborne = true;
+
+	if (SkillManager)
+	{
+		SkillManager->CancelActiveCastSkill();
+		SkillManager->CancelPendingRangeMove();
+	}
+
+	GetWorldTimerManager().ClearTimer(KnockdownTimerHandle);
+
+	// 평상시엔 top-down 클릭이동 때문에 Z를 평면에 고정해두는데(생성자의 bConstrainToPlane=true),
+	// 넉다운 중엔 잠깐 풀어줘서 LaunchCharacter의 수직 임펄스가 실제로 뒤로 튕겨나가는 아크로 보이게 함
+	GetCharacterMovement()->bConstrainToPlane = false;
+
+	FVector AwayFromSource = GetActorLocation() - SourceLocation;
+	AwayFromSource.Z = 0.f;
+	if (AwayFromSource.IsNearlyZero())
+	{
+		AwayFromSource = -GetActorForwardVector();
+	}
+	AwayFromSource = AwayFromSource.GetSafeNormal();
+
+	const FVector LaunchVelocity = AwayFromSource * KnockdownHopStrength + FVector(0.f, 0.f, KnockdownHopUpwardStrength);
+	LaunchCharacter(LaunchVelocity, true, true);
+
+	// 착지 여부(MovementMode)를 폴링하지 않고 고정 시간 타이머로 정착 시점을 직접 보장 —
+	// bForceNextFloorCheck 등 엔진 내부 사정으로 Falling→Walking 전환이 같은 프레임에 즉시 일어나버려도
+	// (특히 여러 거울이 같은 프레임에 겹쳐 때릴 때) 최소 이 시간만큼은 "튕겨나가는 중"으로 유지된다.
+	// 맞을 때마다 이 타이머를 새로 시작하므로, 연속 타격 동안은 계속 갱신되어 눕지 않는다
+	GetWorldTimerManager().SetTimer(KnockdownSettleTimerHandle, this, &ALoACharacter::SettleKnockdown, KnockdownHopSettleTime, false);
+
+	if (bFirstHit)
+	{
+		OnKnockdownChanged.Broadcast(true);
+		OnKnockdownVisualChanged(true);
+	}
+}
+
+void ALoACharacter::SettleKnockdown()
+{
+	if (!bIsKnockedDown || !bKnockdownAirborne) return;
+
+	bKnockdownAirborne = false;
+	GetCharacterMovement()->bConstrainToPlane = true;	// ApplyKnockdown에서 풀어준 평면 구속을 다시 걸어 평소 top-down 이동으로 복귀
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+
+	GetWorldTimerManager().SetTimer(KnockdownTimerHandle, this, &ALoACharacter::GetUpFromKnockdown, KnockdownDuration, false);
+}
+
+void ALoACharacter::GetUpFromKnockdown()
+{
+	if (!bIsKnockedDown) return;
+
+	bIsKnockedDown = false;
+	bKnockdownAirborne = false;
+	GetWorldTimerManager().ClearTimer(KnockdownTimerHandle);
+	GetWorldTimerManager().ClearTimer(KnockdownSettleTimerHandle);
+	GetCharacterMovement()->bConstrainToPlane = true;
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+	OnKnockdownChanged.Broadcast(false);
+	OnKnockdownVisualChanged(false);
+}
+
+bool ALoACharacter::TryInstantGetUp()
+{
+	// 공중에 떠 있는 동안은(아직 착지 전) 즉시 기상 불가 — 완전히 누운 뒤에만 사용 가능
+	if (!bIsKnockedDown || bKnockdownAirborne) return false;
+	if (!SkillManager || SkillManager->IsSlotOnCooldown(USkillManagerComponent::GetUpSlotIndex)) return false;
+
+	SkillManager->TriggerCooldown(USkillManagerComponent::GetUpSlotIndex);
+	GetUpFromKnockdown();
+	return true;
+}
