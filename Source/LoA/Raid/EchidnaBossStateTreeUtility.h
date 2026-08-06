@@ -8,6 +8,7 @@
 
 class AEchidnaBoss;
 class AEchidnaMirrorActor;
+class AEchidnaFanZoneActor;
 class AAIController;
 
 /**
@@ -167,6 +168,100 @@ struct FStateTreeTask_EchidnaFourMirrorPattern : public FStateTreeTaskCommonBase
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
 #endif // WITH_EDITOR
+};
+
+UENUM()
+enum class EEchidnaRetreatFanPhase : uint8
+{
+	Casting1,	// 1번째 장판(왼쪽으로 비스듬히) 진행 중
+	Casting2,	// 2번째 장판(오른쪽으로 비스듬히) 진행 중
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaRetreatFanPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaRetreatFanPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// 패턴 시작 시 잔여 이동(패트롤 등)을 멈추는 용도로만 사용 — 후퇴 이동에는 더 이상 쓰이지 않음
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	TSubclassOf<AEchidnaFanZoneActor> FanZoneClass;
+
+	// 정면(플레이어 방향) 기준 좌/우로 얼마나 비스듬히 쏠지 (도) — 1번은 -값(왼쪽), 2번은 +값(오른쪽)으로 적용.
+	// FanZoneClass의 FanAngle 절반보다 작아야 가운데가 겹침
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float FanYawOffset = 32.f;
+
+	// 장판이 실제로 터지는 순간(HasStartedExploding) 보스를 뒤로 밀어내는 힘 (수평, cm/s)
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float HopBackStrength = 500.f;
+
+	// 같은 순간 위로 띄우는 힘 (cm/s) — 값이 있어야 점프하듯 포물선을 그림
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float HopUpwardStrength = 300.f;
+
+	// 착지 예상 지점(뒤 방향으로 이 거리만큼)에 바닥이 있는지 미리 검사 — 없으면 맵 밖으로 떨어지지 않도록 홉 자체를 취소
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float HopCheckDistance = 350.f;
+
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float Damage = 10.f;
+
+	UPROPERTY(Transient)
+	EEchidnaRetreatFanPhase Phase = EEchidnaRetreatFanPhase::Casting1;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaFanZoneActor> CurrentFan;
+
+	// 현재 진행 중인 장판에 대해 이미 후방 홉을 실행했는지 (장판 하나당 1회만)
+	UPROPERTY(Transient)
+	bool bHoppedForCurrentCast = false;
+
+	// 패턴 시작(EnterState) 시점에 한 번만 계산해서 고정하는 기준 조준 방향 — 1번/2번 캐스팅 모두 이 값 + YawOffsetDeg를 씀.
+	// 매 캐스팅마다 플레이어 위치를 다시 조준하면 후퇴/이동 중 기준선이 흔들려 1번·2번이 어긋나 보이므로 시작 시점 값으로 고정
+	UPROPERTY(Transient)
+	FRotator BaseAimRotation = FRotator::ZeroRotator;
+};
+
+/**
+ * "뒤로 빠지며 좌우장판" 짤패턴 — 보스가 제자리에 멈춘 채로 정면 기준 왼쪽으로 비스듬한 부채꼴(1)을
+ * 먼저 터뜨리고, 이어서 오른쪽으로 비스듬한 부채꼴(2)을 터뜨린다 (가운데는 두 부채꼴이 겹침).
+ * 캐스팅 직전 보스를 그 장판이 날아가는 방향으로 회전시켜 실제로 조준하는 것처럼 보이게 한다.
+ * 각 장판이 예고를 마치고 실제 판정이 시작되는 순간(AEchidnaFanZoneActor::HasStartedExploding)
+ * 보스를 LaunchCharacter로 살짝 뒤로 띄워 점프하듯 물러나게 한다 (장판당 1회) —
+ * 단, 착지 예상 지점에 바닥이 없으면(맵 끝자락) 홉 자체를 취소해 낙사를 막는다.
+ * 장판 2까지 다 끝나면(IsFinished) Succeeded.
+ */
+USTRUCT(meta = (DisplayName = "Echidna Retreat Fan Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaRetreatFanPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaRetreatFanPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	FRotator ComputeAimRotation(const AEchidnaBoss* Boss) const;
+	AEchidnaFanZoneActor* SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg) const;
+	void HopBackward(FInstanceDataType& InstanceData) const;
+	bool HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const;
 };
 
 /**
