@@ -2,7 +2,7 @@
 
 ## 프로젝트 개요
 - **장르**: 탑다운 ARPG (로스트아크 모작)
-- **엔진**: Unreal Engine 5.7
+- **엔진**: Unreal Engine 5.8
 - **이동 방식**: 마우스 클릭 이동 (NavMesh 없이 직접 RequestDirectMove)
 - **언어**: C++ + Blueprint 혼용, C++ 로직 우선
 
@@ -387,5 +387,5 @@
 
 ## 자주 쓰는 빌드 명령
 ```
-& "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" LoA Win64 Development "C:\Users\User\Documents\Unreal Projects\LoA\LoA.uproject" -NoUBTMakefiles
+& "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" LoAEditor Win64 Development "C:\Users\User\Documents\Unreal Projects\LoA\LoA.uproject" -NoUBTMakefiles
 ```

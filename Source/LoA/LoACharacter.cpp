@@ -181,17 +181,50 @@ void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
 	}
 }
 
+void ALoACharacter::ApplyPull(const FVector& TargetLocation, float PullStrength)
+{
+	FVector ToTarget = TargetLocation - GetActorLocation();
+	ToTarget.Z = 0.f;
+	if (ToTarget.IsNearlyZero()) return;
+
+	// 수평 속도만 덮어쓰고(bXYOverride=true) 수직 속도는 그대로 둠(bZOverride=false) —
+	// 넉다운과 달리 위로 띄우지 않으므로 bConstrainToPlane을 풀 필요가 없음
+	LaunchCharacter(ToTarget.GetSafeNormal() * PullStrength, true, false);
+}
+
 void ALoACharacter::SettleKnockdown()
 {
 	if (!bIsKnockedDown || !bKnockdownAirborne) return;
 
 	bKnockdownAirborne = false;
+
+	// DisableMovement()가 중력/낙하를 즉시 멈춰버리므로, 타이머가 끝난 시점에 아직 공중에 떠 있으면
+	// (연속 타격으로 여러 번 재발사되어 정착 시간(KnockdownHopSettleTime)보다 낙하가 오래 걸리는 경우)
+	// 그대로 허공에 얼어붙는다. 그래서 실제 착지를 기다리는 대신 바닥까지 트레이스해 직접 스냅시킨다.
+	const FVector CurrentLocation = GetActorLocation();
+	const FVector TraceStart = CurrentLocation + FVector(0.f, 0.f, 200.f);
+	const FVector TraceEnd = CurrentLocation - FVector(0.f, 0.f, 2000.f);
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	FHitResult Hit;
+	if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
+	{
+		const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+		FVector LandedLocation = CurrentLocation;
+		LandedLocation.Z = Hit.ImpactPoint.Z + HalfHeight;
+		SetActorLocation(LandedLocation, false);
+	}
+
 	GetCharacterMovement()->bConstrainToPlane = true;	// ApplyKnockdown에서 풀어준 평면 구속을 다시 걸어 평소 top-down 이동으로 복귀
 	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
 
 	GetWorldTimerManager().SetTimer(KnockdownTimerHandle, this, &ALoACharacter::GetUpFromKnockdown, KnockdownDuration, false);
+
+	OnKnockdownSettled();
 }
 
 void ALoACharacter::GetUpFromKnockdown()

@@ -47,13 +47,20 @@ AEchidnaFanZoneActor::AEchidnaFanZoneActor()
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DefaultMatFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	// BasicShapeMaterial(Opaque)은 Alpha를 무시해서 반투명 예고/불투명 실행 구분이 안 먹힘 —
+	// Translucent+Unlit인 M_MirrorLaser를 기본값으로 사용 (BP에서 override materials로 지정해봤자
+	// C++ 재컴파일 때 생성자가 다시 실행되며 초기화돼버려서 아예 기본값 자체를 여기서 박아둠)
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DefaultMatFinder(TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser"));
 
 	FanMeshComp = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("FanMeshComp"));
 	FanMeshComp->SetupAttachment(Root);
 	FanMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	FanMeshComp->SetCastShadow(false);
-	if (DefaultMatFinder.Succeeded()) FanMeshComp->SetMaterial(0, DefaultMatFinder.Object);
+
+	if (DefaultMatFinder.Succeeded())
+	{
+		BaseMaterial = DefaultMatFinder.Object;
+	}
 }
 
 void AEchidnaFanZoneActor::BeginPlay()
@@ -71,7 +78,7 @@ void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
 
 	// 예고 단계 — 전체 부채꼴을 미리 보여주기만 함, 데미지 없음
 	BuildFanMesh(FanRange);
-	ApplyMeshColor(TelegraphColor);
+	ApplyMeshColor(TelegraphColor, TelegraphOpacity);
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaFanZone] Activate — Loc=%s Dir=%s FanAngle=%.0f FanRange=%.0f RingCount=%d"),
 		*GetActorLocation().ToString(), *GetActorForwardVector().ToString(), FanAngle, FanRange, RingCount);
@@ -90,7 +97,7 @@ void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
 void AEchidnaFanZoneActor::BeginRingExpansion()
 {
 	bStartedExploding = true;
-	ApplyMeshColor(FanColor);
+	ApplyMeshColor(FanColor, FanOpacity);
 
 	// 첫 구간은 예고가 끝나자마자 — 별도 대기 없음
 	RevealNextRing();
@@ -217,26 +224,36 @@ void AEchidnaFanZoneActor::ApplyRingDamage(float InnerRadius, float OuterRadius)
 		{
 			UGameplayStatics::ApplyDamage(HitActor, Damage, InstigatorController.Get(), this, UDamageType::StaticClass());
 
-			// 부채꼴 판정에 맞으면 넉다운 — 장판 위치 반대 방향으로 뒤로 튕겨나가며 넘어짐.
-			// 고리마다 여러 번 겹쳐 맞아도 착지 전까지만 재입력이 반영되고, 착지 후엔 ApplyKnockdown 내부에서 무시됨
 			if (ALoACharacter* HitCharacter = Cast<ALoACharacter>(HitActor))
 			{
-				HitCharacter->ApplyKnockdown(GetActorLocation());
+				// 부채꼴 판정에 맞으면 넉다운 — 장판 위치 반대 방향으로 뒤로 튕겨나가며 넘어짐.
+				// 고리마다 여러 번 겹쳐 맞아도 착지 전까지만 재입력이 반영되고, 착지 후엔 ApplyKnockdown 내부에서 무시됨
+				if (bApplyKnockdownOnHit)
+				{
+					HitCharacter->ApplyKnockdown(GetActorLocation());
+				}
+
+				if (bApplyCharmGaugeOnHit)
+				{
+					HitCharacter->AddCharmGauge(CharmGaugePerHit);
+				}
 			}
 		}
 	}
 }
 
-void AEchidnaFanZoneActor::ApplyMeshColor(const FLinearColor& Color)
+void AEchidnaFanZoneActor::ApplyMeshColor(const FLinearColor& Color, float Opacity)
 {
 	if (!FanMeshComp) return;
 
-	UMaterialInterface* Source = FanMeshComp->GetMaterial(0);
+	// FanMeshComp->GetMaterial(0)에 의존하지 않고 BaseMaterial을 직접 사용 —
+	// ProceduralMeshComponent는 섹션이 없는 상태에서 지정한 머티리얼이 종종 지워져 있기 때문
+	UMaterialInterface* Source = BaseMaterial;
 	if (!Source) return;
 
 	UMaterialInstanceDynamic* MID = FanMeshComp->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Source);
 	if (MID)
 	{
-		MID->SetVectorParameterValue(ColorParameterName, FLinearColor(Color.R, Color.G, Color.B, FanOpacity));
+		MID->SetVectorParameterValue(ColorParameterName, FLinearColor(Color.R, Color.G, Color.B, Opacity));
 	}
 }

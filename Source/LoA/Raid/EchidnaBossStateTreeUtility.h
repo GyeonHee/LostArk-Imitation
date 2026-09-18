@@ -9,6 +9,7 @@
 class AEchidnaBoss;
 class AEchidnaMirrorActor;
 class AEchidnaFanZoneActor;
+class AEchidnaTetherActor;
 class AAIController;
 
 /**
@@ -171,6 +172,98 @@ struct FStateTreeTask_EchidnaFourMirrorPattern : public FStateTreeTaskCommonBase
 };
 
 UENUM()
+enum class EEchidnaEightMirrorPhase : uint8
+{
+	PlusWave,	// 1차 — 미리 스폰해둔 "+" 대형(0/90/180/270도) 4개 Activate
+	CrossWave,	// 2차 — 미리 스폰해둔 "X" 대형(45/135/225/315도) 4개 Activate
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaEightMirrorPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaEightMirrorPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Mirror")
+	TSubclassOf<AEchidnaMirrorActor> MirrorClass;
+
+	// 보스 중심에서 거울까지 배치 거리 (cm)
+	UPROPERTY(EditAnywhere, Category = "Mirror")
+	float MirrorSpawnRadius = 500.f;
+
+	UPROPERTY(EditAnywhere, Category = "Mirror")
+	float Damage = 10.f;
+
+	// "개인 유도레이저" — 8거울과 별개로 패턴 시작 시 1개만 스폰, 패턴이 끝날 때까지 계속 추적+반복 발사
+	UPROPERTY(EditAnywhere, Category = "Guided")
+	float GuidedDamage = 10.f;
+
+	// 유도 거울이 처음 스폰될 때 보스 오른쪽으로 얼마나 떨어진 지점인지 (cm) — 스폰 직후부터 플레이어를 쫓아다님.
+	// (필드 이름은 GuidedHoverHeight로 남아있지만 용도가 "스폰 오프셋"으로 바뀜 — StateTree 인스턴스 데이터
+	// 구조체 레이아웃을 또 바꾸면 이미 배치된 ST_Echidna 태스크가 Live Coding에서 크래시 나서 필드 재사용함)
+	UPROPERTY(EditAnywhere, Category = "Guided", meta = (DisplayName = "Guided Spawn Offset"))
+	float GuidedHoverHeight = 500.f;
+
+	UPROPERTY(Transient)
+	EEchidnaEightMirrorPhase Phase = EEchidnaEightMirrorPhase::PlusWave;
+
+	// 8개 전부 — 패턴 시작 시 한 번에 스폰(전부 화면에 존재), "+" 4개만 먼저 Activate되고 "X" 4개는 대기하다 2파동에 Activate
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaMirrorActor>> PlusMirrors;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaMirrorActor>> CrossMirrors;
+
+	// 패턴 시작 시 1회만 스폰되어 패턴이 끝날 때까지 독립적으로 반복 추적+발사하는 유도 거울
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaMirrorActor> GuidedMirror;
+
+	// 패턴 시작(EnterState) 시점에 한 번만 고정하는 기준 방향 — "+"(0/90/180/270)/"X"(45/135/225/315) 스포크 각도의 기준선
+	UPROPERTY(Transient)
+	FRotator BaseAimRotation = FRotator::ZeroRotator;
+};
+
+/**
+ * "거울 8개 레이저" 짤패턴 — 패턴 시작 시 보스 중심으로 "+"대형(0/90/180/270도)과 "X"대형(45/135/225/315도)
+ * 총 8개의 고정 스포크 거울을 한꺼번에 스폰한다(전부 화면에 존재) — 단, 실제 판정(장판)은 "+" 4개가 먼저
+ * 발동(Activate)하고, 그게 끝나면 미리 스폰해둔 "X" 4개가 그제서야 Activate되어 순차적으로 나간다
+ * (플레이어를 쫓지 않고 스폰 방향 고정 — AEchidnaMirrorActor::bLockDirectionOnSpawn).
+ * 이와 별개로 패턴 시작 시 "개인 유도레이저" 거울 1개를 보스 오른쪽(GuidedHoverHeight만큼 떨어진 지점, 높이는
+ * 보스 캡슐 중심 Z 그대로 = 보스 키의 절반)에 추가로 스폰한다 — 스폰 직후부터 플레이어 위치를 계속
+ * 따라다니며(AEchidnaMirrorActor::bSkyGuidedMode) 위에서 아래로 비스듬히 레이저를 반복 발사하다가,
+ * 8거울 두 파동이 모두 끝나면 StopRepeating()으로 멈춰 마지막 한 발만 더 쏘고 소멸한다.
+ * 유도 거울까지 완전히 끝나면(IsFinished) Succeeded.
+ */
+USTRUCT(meta = (DisplayName = "Echidna Eight Mirror Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaEightMirrorPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaEightMirrorPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	FRotator ComputeAimRotation(const AEchidnaBoss* Boss) const;
+	void SpawnSpokeGroup(FInstanceDataType& InstanceData, const float (&AnglesDeg)[4], TArray<TObjectPtr<AEchidnaMirrorActor>>& OutMirrors, bool bActivateNow) const;
+	void SpawnGuidedMirror(FInstanceDataType& InstanceData) const;
+	bool AreMirrorsFinished(const TArray<TObjectPtr<AEchidnaMirrorActor>>& Mirrors) const;
+};
+
+UENUM()
 enum class EEchidnaRetreatFanPhase : uint8
 {
 	Casting1,	// 1번째 장판(왼쪽으로 비스듬히) 진행 중
@@ -196,8 +289,8 @@ struct FStateTreeEchidnaRetreatFanPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Fan")
 	TSubclassOf<AEchidnaFanZoneActor> FanZoneClass;
 
-	// 정면(플레이어 방향) 기준 좌/우로 얼마나 비스듬히 쏠지 (도) — 1번은 -값(왼쪽), 2번은 +값(오른쪽)으로 적용.
-	// FanZoneClass의 FanAngle 절반보다 작아야 가운데가 겹침
+	// 정면(패턴 시작 시점의 플레이어 방향 — 이후 재조준 안 함) 기준 좌/우로 얼마나 비스듬히 쏠지 (도) —
+	// 1번은 -값(왼쪽), 2번은 +값(오른쪽)으로 적용. FanZoneClass의 FanAngle 절반보다 작아야 가운데가 겹침
 	UPROPERTY(EditAnywhere, Category = "Fan")
 	float FanYawOffset = 32.f;
 
@@ -230,6 +323,12 @@ struct FStateTreeEchidnaRetreatFanPatternInstanceData
 	// 매 캐스팅마다 플레이어 위치를 다시 조준하면 후퇴/이동 중 기준선이 흔들려 1번·2번이 어긋나 보이므로 시작 시점 값으로 고정
 	UPROPERTY(Transient)
 	FRotator BaseAimRotation = FRotator::ZeroRotator;
+
+	// 패턴 시작(EnterState) 시점에 한 번만 고정하는 발판 위치(지면 높이 보정 완료) — 1번/2번 장판 모두 이 위치에서
+	// 스폰. 매번 Boss->GetActorLocation()을 쓰면 1번 발동 순간 보스가 후방으로 홉하면서 2번은 완전히 다른
+	// 지점에서 스폰돼(두 부채꼴이 서로 다른 원점을 가짐) 각도가 심하게 어긋나 보이는 문제가 있었음
+	UPROPERTY(Transient)
+	FVector BaseSpawnLocation = FVector::ZeroVector;
 };
 
 /**
@@ -264,6 +363,119 @@ private:
 	bool HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const;
 };
 
+UENUM()
+enum class EEchidnaDragFanPhase : uint8
+{
+	Tethering,	// 줄기를 뻗어 당기는 중 (판정 대상이 있으면 보스 쪽으로 끌려옴)
+	Casting1,	// 1번째 장판(왼쪽으로 비스듬히) 진행 중
+	Casting2,	// 2번째 장판(오른쪽으로 비스듬히) 진행 중
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaDragFanPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaDragFanPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// 패턴 시작 시 잔여 이동(패트롤 등)을 멈추는 용도로만 사용
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	TSubclassOf<AEchidnaFanZoneActor> FanZoneClass;
+
+	// 1번째 장판(먼저 터짐) 부채꼴 전체 각도 (도) — FanZoneClass의 FanAngle 기본값을 덮어씀. 레퍼런스 기준 약 120도
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float FirstFanAngle = 120.f;
+
+	// 1번째 장판의 중심 방향 — 정면(BaseAimRotation) 기준 오프셋 (도)
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float FirstYawOffset = -90.f;
+
+	// 2번째 장판(나중에 터짐) 부채꼴 전체 각도 (도) — 1번보다 넓게. 레퍼런스 기준 약 180도
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float SecondFanAngle = 180.f;
+
+	// 2번째 장판의 중심 방향 — 정면(BaseAimRotation) 기준 오프셋 (도). 1번과 살짝만 겹치도록
+	// FirstYawOffset+FirstFanAngle/2 근처 값으로 잡을 것 (기본값 기준 겹침 폭 약 5도)
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float SecondYawOffset = 55.f;
+
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float Damage = 10.f;
+
+	// 1단계 "줄기" — 보스 정면 기준으로 부채꼴 형태로 동시에 뻗어 나가 맞은 대상을 보스 쪽으로 끌어당김
+	UPROPERTY(EditAnywhere, Category = "Tether")
+	TSubclassOf<AEchidnaTetherActor> TetherClass;
+
+	// 동시에 뻗는 줄기 개수 (레퍼런스: 7개)
+	UPROPERTY(EditAnywhere, Category = "Tether", meta = (ClampMin = "1"))
+	int32 TetherCount = 7;
+
+	// 줄기들이 정면(BaseAimRotation) 기준으로 좌우 합쳐서 덮는 총 각도 (도) — 레퍼런스 사진 기준 약 150도
+	UPROPERTY(EditAnywhere, Category = "Tether", meta = (ClampMin = "1.0", ClampMax = "360.0"))
+	float TetherFanAngle = 150.f;
+
+	// 당겨지는 힘 (수평, cm/s)
+	UPROPERTY(EditAnywhere, Category = "Tether")
+	float PullStrength = 1500.f;
+
+	UPROPERTY(Transient)
+	EEchidnaDragFanPhase Phase = EEchidnaDragFanPhase::Tethering;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaFanZoneActor> CurrentFan;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaTetherActor>> SpawnedTethers;
+
+	// 패턴 시작(EnterState) 시점에 한 번만 계산해서 고정하는 기준 조준 방향 — 줄기/1번/2번 캐스팅 모두 이 값 기준으로만 씀
+	UPROPERTY(Transient)
+	FRotator BaseAimRotation = FRotator::ZeroRotator;
+};
+
+/**
+ * "끌고간후 장판터지는" 짤패턴 — 1단계로 보스 정면 기준 부채꼴 모양으로 줄기(촉수) TetherCount개를 동시에 뻗어
+ * (레퍼런스: 7개, TetherFanAngle 범위 안에 균등 분포 — 나머지 각도는 안전지대) SnapDelay 뒤 맞은 대상을 보스 쪽으로
+ * 끌어당긴다. 줄기에 맞은 대상이 단 한 명도 없으면(AnyTetherHit false) 2단계 없이 바로 패턴이 끝난다 — 아무도
+ * 끌려오지 않았는데 장판이 터지는 것을 막기 위함.
+ * 누군가 끌려왔다면 2단계로 FirstFanAngle(기본 120도) 부채꼴(1)을 먼저 터뜨리고 이어서 SecondFanAngle(기본 180도,
+ * 1보다 넓음) 부채꼴(2)을 터뜨린다. First/SecondYawOffset을 조절해 두 부채꼴이 살짝만 겹치게 배치 —
+ * 겹치는 구간은 1·2 둘 다 맞아 매혹 게이지가 2스택 쌓인다(레퍼런스의 "빨간 원 2스택 주의").
+ * 넉백 없이 매혹 게이지만 쌓이도록 FanZoneClass는 bApplyKnockdownOnHit=false / bApplyCharmGaugeOnHit=true로
+ * 설정한 별도 BP 서브클래스 사용 권장 (뒤로 빠지며 좌우장판에 쓰는 BP_EchidnaFanZone과는 다른 설정).
+ * 장판 2까지 다 끝나면(IsFinished) Succeeded.
+ */
+USTRUCT(meta = (DisplayName = "Echidna Drag Fan Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaDragFanPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaDragFanPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	FRotator ComputeAimRotation(const AEchidnaBoss* Boss) const;
+	AEchidnaFanZoneActor* SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg, float FanAngleOverride) const;
+	void SpawnTethers(FInstanceDataType& InstanceData) const;
+	bool AreTethersFinished(const FInstanceDataType& InstanceData) const;
+	bool AnyTetherHit(const FInstanceDataType& InstanceData) const;
+};
+
 /**
  * FStateTreeTask_EchidnaPatrol의 Instance Data
  */
@@ -278,9 +490,14 @@ struct FStateTreeEchidnaPatrolInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController;
 
-	// 보스 현재 위치 기준으로 패트롤 목표 지점을 고를 반경 (cm)
+	// 보스 현재 위치 기준으로 패트롤 목표 지점을 고를 최대 반경 (cm)
 	UPROPERTY(EditAnywhere, Category = "Patrol")
 	float PatrolRadius = 600.f;
+
+	// 패트롤 목표 지점까지 최소 거리 (cm) — 이보다 가까운 지점은 안 뽑히게 해서 "한 발자국만 움직이고 마는"
+	// 애매한 걸음을 방지. [MinPatrolRadius, PatrolRadius] 사이 원형 고리(annulus)에서 균등하게 뽑음
+	UPROPERTY(EditAnywhere, Category = "Patrol", meta = (ClampMin = "0.0"))
+	float MinPatrolRadius = 300.f;
 
 	// 목표 지점 도착 판정 반경 (cm)
 	UPROPERTY(EditAnywhere, Category = "Patrol")

@@ -17,8 +17,8 @@ class UMaterialInterface;
  * 순서 배치(1→2, 좌/우 각도)와 보스가 판정 시작 순간 뒤로 홉하는 연출은
  * StateTree Task(FStateTreeTask_EchidnaRetreatFanPattern)가 HasStartedExploding()을 폴링해서 담당.
  * 부채꼴 모양은 엔진 기본 메시로 표현이 안 돼서 ProceduralMeshComponent로 런타임에 직접 생성한다.
- * VFX 없이 반투명 색상 메시(TelegraphColor/FanColor)만으로 표현 — BasicShapeMaterial 기본값이라
- * 별도 에셋 없이도 바로 보인다.
+ * VFX 없이 반투명/불투명 색상 메시(TelegraphColor/FanColor)만으로 표현 — 기본 머티리얼은 M_MirrorLaser
+ * (Translucent+Unlit, "Base Color" 파라미터). BaseMaterial 참조 보러 ApplyMeshColor 주석 참고.
  */
 UCLASS(Blueprintable)
 class LOA_API AEchidnaFanZoneActor : public AActor
@@ -67,22 +67,45 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Fan")
 	float LifeAfterExplode = 1.0f;
 
-	// 예고 중 색상 (기본: 노랑)
+	// 예고(예상 범위) 중 색상 — 반투명 빨강
 	UPROPERTY(EditDefaultsOnly, Category = "VFX")
-	FLinearColor TelegraphColor = FLinearColor(1.f, 0.9f, 0.05f);
+	FLinearColor TelegraphColor = FLinearColor(1.f, 0.f, 0.f);
 
-	// 고리 확장(실제 판정) 중 색상 (기본: 빨강)
-	UPROPERTY(EditDefaultsOnly, Category = "VFX")
-	FLinearColor FanColor = FLinearColor(1.f, 0.05f, 0.05f);
-
-	// TelegraphColor/FanColor를 넣을 Vector Parameter 이름 (머티리얼에 맞게 수정)
-	UPROPERTY(EditDefaultsOnly, Category = "VFX")
-	FName ColorParameterName = TEXT("Color");
-
-	// 장판 투명도 (0=완전투명, 1=불투명) — Color 파라미터의 Alpha로 전달됨.
-	// FanMeshComp 머티리얼의 Blend Mode가 Translucent이고 Alpha가 Opacity에 연결돼 있어야 실제로 투명해짐
+	// 예고 중 불투명도 (0=완전투명, 1=불투명) — 예상 범위는 반투명하게
 	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float FanOpacity = 0.35f;
+	float TelegraphOpacity = 0.35f;
+
+	// 고리 확장(실제 판정) 중 색상 — 완전 불투명 빨강
+	UPROPERTY(EditDefaultsOnly, Category = "VFX")
+	FLinearColor FanColor = FLinearColor(1.f, 0.f, 0.f);
+
+	// TelegraphColor/FanColor를 넣을 Vector Parameter 이름 — 기본 머티리얼(M_MirrorLaser)의 파라미터명이 "Base Color"라 이게 기본값
+	UPROPERTY(EditDefaultsOnly, Category = "VFX")
+	FName ColorParameterName = TEXT("Base Color");
+
+	// MID를 만들 원본 머티리얼 — FanMeshComp->GetMaterial(0)에 의존하지 않고 이 값을 직접 사용함.
+	// ProceduralMeshComponent는 CDO 시점엔 메시 섹션이 없어서 생성자에서 SetMaterial()로 지정해도
+	// 에디터가 "실제 섹션 수만큼만" 머티리얼 슬롯을 유지하려다 이 값을 지워버리는 경우가 있어,
+	// 이 프로퍼티에 직접 보관해뒀다가 ApplyMeshColor에서 매번 명시적으로 사용
+	UPROPERTY(EditDefaultsOnly, Category = "VFX")
+	TObjectPtr<UMaterialInterface> BaseMaterial;
+
+	// 실제 판정(고리 확장) 중 불투명도 — Color 파라미터의 Alpha로 전달됨. 실행 범위는 완전 불투명하게.
+	// FanMeshComp 머티리얼의 Blend Mode가 Translucent이고 Alpha가 Opacity에 연결돼 있어야 실제로 투명/불투명이 적용됨
+	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float FanOpacity = 1.0f;
+
+	// 판정(고리 확장)마다 넉다운을 적용할지 — "뒤로 빠지며 좌우장판"(패턴4) 기본값. 매혹 스택형 패턴은 꺼서 씀
+	UPROPERTY(EditDefaultsOnly, Category = "Effect")
+	bool bApplyKnockdownOnHit = true;
+
+	// 판정마다 매혹 게이지를 쌓을지 — "끌고간후 장판터지는" 패턴처럼 넉백 없이 매혹만 쌓는 패턴에 사용.
+	// 두 장판이 겹치는 구간에 서 있으면 양쪽 다 판정되어 CharmGaugePerHit의 2배가 쌓임
+	UPROPERTY(EditDefaultsOnly, Category = "Effect")
+	bool bApplyCharmGaugeOnHit = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Effect", meta = (EditCondition = "bApplyCharmGaugeOnHit"))
+	int32 CharmGaugePerHit = 1;
 
 	// StateTree Task가 "예고가 끝나고 실제 판정이 시작됐는지"(보스 후방 홉 타이밍) 폴링할 때 사용
 	bool HasStartedExploding() const { return bStartedExploding; }
@@ -106,7 +129,7 @@ private:
 	FTimerHandle TelegraphTimerHandle;
 	FTimerHandle RingTimerHandle;
 
-	void ApplyMeshColor(const FLinearColor& Color);
+	void ApplyMeshColor(const FLinearColor& Color, float Opacity);
 	void BeginRingExpansion();
 	void RevealNextRing();
 	void BuildFanMesh(float OuterRadius);

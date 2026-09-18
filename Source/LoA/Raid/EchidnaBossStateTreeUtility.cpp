@@ -3,6 +3,7 @@
 #include "EchidnaBoss.h"
 #include "EchidnaMirrorActor.h"
 #include "EchidnaFanZoneActor.h"
+#include "EchidnaTetherActor.h"
 #include "LoA.h"
 #include "AIController.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -147,6 +148,226 @@ FText FStateTreeTask_EchidnaFourMirrorPattern::GetDescription(const FGuid& ID, F
 }
 #endif // WITH_EDITOR
 
+FRotator FStateTreeTask_EchidnaEightMirrorPattern::ComputeAimRotation(const AEchidnaBoss* Boss) const
+{
+	if (!Boss)
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	FRotator AimRotation = Boss->GetActorRotation();
+
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			AimRotation = ToPlayer.GetSafeNormal().Rotation();
+		}
+	}
+
+	return AimRotation;
+}
+
+void FStateTreeTask_EchidnaEightMirrorPattern::SpawnSpokeGroup(FInstanceDataType& InstanceData, const float (&AnglesDeg)[4], TArray<TObjectPtr<AEchidnaMirrorActor>>& OutMirrors, bool bActivateNow) const
+{
+	OutMirrors.Reset();
+
+	if (!InstanceData.Boss || !InstanceData.MirrorClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	const FVector BossLocation = InstanceData.Boss->GetActorLocation();
+	AController* BossController = InstanceData.Boss->GetController();
+
+	for (const float AngleDeg : AnglesDeg)
+	{
+		FRotator SpawnRotation = InstanceData.BaseAimRotation;
+		SpawnRotation.Yaw += AngleDeg;
+
+		// 스포크 방향(보스 바깥쪽)으로 배치 — 레이저도 같은 방향(바깥쪽)으로 뻗어나감
+		const FVector SpawnLocation = BossLocation + SpawnRotation.Vector() * InstanceData.MirrorSpawnRadius;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = InstanceData.Boss;
+		AEchidnaMirrorActor* Mirror = World->SpawnActor<AEchidnaMirrorActor>(
+			InstanceData.MirrorClass, SpawnLocation, SpawnRotation, SpawnParams);
+
+		if (Mirror)
+		{
+			// 고정 스포크 — 플레이어를 조준하지 않고 스폰 방향(바깥쪽) 그대로 유지.
+			// bActivateNow=false면 몸체만 보이는 채로 대기(Tick의 bActivated 가드 덕에 혼자 타임아웃되지 않음) —
+			// 자기 차례(다음 파동)가 되면 Task가 별도로 Activate()를 호출
+			Mirror->bLockDirectionOnSpawn = true;
+			if (bActivateNow)
+			{
+				Mirror->Activate(InstanceData.Damage, BossController);
+			}
+			OutMirrors.Add(Mirror);
+		}
+		else
+		{
+			UE_LOG(LogLoA, Warning, TEXT("[EchidnaEightMirror] 스포크 거울 SpawnActor 실패 (Angle=%.0f)"), AngleDeg);
+		}
+	}
+}
+
+void FStateTreeTask_EchidnaEightMirrorPattern::SpawnGuidedMirror(FInstanceDataType& InstanceData) const
+{
+	if (!InstanceData.Boss || !InstanceData.MirrorClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	const FVector BossLocation = InstanceData.Boss->GetActorLocation();
+	AController* BossController = InstanceData.Boss->GetController();
+
+	// 보스 오른쪽으로 GuidedHoverHeight만큼 떨어진 지점에서 스폰 — 높이는 보스 캡슐 중심 Z(=보스 키의 절반)
+	// 그대로 사용. bSkyGuidedMode의 Tracking 단계 로직이 스폰 직후부터 매 틱 X/Y를 플레이어 위치로 맞춰가므로
+	// 여기서 플레이어 위치를 미리 계산할 필요 없음 — 스폰되자마자 자연스럽게 쫓아가기 시작함
+	const FVector SpawnLocation = BossLocation + InstanceData.Boss->GetActorRightVector() * InstanceData.GuidedHoverHeight;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	AEchidnaMirrorActor* Mirror = World->SpawnActor<AEchidnaMirrorActor>(
+		InstanceData.MirrorClass, SpawnLocation, InstanceData.BaseAimRotation, SpawnParams);
+
+	if (Mirror)
+	{
+		// bLockDirectionOnSpawn=false(기본값) — 플레이어를 계속 추적. bSkyGuidedMode=true — X/Y를 따라다니고,
+		// 위→아래 비스듬한 각도로 조준하며, 발사 후에도 StopRepeating() 전까지 무한 반복
+		Mirror->bSkyGuidedMode = true;
+		Mirror->Activate(InstanceData.GuidedDamage, BossController);
+		InstanceData.GuidedMirror = Mirror;
+	}
+	else
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaEightMirror] 유도 거울 SpawnActor 실패"));
+	}
+}
+
+bool FStateTreeTask_EchidnaEightMirrorPattern::AreMirrorsFinished(const TArray<TObjectPtr<AEchidnaMirrorActor>>& Mirrors) const
+{
+	for (const TObjectPtr<AEchidnaMirrorActor>& Mirror : Mirrors)
+	{
+		if (Mirror && !Mirror->IsFinished())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaEightMirrorPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.PlusMirrors.Reset();
+	InstanceData.CrossMirrors.Reset();
+	InstanceData.GuidedMirror = nullptr;
+
+	if (!InstanceData.Boss || !InstanceData.MirrorClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaEightMirror] EnterState 실패 — Boss=%s MirrorClass=%s (StateTree에서 Context Actor 바인딩/MirrorClass 할당을 확인하세요)"),
+			InstanceData.Boss ? TEXT("Valid") : TEXT("NULL"),
+			InstanceData.MirrorClass ? *InstanceData.MirrorClass->GetName() : TEXT("NULL"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 패턴 시작 순간의 방향을 한 번만 고정 — 두 대형("+"/"X") 모두 이 기준선 + 스포크 각도만 씀
+	InstanceData.BaseAimRotation = ComputeAimRotation(InstanceData.Boss);
+
+	static const float PlusAngles[4] = { 0.f, 90.f, 180.f, 270.f };
+	static const float CrossAngles[4] = { 45.f, 135.f, 225.f, 315.f };
+
+	// 8개 전부 한 번에 스폰 — "+" 4개는 바로 Activate, "X" 4개는 몸체만 보이는 채로 대기
+	SpawnSpokeGroup(InstanceData, PlusAngles, InstanceData.PlusMirrors, /*bActivateNow=*/true);
+	SpawnSpokeGroup(InstanceData, CrossAngles, InstanceData.CrossMirrors, /*bActivateNow=*/false);
+
+	// 유도 거울은 패턴 시작 시 1회만 스폰 — 파동 전환과 무관하게 독립적으로 반복 진행
+	SpawnGuidedMirror(InstanceData);
+
+	InstanceData.Phase = EEchidnaEightMirrorPhase::PlusWave;
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaEightMirrorPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaEightMirrorPhase::PlusWave:
+	{
+		if (!AreMirrorsFinished(InstanceData.PlusMirrors))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// "+" 4개 다 끝남 — 미리 스폰해둔 "X" 4개를 이제서야 Activate
+		AController* BossController = InstanceData.Boss->GetController();
+		for (const TObjectPtr<AEchidnaMirrorActor>& Mirror : InstanceData.CrossMirrors)
+		{
+			if (Mirror)
+			{
+				Mirror->Activate(InstanceData.Damage, BossController);
+			}
+		}
+		InstanceData.Phase = EEchidnaEightMirrorPhase::CrossWave;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaEightMirrorPhase::CrossWave:
+	{
+		if (!AreMirrorsFinished(InstanceData.CrossMirrors))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 두 대형 다 끝남 — 유도 거울에게 마지막 사이클을 끝으로 반복을 멈추라고 알림
+		if (InstanceData.GuidedMirror)
+		{
+			InstanceData.GuidedMirror->StopRepeating();
+		}
+		InstanceData.Phase = EEchidnaEightMirrorPhase::Done;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaEightMirrorPhase::Done:
+	{
+		// 유도 거울이 마지막 사이클(추적 또는 발사)을 마저 끝낼 때까지 대기
+		if (InstanceData.GuidedMirror && !InstanceData.GuidedMirror->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+		return EStateTreeRunStatus::Succeeded;
+	}
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+}
+
+void FStateTreeTask_EchidnaEightMirrorPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	// State가 중간에 다른 이유로(디버그 강제 전이 등) 끝나더라도 유도 거울이 무한 반복 상태로 남지 않도록 정지 요청
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (InstanceData.GuidedMirror)
+	{
+		InstanceData.GuidedMirror->StopRepeating();
+	}
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaEightMirrorPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaEightMirrorPatternDesc", "<b>Echidna Eight Mirror Pattern</b>");
+}
+#endif // WITH_EDITOR
+
 bool FStateTreeTask_EchidnaRetreatFanPattern::HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const
 {
 	UWorld* World = InstanceData.Boss->GetWorld();
@@ -166,28 +387,29 @@ void FStateTreeTask_EchidnaRetreatFanPattern::HopBackward(FInstanceDataType& Ins
 {
 	if (!InstanceData.Boss) return;
 
-	FVector AwayFromPlayer = -InstanceData.Boss->GetActorForwardVector();
-
-	// 보스 자체 회전이 아니라 "플레이어 반대 방향"으로 밀려나야 항상 플레이어에게서 멀어짐
-	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(InstanceData.Boss->GetWorld(), 0))
+	// 그 순간의 플레이어 위치가 아니라 장판이 실제로 뻗어나가는 고정 기준선(BaseAimRotation)의 정반대 방향으로
+	// 물러나야 장판과 일직선이 됨 — 플레이어 위치 기준으로 계산하면 플레이어가 옆으로 이동해 있을 때
+	// 장판 방향과 다른 대각선으로 튀어서 "장판이랑 따로 노는" 것처럼 보였음
+	FVector AwayFromZone = -InstanceData.BaseAimRotation.Vector();
+	AwayFromZone.Z = 0.f;
+	if (AwayFromZone.IsNearlyZero())
 	{
-		FVector Away = InstanceData.Boss->GetActorLocation() - PlayerChar->GetActorLocation();
-		Away.Z = 0.f;
-		if (!Away.IsNearlyZero())
-		{
-			AwayFromPlayer = Away.GetSafeNormal();
-		}
+		AwayFromZone = -InstanceData.Boss->GetActorForwardVector();
+	}
+	else
+	{
+		AwayFromZone = AwayFromZone.GetSafeNormal();
 	}
 
 	// 착지 예상 지점에 바닥이 없으면(맵 끝자락) 홉 자체를 취소 — 낙사 방지
-	const FVector LandingPoint = InstanceData.Boss->GetActorLocation() + AwayFromPlayer * InstanceData.HopCheckDistance;
+	const FVector LandingPoint = InstanceData.Boss->GetActorLocation() + AwayFromZone * InstanceData.HopCheckDistance;
 	if (!HasGroundBelow(InstanceData, LandingPoint))
 	{
 		UE_LOG(LogLoA, Log, TEXT("[EchidnaRetreatFan] 후방 홉 취소 — 착지 예상 지점에 바닥 없음: %s"), *LandingPoint.ToString());
 		return;
 	}
 
-	const FVector LaunchVelocity = AwayFromPlayer * InstanceData.HopBackStrength + FVector(0.f, 0.f, InstanceData.HopUpwardStrength);
+	const FVector LaunchVelocity = AwayFromZone * InstanceData.HopBackStrength + FVector(0.f, 0.f, InstanceData.HopUpwardStrength);
 	InstanceData.Boss->LaunchCharacter(LaunchVelocity, true, true);
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaRetreatFan] 후방 홉 — Loc=%s Velocity=%s"),
@@ -196,6 +418,11 @@ void FStateTreeTask_EchidnaRetreatFanPattern::HopBackward(FInstanceDataType& Ins
 
 FRotator FStateTreeTask_EchidnaRetreatFanPattern::ComputeAimRotation(const AEchidnaBoss* Boss) const
 {
+	// 패턴 시작 순간의 플레이어 방향을 한 번만 계산해서 고정 기준선으로 씀(플레이어 없으면 보스 정면 fallback).
+	// 1번/2번 장판 모두 이 값 + FanYawOffset만 쓰고 다시 조준하지 않으므로, 두 장판의 방향 차이는 항상
+	// 2*FanYawOffset(고정값)로 일정함 — "2번이 플레이어를 다시 보면서 크게 틀어지는" 것처럼 보였던 원인은
+	// 이 조준 계산이 아니라 후방 홉(LaunchCharacter) 중 보스 캐릭터무브먼트가 이동 방향으로 자동 회전하던
+	// 것이었음(HopBackward 참고, bOrientRotationToMovement 비활성화로 별도 수정)
 	if (!Boss)
 	{
 		return FRotator::ZeroRotator;
@@ -229,13 +456,10 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanc
 		return nullptr;
 	}
 
-	// Boss->GetActorLocation()은 캡슐 중심(지면에서 캡슐 절반 높이만큼 위) 기준이라
-	// 그대로 쓰면 장판이 공중에 뜬 것처럼 보임 — 캡슐 절반 높이를 빼서 발밑(지면) 높이로 보정
-	FVector SpawnLocation = InstanceData.Boss->GetActorLocation();
-	if (const UCapsuleComponent* Capsule = InstanceData.Boss->GetCapsuleComponent())
-	{
-		SpawnLocation.Z -= Capsule->GetScaledCapsuleHalfHeight();
-	}
+	// 1번/2번 모두 EnterState에서 한 번만 고정해둔 BaseSpawnLocation을 그대로 씀 — 매번 Boss->GetActorLocation()을
+	// 쓰면 1번 발동 순간 보스가 후방으로 홉해버려서 2번은 완전히 다른 지점에서 스폰되고, 결과적으로 두 부채꼴의
+	// 원점이 달라져 "각도가 심하게 어긋나 보이는" 문제가 있었음. 보스 자신은 계속 뒤로 물러나도 장판 원점은 고정
+	const FVector SpawnLocation = InstanceData.BaseSpawnLocation;
 
 	// 매 캐스팅마다 플레이어 위치를 다시 조준하면 1번(왼쪽)과 2번(오른쪽)의 기준선이 서로 달라져
 	// 패턴이 시작된 후 플레이어가 움직이면 겹치는 구간이 어긋나 보임 — EnterState에서 한 번만 정한
@@ -288,6 +512,14 @@ EStateTreeRunStatus FStateTreeTask_EchidnaRetreatFanPattern::EnterState(FStateTr
 	// 패턴 시작 순간(그 순간 쳐다본 곳=플레이어 방향)의 조준 방향을 한 번만 고정 —
 	// 1번/2번 캐스팅 모두 이 기준선에 좌/우 각도만 더해서 씀 (매번 플레이어 위치로 다시 조준하지 않음)
 	InstanceData.BaseAimRotation = ComputeAimRotation(InstanceData.Boss);
+
+	// 장판 원점도 패턴 시작 시점의 보스 위치로 한 번만 고정 — 1번 발동 후 보스가 후방으로 홉해도
+	// 2번 장판은 계속 이 지점에서 스폰됨(보스 자신의 위치와는 별개)
+	InstanceData.BaseSpawnLocation = InstanceData.Boss->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = InstanceData.Boss->GetCapsuleComponent())
+	{
+		InstanceData.BaseSpawnLocation.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
 
 	// 1번째 장판 — 정면 기준 왼쪽으로 비스듬히
 	InstanceData.CurrentFan = SpawnFan(InstanceData, -InstanceData.FanYawOffset);
@@ -371,6 +603,275 @@ FText FStateTreeTask_EchidnaRetreatFanPattern::GetDescription(const FGuid& ID, F
 }
 #endif // WITH_EDITOR
 
+void FStateTreeTask_EchidnaDragFanPattern::SpawnTethers(FInstanceDataType& InstanceData) const
+{
+	InstanceData.SpawnedTethers.Reset();
+
+	if (!InstanceData.Boss || !InstanceData.TetherClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaDragFan] TetherClass 미할당 — 줄기 단계 생략"));
+		return;
+	}
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	// Boss->GetActorLocation()은 캡슐 중심 기준이라 그대로 쓰면 장판이 공중에 뜬 것처럼 보임
+	FVector SpawnLocation = InstanceData.Boss->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = InstanceData.Boss->GetCapsuleComponent())
+	{
+		SpawnLocation.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+
+	AController* BossController = InstanceData.Boss->GetController();
+	const FVector PullTarget = InstanceData.Boss->GetActorLocation();
+
+	// BaseAimRotation(정면) 기준으로 TetherFanAngle 범위 안에 TetherCount개를 균등 분포 —
+	// 나머지(360 - TetherFanAngle)는 아무 줄기도 없는 안전지대로 남음
+	const int32 Count = FMath::Max(InstanceData.TetherCount, 1);
+	const float HalfAngle = InstanceData.TetherFanAngle * 0.5f;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		const float T = (Count > 1) ? ((float)i / (float)(Count - 1)) : 0.5f;
+		const float YawOffset = FMath::Lerp(-HalfAngle, HalfAngle, T);
+
+		FRotator SpawnRotation = InstanceData.BaseAimRotation;
+		SpawnRotation.Yaw += YawOffset;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = InstanceData.Boss;
+		AEchidnaTetherActor* Tether = World->SpawnActor<AEchidnaTetherActor>(
+			InstanceData.TetherClass, SpawnLocation, SpawnRotation, SpawnParams);
+
+		if (Tether)
+		{
+			Tether->Activate(PullTarget, InstanceData.PullStrength, BossController);
+			InstanceData.SpawnedTethers.Add(Tether);
+		}
+		else
+		{
+			UE_LOG(LogLoA, Warning, TEXT("[EchidnaDragFan] Tether SpawnActor 실패 (YawOffset=%.0f)"), YawOffset);
+		}
+	}
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaDragFan] 줄기 %d개 스폰 완료 (BossLoc=%s)"),
+		InstanceData.SpawnedTethers.Num(), *SpawnLocation.ToString());
+}
+
+bool FStateTreeTask_EchidnaDragFanPattern::AreTethersFinished(const FInstanceDataType& InstanceData) const
+{
+	for (const TObjectPtr<AEchidnaTetherActor>& Tether : InstanceData.SpawnedTethers)
+	{
+		if (Tether && !Tether->IsFinished())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool FStateTreeTask_EchidnaDragFanPattern::AnyTetherHit(const FInstanceDataType& InstanceData) const
+{
+	for (const TObjectPtr<AEchidnaTetherActor>& Tether : InstanceData.SpawnedTethers)
+	{
+		if (Tether && Tether->DidHit())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+FRotator FStateTreeTask_EchidnaDragFanPattern::ComputeAimRotation(const AEchidnaBoss* Boss) const
+{
+	if (!Boss)
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	FRotator AimRotation = Boss->GetActorRotation();
+
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			AimRotation = ToPlayer.GetSafeNormal().Rotation();
+		}
+	}
+
+	return AimRotation;
+}
+
+AEchidnaFanZoneActor* FStateTreeTask_EchidnaDragFanPattern::SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg, float FanAngleOverride) const
+{
+	if (!InstanceData.Boss || !InstanceData.FanZoneClass)
+	{
+		return nullptr;
+	}
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	// Boss->GetActorLocation()은 캡슐 중심 기준이라 그대로 쓰면 장판이 공중에 뜬 것처럼 보임 —
+	// 캡슐 절반 높이를 빼서 발밑(지면) 높이로 보정
+	FVector SpawnLocation = InstanceData.Boss->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = InstanceData.Boss->GetCapsuleComponent())
+	{
+		SpawnLocation.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+
+	// 매 캐스팅마다 플레이어 위치를 다시 조준하면 1번·2번의 기준선이 어긋나므로,
+	// EnterState에서 한 번만 정한 BaseAimRotation을 그대로 쓰고 좌/우 각도(YawOffsetDeg)만 더한다
+	FRotator SpawnRotation = InstanceData.BaseAimRotation;
+	SpawnRotation.Yaw += YawOffsetDeg;
+
+	InstanceData.Boss->SetActorRotation(FRotator(0.f, SpawnRotation.Yaw, 0.f));
+
+	AController* BossController = InstanceData.Boss->GetController();
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	AEchidnaFanZoneActor* Fan = World->SpawnActor<AEchidnaFanZoneActor>(
+		InstanceData.FanZoneClass, SpawnLocation, SpawnRotation, SpawnParams);
+
+	if (Fan)
+	{
+		// 1번/2번 장판마다 폭이 다르므로(FirstFanAngle/SecondFanAngle) FanZoneClass 기본값을 여기서 덮어씀 —
+		// Activate()가 이 값을 읽어 메시를 만들기 전에 설정해야 함
+		if (FanAngleOverride > 0.f)
+		{
+			Fan->FanAngle = FanAngleOverride;
+		}
+		Fan->Activate(InstanceData.Damage, BossController);
+	}
+	else
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaDragFan] SpawnActor 실패"));
+	}
+
+	return Fan;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaDragFanPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.CurrentFan = nullptr;
+	InstanceData.SpawnedTethers.Reset();
+
+	if (!InstanceData.Boss || !InstanceData.FanZoneClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaDragFan] EnterState 실패 — Boss=%s FanZoneClass=%s (StateTree에서 Context Actor 바인딩/FanZoneClass 할당을 확인하세요)"),
+			InstanceData.Boss ? TEXT("Valid") : TEXT("NULL"),
+			InstanceData.FanZoneClass ? *InstanceData.FanZoneClass->GetName() : TEXT("NULL"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	// 패턴 시작 순간의 조준 방향을 한 번만 고정 — 줄기/1번/2번 캐스팅 모두 이 기준선에 각도만 더해서 씀
+	InstanceData.BaseAimRotation = ComputeAimRotation(InstanceData.Boss);
+
+	// 보스가 조준 방향을 보도록 회전 (레퍼런스의 "턴 동작")
+	InstanceData.Boss->SetActorRotation(FRotator(0.f, InstanceData.BaseAimRotation.Yaw, 0.f));
+
+	// 1단계 — 부채꼴로 줄기를 동시에 뻗어 맞은 대상을 끌어당김
+	SpawnTethers(InstanceData);
+
+	InstanceData.Phase = EEchidnaDragFanPhase::Tethering;
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaDragFanPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaDragFanPhase::Tethering:
+	{
+		if (!AreTethersFinished(InstanceData))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 줄기에 맞아 끌려온 대상이 아무도 없으면 장판을 터뜨리지 않고 바로 패턴 종료
+		if (!AnyTetherHit(InstanceData))
+		{
+			UE_LOG(LogLoA, Log, TEXT("[EchidnaDragFan] 줄기에 맞은 대상 없음 — 장판 생략하고 패턴 종료"));
+			InstanceData.Phase = EEchidnaDragFanPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+
+		// 2단계 — 1번째 장판 (좁게, FirstFanAngle)
+		InstanceData.CurrentFan = SpawnFan(InstanceData, InstanceData.FirstYawOffset, InstanceData.FirstFanAngle);
+		if (!InstanceData.CurrentFan)
+		{
+			return EStateTreeRunStatus::Failed;
+		}
+		InstanceData.Phase = EEchidnaDragFanPhase::Casting1;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaDragFanPhase::Casting1:
+	{
+		if (!InstanceData.CurrentFan || !InstanceData.CurrentFan->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 2번째 장판 — 1번보다 넓게(SecondFanAngle), 살짝만 겹치도록 SecondYawOffset으로 배치
+		InstanceData.CurrentFan = SpawnFan(InstanceData, InstanceData.SecondYawOffset, InstanceData.SecondFanAngle);
+		if (!InstanceData.CurrentFan)
+		{
+			return EStateTreeRunStatus::Failed;
+		}
+		InstanceData.Phase = EEchidnaDragFanPhase::Casting2;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaDragFanPhase::Casting2:
+	{
+		if (!InstanceData.CurrentFan || !InstanceData.CurrentFan->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		InstanceData.Phase = EEchidnaDragFanPhase::Done;
+		return EStateTreeRunStatus::Succeeded;
+	}
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+}
+
+void FStateTreeTask_EchidnaDragFanPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaDragFanPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaDragFanPatternDesc", "<b>Echidna Drag Fan Pattern</b>");
+}
+#endif // WITH_EDITOR
+
 EStateTreeRunStatus FStateTreeTask_EchidnaPatrol::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
@@ -383,9 +884,14 @@ EStateTreeRunStatus FStateTreeTask_EchidnaPatrol::EnterState(FStateTreeExecution
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 원 전체(0~PatrolRadius)에서 균등하게 뽑으면 중심 근처가 뽑힐 확률도 있어서 "한 발자국만 움직이고 마는"
+	// 애매한 걸음이 종종 나왔음 — [MinPatrolRadius, PatrolRadius] 원형 고리에서만 뽑아 항상 어느 정도
+	// 걷는 느낌이 나도록 함 (각도는 균등, 반지름은 면적 균등 분포가 되도록 제곱근 보정)
 	const FVector Origin = InstanceData.Boss->GetActorLocation();
-	const FVector2D RandOffset = FMath::RandPointInCircle(InstanceData.PatrolRadius);
-	const FVector TargetPoint = Origin + FVector(RandOffset.X, RandOffset.Y, 0.f);
+	const float MinR = FMath::Clamp(InstanceData.MinPatrolRadius, 0.f, InstanceData.PatrolRadius);
+	const float RandAngle = FMath::RandRange(0.f, 2.f * PI);
+	const float RandRadius = FMath::Sqrt(FMath::RandRange(MinR * MinR, InstanceData.PatrolRadius * InstanceData.PatrolRadius));
+	const FVector TargetPoint = Origin + FVector(FMath::Cos(RandAngle), FMath::Sin(RandAngle), 0.f) * RandRadius;
 
 	const EPathFollowingRequestResult::Type Result = InstanceData.AIController->MoveToLocation(
 		TargetPoint, InstanceData.AcceptanceRadius);

@@ -156,6 +156,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
 	virtual void ApplyKnockdown(const FVector& SourceLocation);
 
+	/** TargetLocation 방향으로 수평으로 끌어당김 (예: 에키드나 "줄기" 촉수 패턴) — 넉다운과 달리 상태 전환/입력 차단 없이
+	 * 순수하게 이동만 발생. 수직 속도는 건드리지 않으므로(LaunchCharacter의 bZOverride=false) bConstrainToPlane을
+	 * 따로 풀어줄 필요 없음 */
+	UFUNCTION(BlueprintCallable, Category="Knockdown")
+	virtual void ApplyPull(const FVector& TargetLocation, float PullStrength);
+
 	/** 넉다운 즉시 해제 (자동 기상/즉시 기상 공통 진입점) */
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
 	virtual void GetUpFromKnockdown();
@@ -169,9 +175,20 @@ public:
 	UFUNCTION(BlueprintPure, Category="Knockdown")
 	bool IsKnockedDown() const { return bIsKnockedDown; }
 
-	/** 넉다운 상태가 바뀔 때 호출 — 쓰러짐/기상 애니메이션은 BP에서 구현 */
+	/** true인 동안은 아직 튕겨나가는 중(공중) — 실제로 바닥에 눕는 포즈는 이 값이 false로 바뀐 뒤(OnKnockdownSettled)에 재생할 것.
+	 * IsKnockedDown()만 보고 눕는 애니메이션을 틀면 아직 공중에 떠 있는 동안에도 누운 포즈가 재생되어 "공중에 뜬 채 누워있는" 것처럼 보임 */
+	UFUNCTION(BlueprintPure, Category="Knockdown")
+	bool IsKnockdownAirborne() const { return bKnockdownAirborne; }
+
+	/** 넉다운 상태가 바뀔 때 호출 — 쓰러짐/기상 애니메이션은 BP에서 구현.
+	 * bKnockedDown=true는 "튕겨나가기 시작"하는 시점(아직 공중)에 호출되므로, 실제 누운 포즈 재생은
+	 * 이 이벤트가 아니라 아래 OnKnockdownSettled(바닥에 닿은 시점)에 걸어야 함 */
 	UFUNCTION(BlueprintImplementableEvent, Category="Knockdown")
 	void OnKnockdownVisualChanged(bool bKnockedDown);
+
+	/** 튕겨나가던 캐릭터가 실제로 바닥에 닿아 정착한 순간(SettleKnockdown) 호출 — 여기서부터 KnockdownDuration 동안 누운 포즈 재생 */
+	UFUNCTION(BlueprintImplementableEvent, Category="Knockdown")
+	void OnKnockdownSettled();
 
 	/** Returns the camera component **/
 	UCameraComponent* GetTopDownCameraComponent() const { return TopDownCameraComponent.Get(); }

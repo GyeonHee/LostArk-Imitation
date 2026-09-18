@@ -8,6 +8,7 @@ Saved/
 # Visual Studio
 .vs/
 *.sln
+*.slnx
 
 # OS
 Thumbs.db
