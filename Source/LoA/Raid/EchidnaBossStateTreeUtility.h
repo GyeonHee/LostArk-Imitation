@@ -10,6 +10,7 @@ class AEchidnaBoss;
 class AEchidnaMirrorActor;
 class AEchidnaFanZoneActor;
 class AEchidnaTetherActor;
+class AEchidnaHeartActor;
 class AAIController;
 
 /**
@@ -474,6 +475,323 @@ private:
 	void SpawnTethers(FInstanceDataType& InstanceData) const;
 	bool AreTethersFinished(const FInstanceDataType& InstanceData) const;
 	bool AnyTetherHit(const FInstanceDataType& InstanceData) const;
+};
+
+UENUM()
+enum class EEchidnaDonutSlashPhase : uint8
+{
+	Slash1,				// 1번 슬래시(우측 대각) 진행 중
+	Slash2,				// 2번 슬래시(좌측 대각) 진행 중
+	InnerDonutTelegraph,	// 작은 도넛(3번) 예고 표시 중 — 보스는 아직 지상에 그대로 있음
+	Rising,				// 작은 도넛(3번)이 터진 직후부터 보스가 하늘로 상승, 정점에서 대기
+	FallAndOuterDonut,	// 보스가 하강하며 외곽 도넛(4번) 예고→폭발
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaDonutSlashPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaDonutSlashPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// 패턴 시작 시 잔여 이동(패트롤 등)을 멈추는 용도로만 사용
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 1번/2번 슬래시에 쓰는 클래스 — 넉다운 대신 가벼운 경직(bApplyStaggerOnHit=true) / 매혹 X 설정 권장.
+	// 슬래시에 맞아도 캐릭터가 튕겨나가거나 쓰러지지 않고 짧게만 행동불능이 되도록 넉다운과는 다른 BP를 씀
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	TSubclassOf<AEchidnaFanZoneActor> SlashZoneClass;
+
+	// 3번(작은 도넛)에 쓰는 클래스 — 넉다운 O(bApplyKnockdownOnHit=true) / 매혹 X 설정 권장
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	TSubclassOf<AEchidnaFanZoneActor> FanZoneClass;
+
+	// 4번(외곽 도넛)에 쓰는 클래스 — 넉다운 O + 매혹 O(bApplyKnockdownOnHit=true, bApplyCharmGaugeOnHit=true 둘 다)
+	// 설정 권장 — "1~3은 매혹 X, 4번만 매혹 O"이면서 "3·4번 다 넘어짐"이므로 3번용(FanZoneClass)과는
+	// 매혹 여부만 다른 별도 BP 서브클래스 필요
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	TSubclassOf<AEchidnaFanZoneActor> OuterDonutClass;
+
+	// 슬래시(1·2번) 부채꼴 전체 각도 (도) — 180도라 각 슬래시가 정면 기준 절반(90도)씩 좌우로 크게 덮음.
+	// Slash1/2YawOffset과 합쳐서 "정면보다 살짝 반대편부터 반대쪽 뒷편까지" 넓게 훑고 정면 부근에서 겹치게 함
+	UPROPERTY(EditAnywhere, Category = "Slash")
+	float SlashFanAngle = 180.f;
+
+	// 슬래시 안쪽 반지름 (cm) — 레퍼런스처럼 중심이 아니라 호(arc) 끝부분만 때리도록 SlashRange에 가깝게 잡아
+	// 얇은 부채꼴 고리(annulus)로 만듦. 0으로 두면 중심에서 뻗는 일반 부채꼴로 되돌아감
+	UPROPERTY(EditAnywhere, Category = "Slash")
+	float SlashInnerRadius = 350.f;
+
+	// 슬래시 바깥 반지름 = 사거리 (cm)
+	UPROPERTY(EditAnywhere, Category = "Slash")
+	float SlashRange = 850.f;
+
+	// 슬래시(1·2번) 전용 예고시간 오버라이드 (초) — 예고 후 한 번만 딱 때리도록(RingCount=1 강제) SpawnZone에서 씀
+	UPROPERTY(EditAnywhere, Category = "Slash")
+	float SlashTelegraphDuration = 1.2f;
+
+	// 1번(우측 대각) — 정면(BaseAimRotation) 기준 부채꼴 중심의 Yaw 오프셋 (도, +값=오른쪽).
+	// SlashFanAngle=180 기준 범위는 [YawOffset-90, YawOffset+90] — 기본값 75도면 정면 -15도(살짝 왼쪽)부터
+	// 우측 뒤(165도)까지 덮어서 "정면보다 살짝 왼쪽부터 우측 뒷편까지" 레퍼런스 그림과 맞음
+	UPROPERTY(EditAnywhere, Category = "Slash")
+	float Slash1YawOffset = 75.f;
+
+	// 2번(좌측 대각) — 1번과 좌우 대칭 (도, -값=왼쪽). 기본값 -75도면 정면 +15도(살짝 오른쪽)부터
+	// 좌측 뒤(-165도)까지 덮음 — 1번의 [-15,165]와 겹쳐서 정면 [-15,15] 구간(30도)은 둘 다 맞아 색이 진해짐
+	UPROPERTY(EditAnywhere, Category = "Slash")
+	float Slash2YawOffset = -75.f;
+
+	// 작은 도넛(3번) — 안쪽 구멍 반지름 (cm)
+	UPROPERTY(EditAnywhere, Category = "Donut")
+	float InnerDonutInnerRadius = 0.f;
+
+	// 작은 도넛(3번) — 바깥 반지름 (cm)
+	UPROPERTY(EditAnywhere, Category = "Donut")
+	float InnerDonutOuterRadius = 450.f;
+
+	// 작은 도넛(3번) 전용 예고시간 오버라이드 (초) — FanZoneClass의 기본 TelegraphDuration을 무시하고 이 값을 씀.
+	// "올라가면서 터져야" 하므로 RiseDuration보다 확실히 짧게 잡아 상승 도중에 다 터지도록 강제함
+	UPROPERTY(EditAnywhere, Category = "Donut")
+	float InnerDonutTelegraphDuration = 0.5f;
+
+	// 외곽 도넛(4번) — 안쪽 반지름 (cm) — OuterDonutOuterRadius에 가깝게 잡아 "원테두리만" 터지는 얇은 고리로 구성
+	UPROPERTY(EditAnywhere, Category = "Donut")
+	float OuterDonutInnerRadius = 750.f;
+
+	// 외곽 도넛(4번) — 바깥 반지름 (cm)
+	UPROPERTY(EditAnywhere, Category = "Donut")
+	float OuterDonutOuterRadius = 1000.f;
+
+	// 외곽 도넛(4번) 전용 예고시간 오버라이드 (초) — OuterDonutClass의 기본 TelegraphDuration을 무시하고 이 값을 씀.
+	// 하강(FallDuration)과 동시에 예고가 뜨므로 착지 타이밍과 맞추려면 FallDuration과 비슷하게 잡을 것
+	UPROPERTY(EditAnywhere, Category = "Donut")
+	float OuterDonutTelegraphDuration = 0.9f;
+
+	// 보스가 하늘로 상승하는 높이 (cm)
+	UPROPERTY(EditAnywhere, Category = "Rise")
+	float RiseHeight = 500.f;
+
+	// 상승 시간 (초) — 작은 도넛(3번) 예고→폭발이 다 끝난 뒤(InnerDonutTelegraph 단계 종료)부터 세는 시간
+	UPROPERTY(EditAnywhere, Category = "Rise")
+	float RiseDuration = 1.0f;
+
+	// 정점 도달 후 대기 시간 (초) — 작은 도넛(3번)은 이미 상승 시작 전에 예고→폭발이 끝난 상태이므로,
+	// 이 구간은 순수하게 "정점에서 잠깐 멈춰있는" 연출용 대기 시간
+	UPROPERTY(EditAnywhere, Category = "Rise")
+	float ApexHoldDuration = 0.7f;
+
+	// 하강 시간 (초) — 이 구간 시작과 동시에 외곽 도넛(4번) 예고가 뜸. 착지 무렵 터지도록 OuterDonutTelegraphDuration을
+	// 이 값과 비슷하게 맞춰두면 좋음
+	UPROPERTY(EditAnywhere, Category = "Rise")
+	float FallDuration = 0.9f;
+
+	UPROPERTY(EditAnywhere, Category = "Fan")
+	float Damage = 10.f;
+
+	UPROPERTY(Transient)
+	EEchidnaDonutSlashPhase Phase = EEchidnaDonutSlashPhase::Slash1;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaFanZoneActor> CurrentFan;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaFanZoneActor> InnerDonut;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaFanZoneActor> OuterDonut;
+
+	// 패턴 시작(EnterState) 시점에 한 번만 고정하는 기준 조준 방향 — 1번/2번 슬래시 모두 이 값 + YawOffset만 씀
+	UPROPERTY(Transient)
+	FRotator BaseAimRotation = FRotator::ZeroRotator;
+
+	// 패턴 시작 시점에 고정하는 발판 위치(지면 높이 보정 완료) — 슬래시·도넛 모두 이 위치 기준으로 스폰
+	UPROPERTY(Transient)
+	FVector BaseSpawnLocation = FVector::ZeroVector;
+
+	// 상승 시작 직전 보스의 실제 액터 Z(캡슐 중심) — 상승/하강 높이 계산 및 하강 완료 후 복귀 기준
+	UPROPERTY(Transient)
+	float GroundActorZ = 0.f;
+
+	// Rising/FallAndOuterDonut 단계 진입 후 경과 시간 (단계 진입 시 0으로 리셋)
+	UPROPERTY(Transient)
+	float PhaseElapsed = 0.f;
+};
+
+/**
+ * "두번긋고 도넛장판" 짤패턴 — 보스 정면 기준 우측 대각(1)·좌측 대각(2) 부채꼴 슬래시를 순서대로 터뜨린 뒤,
+ * 작은 도넛(3, 중심 근처 고리)이 예고→폭발까지 끝나야(보스는 아직 지상) 그 직후부터 보스가 하늘로 상승해
+ * 잠시 에어본 상태로 대기하다가, 하강하면서 외곽 도넛(4, 사거리 끝의 얇은 고리 — "원테두리만")이 예고→폭발한다.
+ * **순서 주의**: "예고 표시 → 폭발 → (그제서야) 보스 상승"이어야 하며, 예고를 보여주면서 동시에 이미 공중에
+ * 떠서 뜬 채로 터지는 것처럼 보이면 안 됨(레퍼런스 요구사항) — 그래서 InnerDonutTelegraph 단계를 Rising 단계와
+ * 분리해 InnerDonut이 `IsFinished()`(예고+단발판정 완료)가 된 다음에만 MOVE_Flying 전환/상승을 시작한다.
+ * 1~3번은 넉다운(FanZoneClass, bApplyKnockdownOnHit=true 권장)만 적용되고 매혹 게이지는 쌓이지 않으며,
+ * 4번(OuterDonutClass, bApplyCharmGaugeOnHit=true 권장)만 매혹 게이지가 쌓인다 — 실제 판정 효과는
+ * AEchidnaFanZoneActor 서브클래스(BP)의 bApplyKnockdownOnHit/bApplyCharmGaugeOnHit 설정을 그대로 따르므로
+ * FanZoneClass/OuterDonutClass에 서로 다른 BP를 할당해야 함.
+ * 3·4번(도넛)은 AEchidnaFanZoneActor의 FanAngle=360 오버라이드로 표현(부채꼴이 아니라 원형 고리가 됨) —
+ * FanInnerRadius/FanRange도 함께 오버라이드해서 고리 두께를 조절한다.
+ * **1~4번 전부 예고 후 한 번만 딱 때리는 단발 판정** — "뒤로 빠지며 좌우장판"이 쓰는 RingCount 계단식 확장(안→밖으로
+ * 훑으며 여러 번 판정)은 이 패턴에는 안 맞아서, SpawnZone()이 4번 스폰 전부에 RingCount=1을 강제 오버라이드한다
+ * (BP 기본 RingCount가 5여도 무시됨). 예고시간은 Slash1/2YawOffset 옆의 SlashTelegraphDuration, 작은 도넛의
+ * InnerDonutTelegraphDuration, 외곽 도넛의 OuterDonutTelegraphDuration으로 각각 따로 조절한다.
+ * 보스의 상승/하강은 물리(LaunchCharacter)가 아니라 CharacterMovementComponent를 MOVE_Flying으로 바꾼 뒤
+ * 매 틱 Z를 직접 보간하는 방식으로 처리 — 넉백 패턴들과 달리 정점 대기·착지 타이밍이 중요해서 물리 예측에
+ * 맡기지 않고 스크립트로 직접 제어한다(EndRiseFall에서 MOVE_Walking으로 복구 + Z를 원래 지상 높이로 스냅).
+ * 4번까지 다 끝나면(OuterDonut->IsFinished()) Succeeded.
+ */
+USTRUCT(meta = (DisplayName = "Echidna Donut Slash Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaDonutSlashPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaDonutSlashPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	FRotator ComputeAimRotation(const AEchidnaBoss* Boss) const;
+	// TelegraphDurationOverride가 음수면 무시(BP 기본값 유지) — RingCountOverride는 이 Task의 모든 호출부에서
+	// 항상 1을 넘겨 "예고 후 단발 판정"을 강제한다 (BP 기본 RingCount가 몇이든 무시됨)
+	AEchidnaFanZoneActor* SpawnZone(FInstanceDataType& InstanceData, TSubclassOf<AEchidnaFanZoneActor> ZoneClass,
+		float YawOffsetDeg, float FanAngleOverride, float InnerRadiusOverride, float OuterRadiusOverride,
+		float TelegraphDurationOverride, int32 RingCountOverride) const;
+	void EndRiseFall(FInstanceDataType& InstanceData) const;
+};
+
+UENUM()
+enum class EEchidnaHeartBurstPhase : uint8
+{
+	Telegraph,	// 보스 머리 위 하트 표시, 보스는 가만히 있음
+	Firing,		// FireDuration 동안 반복적으로 랜덤 방향·랜덤 개수 하트 발사
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaHeartBurstPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaHeartBurstPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// 패턴 시작 시 잔여 이동(패트롤 등)을 멈추는 용도로만 사용 — 이 패턴은 보스가 계속 제자리에 있으므로 이동 명령엔 안 씀
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	TSubclassOf<AEchidnaHeartActor> HeartClass;
+
+	// 예고(보스 머리 위 하트 표시) 지속시간 (초) — 이 동안 보스는 가만히 있고 하트는 아직 발사되지 않음
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float TelegraphDuration = 2.f;
+
+	// 하트 발사가 지속되는 총 시간 (초) — 이 시간이 지나면 아직 날아가는 하트가 있어도 패턴 자체는 종료됨
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float FireDuration = 2.f;
+
+	// 발사 웨이브 간격 (초) — 이 간격마다 랜덤 방향으로 하트 무리를 한 번씩 쏨
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float FireInterval = 0.3f;
+
+	// 한 웨이브에 몇 개를 쏠지 — 각도는 정해진 방향 없이 0~360도 전방향 중 매번 완전히 랜덤(FRandRange)으로
+	// 정해지므로 개수만 이 범위에서 랜덤으로 뽑음
+	UPROPERTY(EditAnywhere, Category = "Heart", meta = (ClampMin = "1"))
+	int32 MinHeartsPerWave = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Heart", meta = (ClampMin = "1"))
+	int32 MaxHeartsPerWave = 6;
+
+	// 하트 비행 속도 (cm/s)
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float HeartSpeed = 800.f;
+
+	// 실제로 발사되는 하트의 높이 — 지면(보스 발밑) 기준 오프셋 (cm). 예고 마커는 보스 머리 위에 표시되지만,
+	// 발사되는 하트까지 그 높이로 날아가면 플레이어 캡슐(중심이 대략 지면+96cm) 위를 그냥 지나쳐서 안 맞았음 —
+	// 플레이어 캡슐 중심 높이와 비슷하게 잡아서 실제로 충돌하도록 함
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float HeartFireHeight = 100.f;
+
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float HeartDamage = 10.f;
+
+	// 하트에 맞으면 걸리는 기절 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float HeartStunDuration = 3.f;
+
+	// 하트에 맞으면 쌓이는 매혹 게이지
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	int32 HeartCharmGaugeAmount = 1;
+
+	UPROPERTY(Transient)
+	EEchidnaHeartBurstPhase Phase = EEchidnaHeartBurstPhase::Telegraph;
+
+	// 예고 단계에서 Launch 없이 스폰해두는 하트 — 보스 머리 위 마커로 재사용 (예고 끝나면 소멸)
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaHeartActor> TelegraphHeart;
+
+	// 예고 마커가 표시되는 위치(보스 머리 위 높이로 보정 완료) — 패턴 시작 시점에 한 번만 고정
+	UPROPERTY(Transient)
+	FVector SpawnLocation = FVector::ZeroVector;
+
+	// 실제 발사되는 하트들의 원점(HeartFireHeight로 보정 — 플레이어 캡슐과 충돌 가능한 높이) — 패턴 시작 시점에 한 번만 고정
+	UPROPERTY(Transient)
+	FVector FireSpawnLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	float PhaseElapsed = 0.f;
+
+	// Firing 단계에서 다음 웨이브까지 남은 경과시간 누적 (FireInterval마다 리셋)
+	UPROPERTY(Transient)
+	float FireIntervalElapsed = 0.f;
+};
+
+/**
+ * "전방향 하트발사" 짤패턴(단순화 버전 — 레퍼런스의 "랜덤 1명 잡기+씨앗" 무력화는 제외, 스턴+매혹만 적용) —
+ * 패턴 시작 시 보스 머리 위에 하트 마커(AEchidnaHeartActor를 Launch 없이 스폰해 예고용으로 재사용)를
+ * TelegraphDuration(기본 2초) 동안 표시하고, 그동안 보스는 제자리에 가만히 있는다(별도 이동/회전 명령 없음).
+ * 예고가 끝나면 FireDuration(기본 2초) 동안 FireInterval(기본 0.3초)마다 [MinHeartsPerWave, MaxHeartsPerWave]
+ * 범위에서 매번 랜덤으로 고른 개수만큼 하트를 쏘는데, 각 하트의 방향은 정해진 8방향이 아니라 0~360도
+ * 전방향 중 완전히 랜덤(FMath::FRandRange)으로 정해진다 — 매 웨이브마다 개수도 방향도 전부 달라짐.
+ * 하트에 맞은 플레이어는 데미지 +
+ * HeartStunDuration(기본 3초) 동안 완전 기절(ALoACharacter::ApplyStun — 넉다운과 달리 서 있는 채로
+ * 얼어붙어 이동/스킬 입력이 전부 차단됨) + HeartCharmGaugeAmount(기본 1) 매혹 게이지가 적용된다.
+ * FireDuration이 다 지나면(개별 하트가 아직 날아가고 있어도) 곧바로 Succeeded — 발사된 하트들은 각자
+ * 알아서 맞거나 MaxRange에서 소멸한다(패턴 State 종료와 하트 생존은 서로 독립적).
+ */
+USTRUCT(meta = (DisplayName = "Echidna Heart Burst Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaHeartBurstPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaHeartBurstPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	void FireRandomWave(FInstanceDataType& InstanceData) const;
 };
 
 /**

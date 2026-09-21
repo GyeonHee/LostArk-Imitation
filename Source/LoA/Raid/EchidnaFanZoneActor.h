@@ -99,6 +99,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Effect")
 	bool bApplyKnockdownOnHit = true;
 
+	// 판정마다 넉다운 대신 가벼운 경직만 적용할지 — "두번긋고 도넛장판"의 슬래시(1·2번)처럼 캐릭터를 띄우지 않고
+	// 짧게만 행동불능으로 만드는 패턴에 사용. bApplyKnockdownOnHit과 동시에 켜지 않는 것을 권장(넉다운이 더 강한 상태)
+	UPROPERTY(EditDefaultsOnly, Category = "Effect")
+	bool bApplyStaggerOnHit = false;
+
 	// 판정마다 매혹 게이지를 쌓을지 — "끌고간후 장판터지는" 패턴처럼 넉백 없이 매혹만 쌓는 패턴에 사용.
 	// 두 장판이 겹치는 구간에 서 있으면 양쪽 다 판정되어 CharmGaugePerHit의 2배가 쌓임
 	UPROPERTY(EditDefaultsOnly, Category = "Effect")

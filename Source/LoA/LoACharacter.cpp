@@ -10,6 +10,8 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Materials/Material.h"
 #include "Engine/World.h"
+#include "Components/WidgetComponent.h"
+#include "UI/CharmGaugeWidget.h"
 
 ALoACharacter::ALoACharacter()
 {
@@ -51,6 +53,15 @@ ALoACharacter::ALoACharacter()
 	TopDownCameraComponent->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	TopDownCameraComponent->bUsePawnControlRotation = false;
 
+	// 매혹 게이지 머리 위 UI — Screen 스페이스라 탑다운 카메라 각도와 무관하게 항상 화면쪽으로 투영되어 보임.
+	// WidgetClass는 여기서 하드코딩하지 않고 캐릭터 BP에서 WBP_CharmGauge로 직접 할당(다른 BP 전용 값들과 동일 컨벤션)
+	CharmGaugeWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("CharmGaugeWidgetComponent"));
+	CharmGaugeWidgetComponent->SetupAttachment(RootComponent);
+	CharmGaugeWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 160.f));
+	CharmGaugeWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	CharmGaugeWidgetComponent->SetDrawSize(FVector2D(150.f, 60.f));
+	CharmGaugeWidgetComponent->SetDrawAtDesiredSize(true);
+
 	// Activate ticking in order to update the cursor every frame.
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
@@ -77,6 +88,19 @@ void ALoACharacter::BeginPlay()
 	Super::BeginPlay();
 
 	GetCharacterMovement()->MaxAcceleration = 99999.0f;
+
+	OnCharmGaugeChanged.AddUObject(this, &ALoACharacter::HandleCharmGaugeChanged);
+	HandleCharmGaugeChanged(CharmGauge);
+}
+
+void ALoACharacter::HandleCharmGaugeChanged(int32 NewGauge)
+{
+	if (!CharmGaugeWidgetComponent) return;
+
+	if (UCharmGaugeWidget* Widget = Cast<UCharmGaugeWidget>(CharmGaugeWidgetComponent->GetUserWidgetObject()))
+	{
+		Widget->SetStacks(NewGauge);
+	}
 }
 
 void ALoACharacter::Tick(float DeltaSeconds)
@@ -130,8 +154,37 @@ void ALoACharacter::RestoreMP(float Amount)
 
 void ALoACharacter::AddCharmGauge(int32 Amount)
 {
+	if (Amount <= 0) return;
+
+	const int32 OldGauge = CharmGauge;
 	CharmGauge = FMath::Clamp(CharmGauge + Amount, 0, MaxCharmGauge);
+
+	// 스택별 개별 타이머가 아니라 전체 유지시간 하나 — 맞을 때마다(이미 최대 스택이어도) CharmGaugeStackDuration으로
+	// 통째로 리셋됨. 이 시간 안에 재히트가 없으면 ClearCharmGauge()가 스택 전부를 한 번에 0으로 되돌림
+	GetWorldTimerManager().SetTimer(CharmGaugeTimerHandle, this, &ALoACharacter::ClearCharmGauge, CharmGaugeStackDuration, false);
+
+	if (CharmGauge != OldGauge)
+	{
+		OnCharmGaugeChanged.Broadcast(CharmGauge);
+	}
+
+	if (CharmGauge >= MaxCharmGauge && !bIsCharmed)
+	{
+		bIsCharmed = true;
+		OnCharmedChanged.Broadcast(true);
+	}
+}
+
+void ALoACharacter::ClearCharmGauge()
+{
+	CharmGauge = 0;
 	OnCharmGaugeChanged.Broadcast(CharmGauge);
+
+	if (bIsCharmed)
+	{
+		bIsCharmed = false;
+		OnCharmedChanged.Broadcast(false);
+	}
 }
 
 void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
@@ -240,6 +293,74 @@ void ALoACharacter::GetUpFromKnockdown()
 
 	OnKnockdownChanged.Broadcast(false);
 	OnKnockdownVisualChanged(false);
+}
+
+void ALoACharacter::ApplyStagger()
+{
+	// 넉다운 중이면 이미 더 강한 행동불능 상태이므로 무시
+	if (bIsKnockedDown) return;
+
+	const bool bFirstHit = !bIsStaggered;
+	bIsStaggered = true;
+
+	// 넉다운과 달리 캐릭터를 띄우거나 던지지 않음 — 캐스팅/사거리 이동 대기 중이던 스킬만 취소하고 제자리에 멈춤
+	if (SkillManager)
+	{
+		SkillManager->CancelActiveCastSkill();
+		SkillManager->CancelPendingRangeMove();
+	}
+
+	GetCharacterMovement()->StopMovementImmediately();
+
+	// 경직 중 재히트하면 타이머가 갱신되어 계속 경직 유지 (넉다운의 정착 타이머 갱신과 동일한 패턴)
+	GetWorldTimerManager().SetTimer(StaggerTimerHandle, this, &ALoACharacter::EndStagger, StaggerDuration, false);
+
+	if (bFirstHit)
+	{
+		OnStaggerVisualChanged(true);
+	}
+}
+
+void ALoACharacter::EndStagger()
+{
+	if (!bIsStaggered) return;
+
+	bIsStaggered = false;
+	OnStaggerVisualChanged(false);
+}
+
+void ALoACharacter::ApplyStun(float Duration)
+{
+	// 넉다운 중이면 이미 더 강한 행동불능 상태이므로 무시
+	if (bIsKnockedDown) return;
+
+	const bool bFirstHit = !bIsStunned;
+	bIsStunned = true;
+
+	// 경직과 동일 — 캐릭터를 띄우거나 던지지 않고 캐스팅/사거리 이동 대기 중이던 스킬만 취소하고 제자리에 멈춤
+	if (SkillManager)
+	{
+		SkillManager->CancelActiveCastSkill();
+		SkillManager->CancelPendingRangeMove();
+	}
+
+	GetCharacterMovement()->StopMovementImmediately();
+
+	// 기절 중 재히트하면 타이머가 갱신되어 계속 기절 유지
+	GetWorldTimerManager().SetTimer(StunTimerHandle, this, &ALoACharacter::EndStun, Duration, false);
+
+	if (bFirstHit)
+	{
+		OnStunVisualChanged(true);
+	}
+}
+
+void ALoACharacter::EndStun()
+{
+	if (!bIsStunned) return;
+
+	bIsStunned = false;
+	OnStunVisualChanged(false);
 }
 
 bool ALoACharacter::TryInstantGetUp()

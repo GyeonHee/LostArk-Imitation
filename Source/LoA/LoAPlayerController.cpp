@@ -160,6 +160,7 @@ void ALoAPlayerController::BindCharacterEvents(ALoACharacter* InCharacter)
 {
 	InCharacter->OnHPChanged.RemoveAll(this);
 	InCharacter->OnMPChanged.RemoveAll(this);
+	InCharacter->OnCharmedChanged.RemoveAll(this);
 
 	HUDViewModel->SetMaxHP(InCharacter->GetMaxHP());
 	HUDViewModel->SetHP(InCharacter->GetHP());
@@ -168,6 +169,7 @@ void ALoAPlayerController::BindCharacterEvents(ALoACharacter* InCharacter)
 
 	InCharacter->OnHPChanged.AddUObject(this, &ALoAPlayerController::OnPlayerHPChanged);
 	InCharacter->OnMPChanged.AddUObject(this, &ALoAPlayerController::OnPlayerMPChanged);
+	InCharacter->OnCharmedChanged.AddUObject(this, &ALoAPlayerController::OnPlayerCharmedChanged);
 }
 
 void ALoAPlayerController::OnSkillTreeToggle()
@@ -215,6 +217,90 @@ void ALoAPlayerController::OnPlayerMPChanged(float NewMP)
 	{
 		HUDViewModel->SetMP(NewMP);
 	}
+}
+
+void ALoAPlayerController::OnPlayerCharmedChanged(bool bCharmed)
+{
+	if (bCharmed)
+	{
+		// 매혹 시작 — 하던 이동/캐스팅을 즉시 정지하고, 그 이후로는 진짜 입력 대신 무작위 행동이 대신 실행됨
+		// (OnInputStarted 등 각 입력 핸들러에서 Char->IsCharmed() 체크로 실제 입력은 씹힘)
+		bAutoMoving = false;
+		bHoldMoving = false;
+
+		if (APawn* ControlledPawn = GetPawn())
+		{
+			if (UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(ControlledPawn->GetMovementComponent()))
+			{
+				CMC->Velocity = FVector::ZeroVector;
+				CMC->ClearAccumulatedForces();
+			}
+		}
+
+		if (USkillManagerComponent* SM = GetSkillManager())
+		{
+			SM->CancelActiveCastSkill();
+			SM->CancelPendingRangeMove();
+		}
+
+		PerformRandomCharmAction();
+		GetWorldTimerManager().SetTimer(CharmConfusionTimerHandle, this, &ALoAPlayerController::PerformRandomCharmAction, CharmActionInterval, true);
+	}
+	else
+	{
+		GetWorldTimerManager().ClearTimer(CharmConfusionTimerHandle);
+		GetWorldTimerManager().ClearTimer(CharmSkillReleaseTimerHandle);
+
+		if (CharmActiveSkillSlot >= 0)
+		{
+			if (USkillManagerComponent* SM = GetSkillManager())
+			{
+				SM->HandleKeyUp(CharmActiveSkillSlot);
+			}
+			CharmActiveSkillSlot = -1;
+		}
+
+		bAutoMoving = false;
+	}
+}
+
+void ALoAPlayerController::PerformRandomCharmAction()
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->IsCharmed()) return;
+
+	// 무작위 이동 — 실제 클릭 이동과 동일한 방식(bAutoMoving+CachedDestination)을 그대로 재사용
+	const float RandAngle = FMath::FRandRange(0.f, 2.f * PI);
+	const float RandRadius = FMath::FRandRange(CharmWanderRadius * 0.3f, CharmWanderRadius);
+	CachedDestination = Char->GetActorLocation() + FVector(FMath::Cos(RandAngle), FMath::Sin(RandAngle), 0.f) * RandRadius;
+	bAutoMoving = true;
+	bHoldMoving = false;
+
+	// 무작위 스킬 사용 — 이전에 붙잡고 있던 슬롯이 있으면 먼저 떼고 새로 하나(Q~F, 0~7)를 무작위로 누름
+	if (USkillManagerComponent* SM = GetSkillManager())
+	{
+		if (CharmActiveSkillSlot >= 0)
+		{
+			SM->HandleKeyUp(CharmActiveSkillSlot);
+		}
+
+		CharmActiveSkillSlot = FMath::RandRange(0, 7);
+		SM->HandleKeyDown(CharmActiveSkillSlot);
+
+		const float HoldTime = FMath::FRandRange(0.15f, 0.6f);
+		GetWorldTimerManager().SetTimer(CharmSkillReleaseTimerHandle, this, &ALoAPlayerController::ReleaseCharmSkill, HoldTime, false);
+	}
+}
+
+void ALoAPlayerController::ReleaseCharmSkill()
+{
+	if (CharmActiveSkillSlot < 0) return;
+
+	if (USkillManagerComponent* SM = GetSkillManager())
+	{
+		SM->HandleKeyUp(CharmActiveSkillSlot);
+	}
+	CharmActiveSkillSlot = -1;
 }
 
 void ALoAPlayerController::SetupInputComponent()
@@ -298,7 +384,7 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(ControlledPawn->GetMovementComponent());
 	if (!CMC) return;
 
-	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn); Char && Char->IsKnockedDown())
+	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn); Char && Char->IsActionLocked())
 	{
 		return;
 	}
@@ -371,7 +457,9 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 void ALoAPlayerController::OnInputStarted()
 {
-	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	// 매혹 중엔 IsActionLocked()에 안 걸려도(진짜 조종불능이 아니라 "무작위 대신 행동"이라 Tick의 이동 처리는
+	// 그대로 둬야 함) 실제 플레이어 클릭 입력만은 씹혀야 함 — 그래서 여기 입력 핸들러들에서만 별도 체크
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
 	}
@@ -401,7 +489,7 @@ void ALoAPlayerController::OnInputStarted()
 
 void ALoAPlayerController::OnSetDestinationTriggered()
 {
-	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
 	}
@@ -495,6 +583,9 @@ void ALoAPlayerController::OnDashInput()
 		return;
 	}
 
+	// 경직·매혹 중엔 대시도 막힘 (즉시 기상 같은 대체 동작 없이 그냥 입력 무시)
+	if (Char->IsStaggered() || Char->IsCharmed()) return;
+
 	if (!Char->SkillManager) return;
 	if (Char->SkillManager->IsSlotOnCooldown(USkillManagerComponent::DashSlotIndex)) return;
 
@@ -516,7 +607,7 @@ void ALoAPlayerController::OnDashInput()
 
 void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 {
-	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
 	}
@@ -529,7 +620,7 @@ void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 
 void ALoAPlayerController::OnSkillKeyHeld(int32 SlotIndex)
 {
-	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->IsKnockedDown())
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
 	}

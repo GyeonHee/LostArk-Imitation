@@ -126,6 +126,23 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Movement", meta=(ClampMin=0, Units="cm"))
 	float AutoMoveAcceptanceRadius = 20.0f;
 
+	/** 매혹(3스택) 상태 동안 무작위 이동/스킬 사용을 반복 실행하는 타이머 — 시작/정지는 OnPlayerCharmedChanged에서 관리 */
+	FTimerHandle CharmConfusionTimerHandle;
+
+	/** 매혹 중 무작위로 누른 스킬 슬롯을 짧게 뗄 때 쓰는 타이머 */
+	FTimerHandle CharmSkillReleaseTimerHandle;
+
+	/** 매혹 중 현재 붙잡고 있는 스킬 슬롯 (-1=없음) */
+	int32 CharmActiveSkillSlot = -1;
+
+	/** 매혹 중 무작위 행동(이동 목표 재설정 + 스킬 사용)을 반복하는 간격 (초) */
+	UPROPERTY(EditAnywhere, Category="Charm")
+	float CharmActionInterval = 1.5f;
+
+	/** 매혹 중 무작위 이동 목표 지점을 고를 반경 (cm) */
+	UPROPERTY(EditAnywhere, Category="Charm")
+	float CharmWanderRadius = 400.f;
+
 public:
 
 	/** Constructor */
@@ -175,6 +192,15 @@ protected:
 
 	void OnPlayerHPChanged(float NewHP);
 	void OnPlayerMPChanged(float NewMP);
+
+	/** 매혹 상태(3스택) 전환 시 호출 — 시작되면 무작위 이동/스킬 사용 타이머 시작, 끝나면 정지하고 붙잡고 있던 스킬 키를 뗌 */
+	void OnPlayerCharmedChanged(bool bCharmed);
+
+	/** 매혹 중 CharmActionInterval마다 호출 — 무작위 지점으로 이동 목표 설정 + 무작위 스킬 슬롯 하나를 짧게 누름 */
+	void PerformRandomCharmAction();
+
+	/** 매혹 중 무작위로 눌렀던 스킬 슬롯을 짧은 홀드 시간 뒤에 떼는 콜백 */
+	void ReleaseCharmSkill();
 
 	/** 캐릭터의 HP/MP 변경 델리게이트에 바인딩하고 ViewModel 초기화 */
 	void BindCharacterEvents(ALoACharacter* InCharacter);

@@ -232,6 +232,10 @@ void AEchidnaFanZoneActor::ApplyRingDamage(float InnerRadius, float OuterRadius)
 				{
 					HitCharacter->ApplyKnockdown(GetActorLocation());
 				}
+				else if (bApplyStaggerOnHit)
+				{
+					HitCharacter->ApplyStagger();
+				}
 
 				if (bApplyCharmGaugeOnHit)
 				{

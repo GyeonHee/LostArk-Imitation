@@ -307,6 +307,117 @@
 - `FanZoneClass` 미할당 시 EnterState에서 바로 Failed (경고 로그로 원인 표시) — `AIController`는 이제 필수 아님(없어도 패턴 자체는 동작, 다만 잔여 이동을 못 멈춤)
 - **버그였던 것**: `SpawnFan()`에서 스폰 위치로 `Boss->GetActorLocation()`을 그대로 썼더니 장판이 공중에 떠 보임 — 이 값은 캡슐 **중심** 좌표(지면에서 캡슐 절반 높이만큼 위)라서, `GetCapsuleComponent()->GetScaledCapsuleHalfHeight()`만큼 Z를 빼서 발밑(지면) 높이로 보정 후 스폰
 
+## 에키드나 보스 짤패턴 — 두번긋고 도넛장판 (`Source/LoA/Raid/EchidnaBossStateTreeUtility.h/.cpp`) — 2026-09-21
+
+### 패턴 개요 (레퍼런스 이미지 "5. 두번긋고 도넛장판")
+- 순서: **1번(우측 대각 슬래시)** → **2번(좌측 대각 슬래시)** → **3번(작은 도넛)이 터지는 동시에 보스가 하늘로 상승, 정점에서 대기** → **하강하며 4번(외곽 도넛, "원테두리만")이 예고→폭발** (`FStateTreeTask_EchidnaDonutSlashPattern`)
+- 1~3번은 매혹 게이지 없음, **4번만 매혹 1스택** — 레퍼런스의 "1~3은 매혹스택 X" 그대로
+- 새 액터 클래스 없이 기존 `AEchidnaFanZoneActor`(뒤로 빠지며 좌우장판·끌고간후 장판터지는에서 이미 쓰던 부채꼴/고리 액터)를 4번 다 재사용 — 1·2번은 **`SlashInnerRadius`(기본 350cm)~`SlashRange`(기본 850cm)의 얇은 부채꼴 고리(annulus)**로(레퍼런스처럼 중심이 아니라 호(arc) 끝부분만 타격, `SlashInnerRadius=0`이면 중심에서 뻗는 일반 부채꼴로 되돌아감), 3·4번은 **`FanAngle=360` 오버라이드로 원형 고리(도넛)**를 만듦 (`IsActorInRing`의 각도 판정이 반각 180도라 360도 부채꼴 = 완전한 원이 되는 걸 그대로 활용, 별도 원형 메시 코드 불필요). 범위·예고시간(`SlashTelegraphDuration` 등)은 플레이 피드백 기준으로 여러 차례 재조정됨 — 정확한 현재값은 헤더의 기본값 참고
+- **보스는 패턴 시작~4번 종료까지 한 방향만 바라봄**: `RetreatFanPattern`/`DragFanPattern`은 슬래시마다 그 공격 방향으로 보스를 다시 회전시키지만("보스가 쏘는 방향을 쳐다봄" 패턴), 이 패턴은 반대로 **보스 모델이 절대 돌지 않아야** 함(레퍼런스 요구사항) — `Tick()` 맨 앞에서 매 프레임 `Boss->SetActorRotation(FRotator(0, BaseAimRotation.Yaw, 0))`을 강제 재적용해 어떤 이유로든(엔진 내부 로직 등) 회전이 흐트러지는 것을 방지. 슬래시 1·2번의 공격 자체는 `Slash1/2YawOffset`만큼 서로 다른 방향으로 나가지만(장판 메시 회전), 보스 자신의 Yaw는 그대로 고정됨
+- **1·2번 각도 범위 — 넓은 반원 + 정면 겹침**: `SlashFanAngle=180`(절반씩 좌우로 90도) + `Slash1YawOffset=75`/`Slash2YawOffset=-75` 조합으로, 1번은 정면 기준 [-15도(살짝 왼쪽), 165도(우측 뒷편)]를, 2번은 [-165도(좌측 뒷편), 15도(살짝 오른쪽)]를 덮음 — 정면 [-15,15] 30도 구간은 1·2 둘 다 맞아 레퍼런스의 "가운데 진하게 겹치는" 부분과 일치, 정반대(보스 바로 뒤) 근처 30도는 둘 다 안 닿는 좁은 안전지대로 남음
+
+### 이펙트 클래스 분리 — SlashZoneClass(1·2) / FanZoneClass(3) / OuterDonutClass(4번), 3종류
+- **1·2번(슬래시)에 맞으면 살짝 경직(스태거)만, 3·4번(도넛)에 맞으면 넘어짐(넉다운)** — 정도가 다른 CC라 클래스를 3개로 분리:
+  `SlashZoneClass`(경직 O `bApplyStaggerOnHit=true`/넉다운 X/매혹 X) / `FanZoneClass`(3번, 넉다운 O `bApplyKnockdownOnHit=true`/매혹 X) / `OuterDonutClass`(4번, 넉다운 O **+** 매혹 O `bApplyCharmGaugeOnHit=true` 둘 다 켬)
+- `AEchidnaFanZoneActor::bApplyKnockdownOnHit`/`bApplyStaggerOnHit`/`bApplyCharmGaugeOnHit`는 스폰 시점에 오버라이드하지 않고 **BP 클래스 기본값**을 그대로 따름 (DragFan 패턴과 동일한 컨벤션)
+- `SpawnZone()`이 매번 `FanAngle`/`FanInnerRadius`/`FanRange`를 명시적으로 덮어씀 (조건부 아님 — 슬래시/작은도넛/외곽도넛마다 값이 다 다르므로 항상 설정). `TelegraphDuration`은 선택적 오버라이드(음수면 무시, BP 기본값 유지)지만 **`RingCount`는 이 Task의 모든 호출부에서 항상 1을 강제로 넘김** — 아래 "전부 단발 판정" 참조
+
+### "경직"(스태거) — 넉다운과 별개의 약한 히트리액션 (`ALoACharacter::ApplyStagger`, 2026-09-21)
+- 넉다운(`ApplyKnockdown`)은 캐릭터를 띄우고 던져서 눕히는 강한 CC라 1·2번 슬래시 같은 잦은 히트에 매번 걸면 과함 — `bIsStaggered`/`StaggerDuration`(기본 0.3초) 필드와 `ApplyStagger()`/`IsStaggered()`를 새로 추가해 **캐릭터를 띄우거나 쓰러뜨리지 않고 짧게만 행동불능**으로 만듦
+- `ApplyStagger()`: 이미 넉다운 중이면 무시(더 강한 상태), 아니면 `SkillManager->CancelActiveCastSkill()`/`CancelPendingRangeMove()`로 캐스팅만 끊고 `StopMovementImmediately()`로 제자리에 세운 뒤 `StaggerDuration` 타이머로 자동 해제(`EndStagger`) — 재히트하면 넉다운의 정착 타이머와 동일하게 갱신되어 계속 경직 유지
+- `ALoACharacter::IsActionLocked()` = `bIsKnockedDown || bIsStaggered` 신설 — `LoAPlayerController`의 입력 차단 지점(Tick의 자동이동, `OnInputStarted`, `OnSetDestinationTriggered`, `OnSkillKeyDown/Held`)을 전부 `IsKnockedDown()` 단독 체크에서 이걸로 교체. `OnDashInput`만 예외: 넉다운 중엔 스페이스바=즉시기상이라 그 분기 유지하고, 그 아래에 `IsStaggered()`면 그냥 씹히도록 별도 return 추가
+- 애니메이션 훅은 `OnStaggerVisualChanged(bool)` (BlueprintImplementableEvent) — 넉다운의 `OnKnockdownVisualChanged`/`OnKnockdownSettled`와 동일한 패턴이지만 경직은 "눕는 단계" 자체가 없어서 이벤트 1개로 충분
+- `AEchidnaFanZoneActor::ApplyRingDamage`에서 `bApplyKnockdownOnHit`가 꺼져 있고 `bApplyStaggerOnHit`가 켜져 있을 때만 `ApplyStagger()` 호출 (`else if`로 넉다운이 항상 우선하도록 배치, 둘 다 켜는 건 권장 안 함)
+
+### 보스 상승/하강 — LaunchCharacter 대신 MovementMode 직접 제어
+- 넉백류 패턴(뒤로 빠지며 좌우장판의 `HopBackward` 등)은 `LaunchCharacter`로 물리에 맡기지만, 이 패턴은 **정점 대기 시간·착지 타이밍이 정확해야 해서** 물리 예측 대신 스크립트로 직접 제어
+- **순서 고정 — 예고 → 폭발 → (그제서야) 상승**: `InnerDonutTelegraph` 단계에서는 3번 장판만 스폰해두고 보스는 그대로 지상에 둠(Flying 전환 없음) — `InnerDonut->IsFinished()`(예고+단발판정 완료)가 true가 되는 순간에만 `Rising` 단계로 넘어가 `CharacterMovementComponent->SetMovementMode(MOVE_Flying)` + `StopMovementImmediately()`를 호출함. **버그였던 것**: 예전엔 3번 스폰과 상승 시작을 같은 프레임에 같이 처리해서 "예고 보여주면서 이미 공중에 떠 있다가 뜬 채로 터지는" 것처럼 보였음(레퍼런스 요구사항 위반) — 두 단계(`InnerDonutTelegraph`/`Rising`)를 분리해서 해결
+- `Rising` 단계 진입 후 Tick에서 매 프레임 `GroundActorZ + Lerp(0, RiseHeight, alpha)`로 `SetActorLocation` 직접 호출 (Flying이라 중력이 안 걸리고 바닥 스냅도 안 일어남) — `RiseDuration` 동안 올라간 뒤 `ApexHoldDuration`만큼 `RiseHeight`에서 순수 연출용으로 고정 대기(이 시점엔 3번은 이미 다 터진 뒤라 도넛 완료 여부를 더 체크할 필요 없음)
+- 대기가 끝나면 외곽 도넛(4번)을 먼저 스폰(하강 시작과 동시에 예고가 보이게)한 뒤 `FallDuration` 동안 역방향으로 Lerp — 하강 완료(`FallAlpha>=1`) 시점에 `EndRiseFall()`로 `MOVE_Walking` 복구 + Z를 `GroundActorZ`로 정확히 스냅. 착지 타이밍과 4번 폭발 타이밍을 맞추려면 `OuterDonutTelegraphDuration`을 `FallDuration`과 비슷하게 맞춰둘 것
+- **안전 복구**: 패턴이 도중에 끊겨도(다른 State로 강제 전이 등) 보스가 공중에 뜬 채로 남지 않도록 `ExitState`에서도 `MovementMode == MOVE_Flying`이면 `EndRiseFall()` 호출
+
+### 1~4번 전부 "예고 후 계단식 확장"이 아니라 "예고 후 단발 판정" (2026-09-21 수정)
+- **버그였던 것**: `AEchidnaFanZoneActor`의 RingCount 계단식 확장(안→밖으로 훑으며 여러 번 판정)은 "뒤로 빠지며 좌우장판" 전용으로 만든 연출인데, 이 패턴도 같은 액터를 재사용하면서 BP 기본 RingCount(보통 5)를 그대로 물려받아 1~4번 전부 점진적으로 여러 번 맞는 것처럼 보였음 — 이 패턴은 "예고 후 딱 한 번만" 때리는 게 목표라 안 맞았음
+- `SpawnZone()`의 4번 호출부(Slash1/Slash2/InnerDonut/OuterDonut) 전부에서 `RingCountOverride`에 항상 **1**을 명시적으로 넘기도록 변경 — BP의 RingCount 기본값이 몇이든 무시되고 예고(`TelegraphDuration`) 후 한 번에 전체 판정이 끝남
+- 예고시간은 존마다 별도 필드로 오버라이드: 슬래시(1·2)는 `SlashTelegraphDuration`, 작은 도넛(3)은 `InnerDonutTelegraphDuration`(예고→폭발이 끝나야 상승이 시작되므로 `RiseDuration`과의 선후관계는 더 이상 신경쓸 필요 없음 — 완전히 순차적), 외곽 도넛(4)은 `OuterDonutTelegraphDuration`(`FallDuration`과 맞춰둠) — 전부 음수면 BP 기본 `TelegraphDuration`을 그대로 쓰지만 이 Task는 항상 명시적인 값을 넘김
+
+### "에어본"은 별도 CC 시스템이 아니라 기존 넉다운 재사용 — 캐릭터도 "뜨고 → 떨어지고 → 넘어짐" 순서로 진행됨
+- 레퍼런스의 "3번 내부 에어본"은 플레이어 전용 CC가 아니라 **보스 자신이 하늘로 뜨는 연출** + 3번 판정에 맞은 플레이어는 기존 `ALoACharacter::ApplyKnockdown()`(넉다운 시스템 섹션 참조)을 그대로 재사용
+- `ApplyKnockdown()`은 이미 "공격 반대 방향+위로 `LaunchCharacter`(뜸) → `KnockdownHopSettleTime`(기본 0.4초) 뒤 강제로 바닥까지 스냅(떨어짐) → 그 순간부터 `KnockdownDuration`(기본 3초) 동안 누운 포즈(넘어짐)" 순서로 진행되므로, "에어본이니 캐릭터도 올라가면서 떨어진 후 넘어지는 판정이 나야" 하는 요구사항을 그대로 만족함 — 별도 구현 불필요, `FanZoneClass`의 `bApplyKnockdownOnHit=true` 설정만으로 충분
+- 이 프로젝트엔 아직 별도의 "띄우기(launch/juggle)" CC가 구현되어 있지 않아서 기존 넉다운으로 대체한 것 — 나중에 진짜 보스 상승 높이/시간에 맞춰 캐릭터가 더 오래 공중에 떠 있어야 한다면 `KnockdownHopStrength`/`KnockdownHopUpwardStrength`/`KnockdownHopSettleTime`을 패턴별로 오버라이드할 수 있게 `ApplyKnockdown`을 확장해야 함(현재는 전역 값)
+
+### StateTree 배치 — BP 3종 분리 완료, 필드 재할당 남음 (2026-09-21)
+- 4거울/뒤로빠지며좌우장판과 동일한 패턴: `SmallPatternRotation` 안에 `Echidna Donut Slash Pattern` Task 하나만 넣고 On State Completed → `Cooldown` 연결 — 이미 배치됨
+- **버그였던 것**: Task의 `SlashZoneClass`/`FanZoneClass`/`OuterDonutClass` 세 필드가 전부 `BP_EhidnaFanZone`(기존 넉다운 전용 BP, 이름에 오타 있음 — "Echidna"가 아니라 "Ehidna") 하나만 가리키고 있어서, 1·2번 슬래시도 3·4번과 똑같이 넉다운이 걸렸음(경직 아님) — Unreal MCP로 직접 Task 인스턴스 데이터를 읽어서 확인
+- Unreal MCP로 새 BP 2개를 생성해 기본값까지 설정·컴파일·저장 완료: `BP_EchidnaFanZone_Stagger`(`bApplyKnockdownOnHit=false`/`bApplyStaggerOnHit=true`, 1·2번용) / `BP_EchidnaFanZone_KnockdownCharm`(`bApplyKnockdownOnHit=true`/`bApplyCharmGaugeOnHit=true`, 4번용). 3번(`FanZoneClass`)은 기존 `BP_EhidnaFanZone`(넉다운 O/경직·매혹 X) 그대로 재사용
+- **StateTree 노드의 클래스 참조 자체를 MCP로 재할당하는 API는 없어서(읽기 전용 툴만 제공)** `SlashZoneClass`→`BP_EchidnaFanZone_Stagger`, `OuterDonutClass`→`BP_EchidnaFanZone_KnockdownCharm` 재할당은 에디터에서 직접 드롭다운으로 바꿔야 함 (`FanZoneClass`는 그대로 유지)
+
+## 에키드나 보스 짤패턴 — 전방향 하트발사 (`Source/LoA/Raid/EchidnaHeartActor.h/.cpp`, `EchidnaBossStateTreeUtility.h/.cpp`) — 2026-09-21
+
+### 패턴 개요 (레퍼런스 이미지 "7. 전방향 하트발사" 단순화 버전)
+- 레퍼런스 원본은 "①머리위 하트 표시 → ②전방향 하트발사 → ③피격자 중 랜덤 1명 잡기+무력패턴(딜타임) → ④잡힌 사람 씨앗 생성" 4단계지만, 이번 구현은 ①·②만 하고 ③·④(잡기/씨앗)는 제외한 단순화 버전 — 대신 맞은 사람에게 스턴+매혹을 적용
+- 흐름(`FStateTreeTask_EchidnaHeartBurstPattern`): 패턴 시작 → `TelegraphDuration`(기본 2초) 동안 보스 머리 위에 하트 마커 표시, 보스는 완전히 가만히 있음(이동/회전 명령 없음) → 예고가 끝나면 `FireDuration`(기본 2초) 동안 `FireInterval`(기본 0.3초)마다 한 웨이브씩 하트를 발사 → `FireDuration`이 다 지나면 (날아가는 하트가 남아있어도) 바로 Succeeded
+- **8방향 고정이 아니라 완전 전방향**: 처음엔 8방향(45도 간격)을 Fisher-Yates로 섞어 그중 일부만 쏘는 방식이었으나, "8방향이 아니라 전방향으로" 요청에 따라 각 하트의 각도를 `FMath::FRandRange(0.f, 360.f)`로 매번 완전히 새로 뽑는 방식으로 교체 — 이제 방향에 정해진 슬롯 자체가 없음. 웨이브당 개수만 `[MinHeartsPerWave, MaxHeartsPerWave]`(기본 2~6, 더 이상 8개로 상한 없음) 범위에서 랜덤으로 정함 — 매번 개수도 방향도 전부 달라짐
+- 맞으면: 데미지 + `HeartStunDuration`(기본 3초) 완전 기절(`ALoACharacter::ApplyStun`) + `HeartCharmGaugeAmount`(기본 1) 매혹 게이지
+
+### AEchidnaHeartActor — 예고 마커와 발사체를 하나의 클래스로 겸용
+- `Launch()`를 호출하기 전까지는 `bLaunched=false`라 Tick에서 이동하지 않고 제자리에 가만히 떠 있음 — 이 성질을 그대로 이용해서 **같은 클래스를 예고 마커(Launch 안 함)와 실제 발사체(Launch 함) 양쪽에 재사용**함(새 클래스 하나 안 만들어도 됨)
+- 이동은 `Tick`에서 `AddActorWorldOffset(FlyDirection * Speed * DeltaTime, true)`로 직선 이동, `USphereComponent`(기본 반지름 40cm, `ECC_Pawn`만 Overlap)로 캐릭터 감지 — 맞으면 데미지+스턴+매혹 적용 후 즉시 `Destroy()`, `MaxRange`(기본 2000cm)에 도달하면 아무도 안 맞아도 소멸
+- `bHasHit` 플래그로 한 번만 판정 (여러 캐릭터가 있어도 첫 번째로 겹친 대상 하나만 맞음 — 관통 안 함)
+- **크기 노출(2026-09-21)**: 처음엔 `HeartVisualScale`(메시 스케일)/`HeartCollisionRadius`(판정 반지름)가 생성자에 하드코딩돼 있어서 에디터에서 조절 불가능했음 — `EditDefaultsOnly` 프로퍼티로 빼서 `BeginPlay`에서 적용하도록 변경(생성자에서 바로 적용하면 BP 서브클래스의 오버라이드가 반영 안 됨 — CDO 생성 순서상 BP 오버라이드는 C++ 생성자 실행 "이후"에 적용되므로, 프로퍼티를 실제로 사용하는 시점(BeginPlay)에서 읽어야 함). `BP_EchidnaHeart`(`/Game/LostArk/Raid/Echidna/Pattern/`)를 Unreal MCP로 생성해서 Class Defaults에 노출해둠
+
+### 비주얼 — 하트 모양 시행착오: 텍스처 스프라이트 → 3D 압출 솔리드 메시로 최종 정착 (2026-09-21)
+- **1차 시도(폐기): 평면 스프라이트**. 엔진 기본 `Sphere`+`M_MirrorLaser`(핑크색 구체) → "하트 모양으로" 요청에 따라 PIL로 하트 실루엣 텍스처(`T_HeartShape`)를 만들고 `M_HeartSprite`(Translucent+Unlit, 텍스처 알파를 `MP_Opacity`로 연결) 머티리얼을 Unreal MCP `MaterialTools`로 그래프까지 구성, `HeartMeshComp`를 `/Engine/BasicShapes/Plane`으로 교체하는 방식으로 구현했었음
+- 이 스프라이트 방식에서 연달아 겪은 문제들(전부 결국 폐기된 접근이라 세부 삽질 과정은 생략) — ①BP 컴포넌트의 머티리얼/회전 오버라이드가 C++ 기본값 변경 이후에도 예전 값에 얼어붙어 있는 문제가 반복 발생 ②`ST_Echidna`의 `Echidna Heart Burst Pattern` Task가 애초에 `BP_EchidnaHeart`가 아니라 **네이티브 클래스(`/Script/LoA.EchidnaHeartActor`) 자체**를 `Heart Class`로 물고 있어서 BP에 넣은 수정이 실제 스폰에는 반영되지 않았음 ③네이티브 클래스의 CDO를 `ObjectTools.set_properties`로 런타임 패치해도 Live Coding 재컴파일 등의 시점에 조용히 예전 값으로 되돌아가는 현상까지 겹쳐서, "평면+텍스처+알파+회전 정렬"이라는 조합 자체가 이 프로젝트의 MCP 워크플로우와 상성이 나빴음
+- **2차 시도(최종): ProceduralMeshComponent로 실제 압출된 3D 솔리드 메시**. "3D/VFX처럼 입체적으로 안 되면 구체로 대체" 요청에 따라, 텍스처/알파/회전 정렬 문제 자체를 없애기 위해 HexArena 벽·부채꼴 장판과 동일한 "PMC로 직접 지오메트리 생성" 방식으로 전환:
+  - `HeartMeshComp` 타입을 `UStaticMeshComponent` → `UProceduralMeshComponent`로 교체
+  - 파라메트릭 하트 커브(`X=16sin³(t)`, `Y=13cos(t)-5cos(2t)-2cos(3t)-cos(4t)`)로 하트 윤곽선을 `HeartSegments`(기본 32)개 점으로 계산 — 원점 기준 스타컨벡스(star-convex) 도형이라 앞/뒷면은 원점에서 팬(fan) 삼각분할, 옆면(`HeartThickness`, 기본 20cm 두께)은 변마다 쿼드 하나씩 압출(HexArena `AddQuad`와 동일한 "양면 감김" 패턴으로 노멀 계산 없이도 항상 보이게 함)
+  - **빌드 에러였던 것**: `Boundary`가 `TArray<FVector2D>`인데 옆면 노멀 계산에서 `EdgeDir`를 `FVector`(3D)로 잘못 선언해서 `C2440` 타입 변환 에러 — `FVector2D`로 수정
+  - Opaque 솔리드라 반투명/알파 마스킹이 통째로 필요 없어짐 — 머티리얼도 다시 기존 `M_MirrorLaser`(색상 하나만 있는 Unlit 컨벤션)로 되돌림, 텍스처 관련 에셋(`T_HeartShape`, `M_HeartSprite`)은 이제 안 씀(정리는 안 했으니 필요시 삭제해도 무방)
+  - `BeginPlay`에서 `HeartVisualScale`(전체 스케일) 적용 후 `BuildHeartMesh()` 호출 — 다른 컴포넌트 프로퍼티들과 같은 "EditDefaultsOnly는 생성자가 아니라 BeginPlay에서 적용" 패턴 유지
+- **3차 수정 — "누워있는" 원반을 세우고 비행 중 회전 추가 (2026-09-21)**: 처음 압출했을 때는 하트 곡선을 로컬 X-Y 평면에 놓고 Z를 두께로 압출해서(`(LocalX,LocalY)=(-CurveY,CurveX)`, 뾰족한 끝이 +X를 향함) 탑다운 카메라에서 보면 "바닥에 눕혀진 원반"처럼 보였음 — "세워주고 날아가면서 천천히 회전"하도록 좌표축을 다시 바꿈: 이제 하트 곡선을 로컬 **Y(좌우)-Z(상하) 평면**에 그대로 놓고(`Boundary=(CurveX,CurveY)`, 부호 반전 없음 — 커브 자체가 뾰족한 부분이 Y최솟값이라 그대로 두면 아래(-Z)를 향함) 두께는 로컬 **X(전후) 방향**으로 압출 — 세워진 카드처럼 정면(+X)을 보는 얇은 판이 됨
+  - `Tick()`에서 `bLaunched`(실제 발사된 뒤)일 때만 `HeartMeshComp->AddLocalRotation(FRotator(0,HeartSpinSpeed*DeltaTime,0))`으로 로컬 Z축(세로) 기준 회전 — 액터 자체가 아니라 메시 컴포넌트만 도는 것이라 충돌 판정(`CollisionComp`, 구체라 회전 무관)에는 영향 없음. `HeartSpinSpeed`(기본 60도/초) EditDefaultsOnly로 노출. 예고 마커(Launch 전)는 이 분기 자체가 안 타서 계속 세워진 채 고정됨
+- **컴파일 관련 중요 주의사항**: `HeartMeshComp`의 **컴포넌트 타입 자체를 바꾼 변경**(UStaticMeshComponent→UProceduralMeshComponent)이 포함되어 있어서 지금까지의 함수 본문 수정과는 차원이 다름 — Live Coding(Ctrl+Alt+F11)이 UPROPERTY 타입 변경까지 안정적으로 핫패치한다는 보장이 없으므로, **에디터를 완전히 닫고 풀 빌드하는 걸 권장**. 어중간하게 Live Coding으로 넘어가면 이전 여러 번처럼 "고쳤다고 했는데 그대로"인 상태가 재발할 위험이 큼
+
+### "기절"(Stun) — 경직·넉다운과 별개의 세 번째 CC 등급 (`ALoACharacter::ApplyStun`, 2026-09-21)
+- 이 프로젝트의 CC 3종 비교: **넉다운**(캐릭터를 띄우고 던져서 눕힘, 3초+즉시기상) > **기절**(캐릭터를 안 띄우고 제자리에 완전히 얼어붙음, Duration은 호출마다 다름 — 예: 하트발사 3초) > **경직**(기절과 동일한 방식이지만 훨씬 짧음, 고정 0.3초)
+- `ApplyStun(float Duration)`은 `ApplyStagger()`와 구현이 거의 동일(캐스팅 취소+`StopMovementImmediately`+재히트 시 타이머 갱신, 넉다운 중이면 무시)하지만 **Duration을 고정 필드가 아니라 매번 인자로 받음** — 패턴마다 기절 시간이 다르기 때문(경직은 모든 패턴이 공통으로 짧게 쓰므로 고정 필드 `StaggerDuration` 유지)
+- `ALoACharacter::IsActionLocked()` = `bIsKnockedDown || bIsStaggered || bIsStunned`로 확장 — 이미 이 함수를 참조하던 `LoAPlayerController`의 모든 입력 차단 지점이 코드 변경 없이 자동으로 기절도 함께 차단함
+- 애니메이션 훅은 `OnStunVisualChanged(bool)` (BlueprintImplementableEvent), 경직과 마찬가지로 "눕는 단계" 없이 이벤트 1개로 충분
+
+### StateTree 배치 (미완 — 아래 "할일" 참조)
+- `SmallPatternRotation` 안에 `Echidna Heart Burst Pattern` Task 하나만 넣고 On State Completed → `Cooldown` 연결 (다른 패턴들과 동일 컨벤션)
+- `Boss`/`AIController` 컨텍스트 바인딩, `HeartClass`에 `AEchidnaHeartActor` BP 서브클래스 할당 필요
+- **주의**: 새 C++ 클래스(`AEchidnaHeartActor`)와 새 StateTree Task/Enum 타입을 추가한 변경이라 Live Coding(Ctrl+Alt+F11)이 새 UCLASS/USTRUCT 리플렉션 타입을 못 잡아낼 수 있음 — 에디터에서 새 Task가 노드 목록에 안 뜨면 에디터를 완전히 닫고 풀 빌드해야 함
+
+## 매혹 게이지 스택 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `LoAPlayerController.h/.cpp`, `UI/CharmGaugeWidget.h/.cpp`) — 2026-09-21
+
+### 개요 — 기존 0~10 누적 게이지를 3스택 + 공유 타이머 방식으로 전면 재설계
+- **버그였던 것(설계 미비)**: 기존 `CharmGauge`는 그냥 0~`MaxCharmGauge`(10) 사이를 클램프하며 누적만 되는 값이었고, 스택이 다 찼을 때의 디버프도 자연 감소도 전혀 구현되어 있지 않았음(CLAUDE.md에도 "매혹 게이지 가득 찼을 때의 디버프 효과 미구현"으로 TODO 남아있었음)
+- 새 설계: `MaxCharmGauge=3`(스택), `CharmGaugeStackDuration=30초`(전체 유지시간, **스택별 개별 타이머가 아니라 공유 타이머 1개**) — `AddCharmGauge(Amount)` 호출마다(기존 호출부는 그대로 재사용, 다들 Amount=1) 스택을 최대 3까지 올리고 타이머를 30초로 통째로 리셋. 예: 1스택 찍고 5초 뒤(25초 남음) 재히트하면 2스택+타이머 다시 30초로 초기화 — 유저 스펙 그대로 구현
+- 타이머가 다 되도록 재히트가 없으면 `ClearCharmGauge()`가 스택을 한 번에 0으로 되돌림(스택을 1개씩 까는 방식이 아님)
+- `bIsCharmed`(3스택 도달 시 true) + `FOnCharmedChanged` 델리게이트 신설 — `AddCharmGauge`가 3스택에 도달하는 "그 순간"에만 브로드캐스트(이미 3스택인 채로 재히트해서 타이머만 갱신되는 경우는 중복 브로드캐스트 안 함), `ClearCharmGauge`가 0으로 돌아가는 순간 false로 브로드캐스트
+
+### 매혹 상태 — "조종 불가 + 무작위 이동/스킬 사용" (`ALoAPlayerController::OnPlayerCharmedChanged`)
+- 넉다운/경직/기절과 달리 **완전히 멈추는 게 아니라 캐릭터가 제멋대로 움직이고 스킬을 씀** — 그래서 `IsActionLocked()`(Tick 맨 위에서 이동 처리 자체를 건너뛰는 조건)에는 **일부러 안 넣음**. 매혹 중에도 Tick의 `bAutoMoving` 처리 경로는 정상 작동해야 무작위 이동이 먹히기 때문
+- 대신 `OnInputStarted`/`OnSetDestinationTriggered`/`OnSkillKeyDown`/`OnSkillKeyHeld`/`OnDashInput` 등 **실제 플레이어 입력이 들어오는 지점마다** `Char->IsCharmed()`를 개별 체크해서 진짜 입력만 씹음 — "이동 처리 자체는 살아있어야 하지만 플레이어가 그 이동을 지시할 순 없어야 한다"는 요구사항을 이렇게 분리해서 만족시킴
+- `OnPlayerCharmedChanged(true)`: 그 즉시 무작위 행동 1회 실행 + `CharmActionInterval`(기본 1.5초)마다 반복하는 타이머 시작. `false`: 타이머 정지, 붙잡고 있던 스킬 슬롯 있으면 떼기
+- `PerformRandomCharmAction()`: ①실제 클릭 이동과 동일한 매커니즘(`bAutoMoving`+`CachedDestination`)으로 캐릭터 주변 `CharmWanderRadius`(기본 400cm) 안의 무작위 지점을 목표로 설정 ②Q~F(슬롯 0~7) 중 무작위 슬롯 하나를 `SkillManager->HandleKeyDown()`으로 직접 눌러서(컨트롤러의 `OnSkillKeyDown` 래퍼를 거치지 않음 — 그 래퍼는 `IsCharmed()`면 막아버리므로 매혹 스스로의 행동은 SkillManager를 직접 호출해야 함) 0.15~0.6초 무작위 홀드 후 자동으로 뗌(`ReleaseCharmSkill`)
+- 마나 부족 등으로 실제 발동에 실패해도 그냥 조용히 무시됨(SkillManager 자체 검증에 맡김) — "멋대로 스킬을 소모"의 단순한 구현
+
+### 머리 위 UI — 연꽃 배경 제거 + 120도 부채꼴(파이) 3등분, 흑백/컬러 겹침 (`UCharmGaugeWidget`, 텍스처/위젯 전부 Unreal MCP로 직접 작업)
+- **배경 제거**: numpy 없이 순수 PIL로 처리 — 원본 사진은 배경(똥장판 등 어두운 잎/암전)이 전부 어둡고(V 0~0.2) 꽃만 밝아서(V 0.5~1.0) 값(Value) 채널 기준 스무스스텝(0.25~0.45 사이 페더링) 알파를 만들고 `GaussianBlur(1.2)`로 경계를 살짝 부드럽게 처리 — 별도 세그멘테이션 모델(rembg 등 미설치) 없이도 히스토그램이 두 덩어리로 확실히 갈려서(중간값 픽셀이 거의 없음) 깔끔하게 분리됨(`flower_cutout.png`로 결과 확인)
+- **분할 방식 변경**: 처음엔 세로 3등분(단순 좌/중/우 크롭)이었으나 "세로 3등분이 아니라 부채꼴로" 요청에 따라 이미지 중심 기준 **120도씩 3개 부채꼴**(위쪽, 좌하단, 우하단 — Mercedes 로고/삼분원 느낌)로 재마스킹 — 각도는 `atan2(cy-y, x-cx)`로 계산한 뒤 경계(30°/150°/270°) 기준으로 알파를 0으로 깎아서 조각별 PNG 6장(컬러/흑백 × 3조각) 생성. 3조각을 겹치면 원래 꽃 전체가 다시 만들어짐
+- Unreal MCP `TextureTools.import_file`로 `/Game/UI/CharmGauge/T_CharmPetal_{1,2,3}_{Color,Gray}` 6장 텍스처 임포트(재작업 시 같은 이름 임포트는 실패해서 `AssetTools.delete`로 지우고 재임포트하는 방식 사용 — import_file은 덮어쓰기가 아니라 새 에셋 생성만 지원)
+- `UCharmGaugeWidget`(UUserWidget 서브클래스): `ColorImage1/2/3` 3개를 `BindWidget`으로 요구. **위젯 트리는 처음의 가로 배치(HorizontalBox+Segment별 Overlay)에서 부채꼴 방식에 맞춰 단일 `RootOverlay`(Overlay) 안에 6개 Image(Gray1/2/3 먼저, Color1/2/3 나중 — Overlay는 나중에 추가한 자식이 위에 그려짐)를 전부 같은 위치에 겹쳐 배치하는 구조로 재구성**(부채꼴이라 조각들이 서로 다른 위치가 아니라 같은 캔버스 안에서 서로 다른 영역만 차지하기 때문). `SetStacks(N)`이 컬러 이미지 N개만 보이게 하고, N=0이면 위젯 전체를 `Collapsed`
+- **크기 버그였던 것**: 처음 만들 때 Image의 `brush.imageSize`를 원본 텍스처 크기(213x436, 나중엔 639x436) 그대로 뒀는데, `WidgetComponent`가 `bDrawAtDesiredSize=true`라 그 크기 그대로 화면에 그려져서 화면 대부분을 뒤덮어버림 — `imageSize`를 72x49(원본 비율 유지한 작은 배지 크기)로, `WidgetComponent`의 `DrawSize`도 같은 값으로 축소해서 해결. `WidgetSpace=Screen`이라 탑다운 카메라 각도와 무관하게 항상 화면 투영으로 작게 보임
+- `ALoACharacter`에 `CharmGaugeWidgetComponent`(머리 위 Z+160 오프셋) 신설 — `BeginPlay`에서 `OnCharmGaugeChanged`를 구독해 `HandleCharmGaugeChanged`가 위젯을 `UCharmGaugeWidget`으로 캐스팅해 `SetStacks()` 호출
+- **완료됨(2026-09-21, Unreal MCP로 전부 직접 작업, 수동 할 일 없음)**: `WBP_CharmGauge` 생성·컴파일·저장 + 실제 사용 플레이어 캐릭터 BP(`/Game/LostArk/Character/Magician/Sorceress/BP_Sorceress` — `CharacterData=DA_Sorceress`가 할당된 쪽이 실제 사용 캐릭터, `BP_LostArkCharacter`는 미사용 상태였음)의 `CharmGaugeWidgetComponent.WidgetClass`를 `WBP_CharmGauge_C`로 할당까지 전부 완료, PIE에서 바로 확인 가능
+
+### 기절 중 매혹 중복 축적 방지 (`AEchidnaHeartActor::ApplyHit`, 2026-09-21)
+- 하트에 맞아 기절(`StunDuration`, 기본 3초)해서 아무것도 못 하는 동안 또 다른 하트에 맞아도 매혹 게이지가 추가로 쌓이면 안 됨 — 무적 시간이 없어서 기절 상태에서도 다른 하트의 콜리전에 계속 맞을 수 있기 때문
+- `ApplyHit()`에서 `Character->ApplyStun()`을 호출하기 **전에** 먼저 `Character->IsStunned()`로 이미 기절 중인지 체크 — 호출 순서가 중요함(`ApplyStun()`을 먼저 부르면 그 즉시 `bIsStunned`가 true로 바뀌어버려서 판정이 무의미해짐). 이미 기절 중이면 `ApplyStun()`으로 기절 시간만 갱신하고 `AddCharmGauge()`는 건너뜀
+
 ## 넉다운 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `Skill/SkillManagerComponent.h/.cpp`) — 2026-08-06
 
 ### 개요
@@ -361,6 +472,7 @@
 - [x] AHexArena 외곽 벽 — 타일 변 단위 24개 벽 조각, 미터 접합 사다리꼴 프로시저럴 메시로 인접 조각과 완전히 맞물림
 - [x] AHexTile — 개별 타일 액터 (BeginPlay 스폰), 타입별 오버랩 이벤트 + 비주얼 전환 (Normal/PoopZone/Flower)
 - [x] 매혹 게이지 (CharmGauge) — ALoACharacter, PoopZone 틱마다 누적 + 데미지
+- [x] 매혹 게이지 3스택 시스템 + 3스택 도달 시 조종 불가(무작위 이동/스킬 사용) + 머리 위 UI(연꽃 3등분 흑백/컬러) — 위 "매혹 게이지 스택 시스템" 섹션 참조. C++ 구현 + WBP_CharmGauge 위젯 블루프린트 + BP_Sorceress 컴포넌트 할당까지 전부 완료(PIE 테스트만 남음)
 - [x] 똥장판에 둘러싸인 타일 자동 Flower 전환 (AHexArena::NotifyTileTypeChanged)
 - [x] 에키드나 보스 짤패턴 "4거울" — 대각 4방향 거울 동시 스폰, 추적(장판 따라옴) → 발사(레이저 고정) 2단계, 데미지+넉백 독립 틱
 - [x] 보스 쿨다운 중 패트롤 (FStateTreeTask_EchidnaPatrol)
@@ -369,14 +481,22 @@
 - [x] 넉다운 시스템 — 뒤로 튕겨나가며 쓰러짐, 3초 자동/스페이스바 즉시(15초 쿨타임) 기상, fanzone·거울 레이저에 연결 (자세한 내용은 위 "넉다운 시스템" 섹션)
 - [x] 즉시 기상 쿨타임 UI — SkillManagerComponent 슬롯 19로 대시(슬롯18)와 동일하게 통합, WBP_HUD에 Border_GetUp 추가
 - [x] 거울 레이저 타이밍 재조정 — FiringDuration 3초→1초, 데미지 4틱, 추적 회전속도 60→50도/초, 별도 넉백 시스템 제거(넉다운으로 통합)
+- [x] 에키드나 보스 짤패턴 "두번긋고 도넛장판" — 우/좌 대각 슬래시 2회(경직) → 작은 도넛(넉다운) 터지며 보스 상승·정점대기 → 하강하며 외곽 도넛(넉다운+매혹 1스택) 예고→폭발 (C++ 구현 완료, StateTree `ST_Echidna` 에디터 배치는 미완 — 위 섹션 참조)
+- [x] 경직(스태거) 시스템 — `ALoACharacter::ApplyStagger()`, 넉다운보다 약하게 짧은 시간만 행동불능(캐릭터를 띄우지 않음), 두번긋고 도넛장판의 슬래시(1·2번)에 연결
+- [x] 기절(스턴) 시스템 — `ALoACharacter::ApplyStun(Duration)`, 경직과 같은 방식이지만 지속시간을 호출마다 지정, 전방향 하트발사에 연결
+- [x] 에키드나 보스 짤패턴 "전방향 하트발사"(단순화판, 잡기/씨앗 제외) — 2초 예고(보스 정지) → 2초간 0.3초 간격으로 완전 전방향(0~360도 랜덤) 랜덤 개수 하트 발사, 피격 시 데미지+3초 기절+매혹 1스택 (C++ 구현 완료, StateTree `ST_Echidna` 에디터 배치는 미완 — 위 섹션 참조)
 - [ ] Border_GetUp UI 최종 위치/스타일 다듬기
 - [ ] DT_Skills에 `InstantGetUp` 행 Cooldown/Icon 값 채워졌는지 재확인 (비어있으면 쿨타임 무력화됨)
 - [ ] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 필요 — `SmallPatternRotation` 안에 4거울과 나란히 추가, `FanZoneClass`(BP_EchidnaFanZone 등)/Boss/AIController 바인딩, On State Completed → `Cooldown` 연결
+- [ ] `ST_Echidna`의 `Echidna Donut Slash Pattern` Task에서 `SlashZoneClass`→`BP_EchidnaFanZone_Stagger`, `OuterDonutClass`→`BP_EchidnaFanZone_KnockdownCharm`으로 재할당 필요 (Task 배치·`FanZoneClass`·Boss/AIController 바인딩은 이미 완료, BP 2개도 이미 생성·설정 완료 — 드롭다운 재할당만 남음)
+- [x] StateTree `ST_Echidna`에 `Echidna Heart Burst Pattern` Task는 이미 배치됨 — **다만 `Heart Class`가 `BP_EchidnaHeart`가 아니라 네이티브 `EchidnaHeartActor`로 잘못 바인딩되어 있음, 반드시 `Heart Class`를 `/Game/LostArk/Raid/Echidna/Pattern/BP_EchidnaHeart`로 바꿔야 함** (StateTree 필드 재할당은 MCP로 못 하는 부분이라 에디터에서 직접 드롭다운 변경 필요)
+- [ ] `HeartMeshComp`를 `UProceduralMeshComponent`로 바꾼 뒤 `BP_EchidnaHeart`를 다시 열어서 컴파일 에러/경고 없는지 확인 필요 — 예전(Plane 스프라이트 시절)에 이 컴포넌트에 걸어둔 Material/Rotation 오버라이드들은 컴포넌트 타입 자체가 바뀌면서 무효화됐을 가능성이 있음(에디터가 자동으로 정리하거나, 혹은 에러를 띄울 수 있음) — 컴파일 후 한 번은 반드시 직접 열어서 확인할 것
+- [ ] 위 항목 컴파일은 **Live Coding이 아니라 에디터를 완전히 닫고 하는 풀 빌드를 권장** — `HeartMeshComp`의 UPROPERTY 타입 자체가 바뀐 변경이라 Live Coding 핫패치로는 불안정할 수 있음
 - [ ] BP_EchidnaFanZone 서브클래스 생성 + 부채꼴 전용 커스텀 머티리얼(Color Vector Parameter + Translucent) 할당 — VFX는 안 씀, 색상만으로 표현
 - [ ] SM_HexTile 머티리얼 슬롯 분리 (윗면 MI_Rock_Inst_5, 옆면 어두운 색)
 - [ ] BP_HexArena에서 WallMaterial 재할당 (기존 WallMesh 프로퍼티가 프로시저럴 메시 전환으로 제거됨)
 - [ ] BP_HexTile 서브클래스 생성 + NormalMesh/PoopMesh/FlowerMesh 할당 (NormalMesh는 기존 HISM 메시와 동일하게)
-- [ ] 매혹 게이지 가득 찼을 때의 디버프 효과 미구현 (현재는 누적만 됨)
+- [ ] 매혹 게이지 머리 위 UI PIE 실제 확인 필요 — 위치/크기(`CharmGaugeWidgetComponent` Z+160, DrawSize 150x60)가 적절한지, 3등분 이미지가 의도대로 보이는지 육안 확인 안 함
 - [ ] 꽃 개화/똥장판 VFX 연출 (AHexTile::OnTileTypeChanged BlueprintImplementableEvent에서 구현 필요)
 - [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (혹한의 부름·아이스 에로우·돌풍 포함)
 - [ ] BP_FrostCall / BP_IceArrow / BP_Gust ZoneClass·VFX 에셋 할당
