@@ -18,4 +18,6 @@ public:
 	virtual void OnKeyDown(AActor* Owner) override;
 	virtual void OnKeyHeld(AActor* Owner, float DeltaTime) override;
 	virtual void OnKeyUp(AActor* Owner) override;
+
+	virtual bool GetCastProgress(float& OutElapsed, float& OutTotal) const override;
 };

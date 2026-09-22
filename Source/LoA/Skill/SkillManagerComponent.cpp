@@ -384,6 +384,18 @@ bool USkillManagerComponent::IsSlotAssigned(int32 SlotIndex) const
     return SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex] != nullptr;
 }
 
+bool USkillManagerComponent::GetActiveCastProgress(float& OutElapsed, float& OutTotal) const
+{
+    for (const TObjectPtr<USkillBase>& Skill : SlotInstances)
+    {
+        if (Skill && Skill->GetCastProgress(OutElapsed, OutTotal))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 FName USkillManagerComponent::GetSlotRowName(int32 SlotIndex) const
 {
     if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])

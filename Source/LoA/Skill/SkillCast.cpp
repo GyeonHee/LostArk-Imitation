@@ -30,6 +30,16 @@ void USkillCast::OnKeyHeld(AActor* Owner, float DeltaTime)
     }
 }
 
+bool USkillCast::GetCastProgress(float& OutElapsed, float& OutTotal) const
+{
+    // bIsActive가 false인 동안(사거리 이동 중 등)은 아직 캐스팅이 시작된 게 아니므로 바를 띄우지 않는다
+    if (!bIsActive || SkillData.CastTime <= 0.f) return false;
+
+    OutElapsed = FMath::Clamp(ElapsedTime, 0.f, SkillData.CastTime);
+    OutTotal = SkillData.CastTime;
+    return true;
+}
+
 void USkillCast::OnKeyUp(AActor* Owner)
 {
     if (!bIsActive) return;  // 이미 완료된 경우엔 취소 메시지 안 띄움

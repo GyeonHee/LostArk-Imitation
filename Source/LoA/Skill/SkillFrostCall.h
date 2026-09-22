@@ -22,6 +22,8 @@ public:
     virtual void OnKeyUp(AActor* Owner) override;
     virtual void ForceCancel(AActor* Owner) override;
 
+    virtual bool GetCastProgress(float& OutElapsed, float& OutTotal) const override;
+
     UPROPERTY(EditDefaultsOnly, Category="FrostCall")
     TSubclassOf<AFrostCallZoneActor> ZoneClass;
 

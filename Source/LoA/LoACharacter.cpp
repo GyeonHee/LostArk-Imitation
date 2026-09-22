@@ -113,6 +113,8 @@ void ALoACharacter::Tick(float DeltaSeconds)
 		RestoreMP(MaxMP * MPRegenRate);
 		MPRegenAccum -= 1.f;
 	}
+
+	TickPullDrag(DeltaSeconds);
 }
 
 void ALoACharacter::ExecuteDash_Implementation(const FVector& TargetLocation)
@@ -156,29 +158,56 @@ void ALoACharacter::AddCharmGauge(int32 Amount)
 {
 	if (Amount <= 0) return;
 
+	// 매혹 중 재히트로 지속시간이 연장되면 "매혹은 CharmedDuration만큼만"이 깨진다. 스택도 이미 최대라 할 일이 없음
+	if (bIsCharmed) return;
+
 	const int32 OldGauge = CharmGauge;
 	CharmGauge = FMath::Clamp(CharmGauge + Amount, 0, MaxCharmGauge);
-
-	// 스택별 개별 타이머가 아니라 전체 유지시간 하나 — 맞을 때마다(이미 최대 스택이어도) CharmGaugeStackDuration으로
-	// 통째로 리셋됨. 이 시간 안에 재히트가 없으면 ClearCharmGauge()가 스택 전부를 한 번에 0으로 되돌림
-	GetWorldTimerManager().SetTimer(CharmGaugeTimerHandle, this, &ALoACharacter::ClearCharmGauge, CharmGaugeStackDuration, false);
 
 	if (CharmGauge != OldGauge)
 	{
 		OnCharmGaugeChanged.Broadcast(CharmGauge);
 	}
 
-	if (CharmGauge >= MaxCharmGauge && !bIsCharmed)
+	if (CharmGauge >= MaxCharmGauge)
 	{
+		// 매혹 진입 — 스택 감소는 더 이상 의미가 없고(어차피 끝나면 통째로 0) CharmedDuration 뒤 EndCharm()이 정리한다
+		GetWorldTimerManager().ClearTimer(CharmGaugeTimerHandle);
+		GetWorldTimerManager().SetTimer(CharmedTimerHandle, this, &ALoACharacter::EndCharm, CharmedDuration, false);
+
 		bIsCharmed = true;
 		OnCharmedChanged.Broadcast(true);
+		return;
+	}
+
+	// 루핑 타이머 — 재히트 없이 CharmGaugeStackDuration이 지날 때마다 1스택씩 깎인다 (2→1→0)
+	GetWorldTimerManager().SetTimer(CharmGaugeTimerHandle, this, &ALoACharacter::DecayCharmGauge, CharmGaugeStackDuration, true);
+}
+
+void ALoACharacter::DecayCharmGauge()
+{
+	if (CharmGauge > 0)
+	{
+		--CharmGauge;
+		OnCharmGaugeChanged.Broadcast(CharmGauge);
+	}
+
+	// 남은 스택이 있으면 루핑 타이머가 그대로 다음 주기를 센다
+	if (CharmGauge <= 0)
+	{
+		GetWorldTimerManager().ClearTimer(CharmGaugeTimerHandle);
 	}
 }
 
-void ALoACharacter::ClearCharmGauge()
+void ALoACharacter::EndCharm()
 {
-	CharmGauge = 0;
-	OnCharmGaugeChanged.Broadcast(CharmGauge);
+	GetWorldTimerManager().ClearTimer(CharmGaugeTimerHandle);
+
+	if (CharmGauge != 0)
+	{
+		CharmGauge = 0;
+		OnCharmGaugeChanged.Broadcast(CharmGauge);
+	}
 
 	if (bIsCharmed)
 	{
@@ -234,15 +263,101 @@ void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
 	}
 }
 
-void ALoACharacter::ApplyPull(const FVector& TargetLocation, float PullStrength)
+void ALoACharacter::ApplyPull(const FVector& TargetLocation, float PullSpeed)
 {
+	// 넉다운 중이면 이미 더 강한 행동불능 상태이므로 무시
+	if (bIsKnockedDown) return;
+
 	FVector ToTarget = TargetLocation - GetActorLocation();
 	ToTarget.Z = 0.f;
 	if (ToTarget.IsNearlyZero()) return;
 
-	// 수평 속도만 덮어쓰고(bXYOverride=true) 수직 속도는 그대로 둠(bZOverride=false) —
-	// 넉다운과 달리 위로 띄우지 않으므로 bConstrainToPlane을 풀 필요가 없음
-	LaunchCharacter(ToTarget.GetSafeNormal() * PullStrength, true, false);
+	// 보스와 완전히 겹치지 않도록 목표 지점 앞 PullStopDistance에서 멈추게 한다.
+	// 이미 그보다 가까우면 제자리를 목적지로 삼아 "멈추기만" 하고 끝낸다
+	const float Distance = ToTarget.Size();
+	const FVector Direction = ToTarget / Distance;
+	const float TravelDistance = FMath::Max(Distance - PullStopDistance, 0.f);
+
+	PullDestination = GetActorLocation() + Direction * TravelDistance;
+	PullSpeedCmS = FMath::Max(PullSpeed, 1.f);
+	PullDragElapsed = 0.f;
+	bPullDragging = false;
+
+	const bool bFirstHit = !bIsPulled;
+	bIsPulled = true;
+
+	// 경직/기절과 동일 — 캐스팅과 사거리 이동 대기를 끊고 제자리에 세운다.
+	// 여기서는 아직 끌지 않는다. PullHoldDuration 동안 "발이 묶인" 상태로 멈춰 있다가 드래그가 시작됨
+	if (SkillManager)
+	{
+		SkillManager->CancelActiveCastSkill();
+		SkillManager->CancelPendingRangeMove();
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+
+	GetWorldTimerManager().SetTimer(PullHoldTimerHandle, this, &ALoACharacter::BeginPullDrag, PullHoldDuration, false);
+
+	// 끌려간 뒤에도 패턴이 끝날 때까지 계속 묶여 있으므로, 패턴이 비정상 종료돼 ReleasePull()이
+	// 안 불려도 영구 속박이 되지 않도록 안전 타이머를 건다
+	GetWorldTimerManager().SetTimer(PullSafetyTimerHandle, this, &ALoACharacter::ReleasePull, PullMaxHoldTime, false);
+
+	if (bFirstHit)
+	{
+		OnPullVisualChanged(true);
+	}
+}
+
+void ALoACharacter::BeginPullDrag()
+{
+	if (!bIsPulled) return;
+
+	bPullDragging = true;
+	PullDragElapsed = 0.f;
+}
+
+void ALoACharacter::TickPullDrag(float DeltaSeconds)
+{
+	if (!bPullDragging) return;
+
+	PullDragElapsed += DeltaSeconds;
+
+	FVector ToDestination = PullDestination - GetActorLocation();
+	ToDestination.Z = 0.f;
+	const float Remaining = ToDestination.Size();
+
+	// 물리 임펄스가 아니라 위치를 직접 옮긴다 — 임펄스는 마찰/지형에 따라 도달 거리가 들쭉날쭉해서
+	// "확실히 보스 앞까지 끌려온다"를 보장하지 못했음. bSweep=true라 벽은 여전히 막아준다
+	const float Step = PullSpeedCmS * DeltaSeconds;
+	if (Remaining <= Step || PullDragElapsed >= PullMaxDragTime)
+	{
+		if (Remaining > KINDA_SMALL_NUMBER)
+		{
+			AddActorWorldOffset(ToDestination, true);
+		}
+		FinishPullDrag();
+		return;
+	}
+
+	AddActorWorldOffset(ToDestination / Remaining * Step, true);
+}
+
+void ALoACharacter::FinishPullDrag()
+{
+	// 도착해도 bIsPulled는 유지 — 끌려온 자리에서 패턴이 끝날 때까지 묶여 있어야 하므로
+	// 해제는 ReleasePull()(끌기를 건 패턴의 ExitState)이나 PullMaxHoldTime 안전 타이머가 담당한다
+	bPullDragging = false;
+	GetCharacterMovement()->StopMovementImmediately();
+}
+
+void ALoACharacter::ReleasePull()
+{
+	if (!bIsPulled) return;
+
+	GetWorldTimerManager().ClearTimer(PullHoldTimerHandle);
+	GetWorldTimerManager().ClearTimer(PullSafetyTimerHandle);
+	bIsPulled = false;
+	bPullDragging = false;
+	OnPullVisualChanged(false);
 }
 
 void ALoACharacter::SettleKnockdown()

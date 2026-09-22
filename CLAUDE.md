@@ -122,6 +122,35 @@
 - `WBP_SkillTree` — K키로 토글, SkillTree_ViewModel 바인딩
 - `WBP_SkillTreeRow` — ListView 행, IUserObjectListEntry 구현
 - `USkillDragDropOperation` — 스킬 드래그앤드랍
+- `WBP_BossHP` (`/Game/LostArk/UI/`) — 보스 HP 바. **MVVM이 아니라 `UBossHPWidget`(C++) 상속 + `BindWidget`** 방식
+  - MVVM은 ViewModel 바인딩을 에디터에서 손으로 걸어야 해서 MCP로 끝까지 못 만든다. `UCharmGaugeWidget`과 동일하게 C++ Setter를 호출하는 방식이면 위젯 BP까지 MCP로 생성 가능 — 새 UI를 추가할 땐 이 쪽이 작업이 빠름
+  - 트리: `RootCanvas` → `BossHPRoot`(VerticalBox, 상단 중앙 앵커 900x70) → `BossNameText`(고정 라벨) + `BarOverlay` → **`NextLineImage` → `HPBar` → `LineText`** (Overlay는 나중 자식이 위에 그려지므로 이 순서가 곧 뒤→앞 순서)
+  - `HPBar`/`NextLineImage`/`LineText` 세 개가 C++ `BindWidget` 대상이라 **이름을 바꾸면 컴파일 에러**가 난다. `BossNameText`는 C++이 모르는 순수 디자이너 라벨
+  - `LineText` 표기: `현재체력 / 최대체력    남은줄수` (예: `21,000,000 / 21,000,000    210`). 체력이 천만 단위라 `FString::FormatAsNumber`로 자릿수 구분
+  - **줄마다 색이 바뀌는 로아식 바**: `HPBar`의 Percent는 전체 HP가 아니라 **현재 줄 안의 잔량**이고, 색은 `LineColors[(현재줄-1) % Num]`. 뒤에 깔린 `NextLineImage`는 **한 줄 아래**의 색이라, 현재 줄이 비어갈수록 다음 줄 색이 드러난다. 마지막 1줄에서는 `GetLineColor(0)`이 투명을 반환해 빈 칸이 보임
+  - 이게 성립하려면 **`HPBar`의 `WidgetStyle.BackgroundImage` 틴트 알파가 0**이어야 한다(기본값은 흰색 불투명이라 뒤를 가림). `NextLineImage`는 텍스처 없이도 확실히 그려지도록 브러시를 `RoundedBox`(cornerRadii 0 = 단색 사각형)로 설정해둠
+  - `LineColors`는 `EditDefaultsOnly`라 WBP Class Defaults에서 색/개수 조절 가능 (기본 5색 순환)
+- `WBP_CastBar` (`/Game/LostArk/UI/`) — 캐스팅/차지 진행바. `UCastBarWidget`(C++) 상속 + `BindWidget` (보스 HP와 동일 방식)
+  - 트리: `RootCanvas` → `CastBarRoot`(Overlay, 하단 중앙 앵커 400x28, 바닥에서 200px 위) → `CastBar`(ProgressBar) + `CastTimeText`(TextBlock, 바 우측 하단에 작게 얹힘, 11pt + 그림자)
+  - 진행도 조회 경로: `USkillBase::GetCastProgress()`(virtual, 기본 false) → `USkillCast`/`USkillCharge`가 오버라이드 → `USkillManagerComponent::GetActiveCastProgress()`가 슬롯을 훑어 진행 중인 첫 스킬 반환 → `ALoAPlayerController::UpdateCastBar()`가 Tick에서 폴링
+  - **Cast는 `bIsActive`일 때만 true를 반환** — 사거리 밖에서 이동 중(`bMovingToRange`)일 땐 아직 캐스팅이 시작된 게 아니라 바가 뜨지 않는다
+  - `UpdateCastBar()`는 Tick의 **`IsActionLocked()` 조기 return보다 앞**에 있어야 한다. 뒤에 두면 캐스팅 중 기절/넉다운을 맞았을 때 그 아래가 실행되지 않아 바가 화면에 얼어붙은 채 남는다
+  - Hold 스킬(혹한의 부름)도 `ElapsedTime`을 누적하므로 `GetCastProgress` 오버라이드만 추가하면 같은 바에 표시 가능 (현재는 미적용)
+- `ADamageNumberActor` + `WBP_DamageNumber` (`/Game/LostArk/UI/`) — 보스 피격 데미지 숫자. **HUD 위젯이 아니라 월드 액터**다
+  - `AEchidnaBoss::ReceiveDamage`마다 `SpawnDamageNumber()`가 보스 몸통(`GetActorLocation()` = 캡슐 중심) + `DamageNumberHeight`에 스폰하고, `DamageNumberJitter` 범위로 흩뿌려 연타 시 숫자가 완전히 겹치지 않게 한다
+  - 표시는 `UWidgetComponent`(**WidgetSpace=Screen**) — 매혹 게이지와 같은 이유로 탑다운 카메라 각도와 무관하게 항상 일정 크기로 보인다
+  - **겹친 숫자의 앞뒤 순서**: 보스가 계속 증가하는 카운터를 `Activate()`에 넘기고 액터가 `SetTranslucentSortPriority()`에 넣는다 → 나중에 맞은 숫자가 항상 앞
+  - 떠오르기·페이드·소멸은 전부 액터의 `Tick`이 담당(위젯은 숫자만 채움). `FadeStartRatio`(기본 0.35)까지는 완전 불투명하게 두고 그 뒤 `Lifetime`(3초)까지 선형으로 사라진다 — 스폰 즉시 흐려지면 읽을 수가 없어서
+  - 페이드는 `WidgetComponent`가 아니라 **안에 든 `UserWidget`의 `SetRenderOpacity()`**를 건드려야 Screen 스페이스에서도 먹는다
+  - **버그였던 것 (가끔 데미지 0이 뜸)**: `AEchidnaBoss::TakeDamage`가 `Super::TakeDamage`의 **반환값**을 `ReceiveDamage`에 넘기고 있었다. `AActor::InternalTakeRadialDamage`는 `ComponentHits`의 가장 가까운 충돌 지점까지의 거리로 배율을 구하는데, 오버랩은 잡혔어도 그 지점 계산이 실패하면 거리가 `UE_MAX_FLT`로 남아 배율이 0이 되고 `ApplyRadialDamage`는 `MinimumDamage=0`이라 결과가 통째로 0이 된다(`bDoFullDamage=true`는 감쇠 곡선만 없앨 뿐 이 경로를 막지 못함). **숫자만 0인 게 아니라 HP도 실제로 안 깎이고 있었다.** `ALoACharacter::TakeDamage`처럼 들어온 원본 `DamageAmount`를 그대로 쓰도록 통일해서 해결
+  - **데미지 계열 액터를 새로 만들 때 규칙**: 이 프로젝트는 반경 감쇠를 쓰지 않으므로(`ApplyRadialDamage`의 `bDoFullDamage`가 전부 `true`) `TakeDamage` 오버라이드에서는 **`Super`의 반환값이 아니라 인자로 들어온 `DamageAmount`를 적용할 것**
+- **HUD 위젯은 전부 루트 Visibility를 `HitTestInvisible`로 둘 것** — 클릭 이동 게임이라 바가 마우스 입력을 먹으면 그 영역을 클릭해도 캐릭터가 안 움직인다
+- ⚠️ **`BP_LoAPlayerController`의 위젯 클래스 프로퍼티는 반드시 에디터 Details 패널에서 직접 할당할 것.**
+  MCP(`ObjectTools.set_properties`)로 CDO(`Default__BP_LoAPlayerController_C`)에 써서 저장하면 **에디터 조회로는 값이 보이고 `save_assets`도 true를 반환하는데, PIE 런타임에서는 null이다.** Live Coding 리인스턴싱을 거치면서 날아가는 것으로 보임.
+  실제로 `BossHPWidgetClass`/`CastBarWidgetClass`를 MCP로 넣었더니 두 위젯 다 PIE에서 아예 생성되지 않았고(`[CastBar] 생성 건너뜀 — CastBarWidgetClass:미설정`), 유저가 에디터에서 직접 넣은 `HUDWidgetClass`/`SkillTreeWidgetClass`만 정상 동작했다.
+  **교훈: MCP CDO 쓰기는 에디터 조회로 검증하면 안 되고 PIE 로그로 검증해야 한다.** 위젯 생성 지점마다 성공/실패 `UE_LOG`를 남겨두면 이런 걸 바로 잡을 수 있다(`[HUD]`/`[CastBar]` 로그가 그 예)
+  - 갱신 경로: `AEchidnaBoss::OnHPChanged`(ReceiveDamage마다, BeginPlay에서도 1회) → `ALoAPlayerController::OnBossHPChanged` → `UBossHPWidget::SetBossHP()`
+  - 컨트롤러가 BeginPlay에서 `UGameplayStatics::GetActorOfClass`로 보스를 찾아 구독한다 — **레벨에 `AEchidnaBoss`가 없으면 위젯 자체를 만들지 않음**
 
 ## Blueprint 주의사항
 - `BP_LoAPlayerController` EventGraph의 이동 관련 BP 노드 모두 제거됨 (C++와 충돌)
@@ -155,7 +184,7 @@
 - `QueuedSkillSlot` — 잠금 중 입력된 다음 스킬 슬롯 1개 저장 (덮어쓰기)
 - `ReleaseSkillLock(bWithPostDelay)` — 잠금 해제 + PostDelay 타이머 예약
 - `OnSkillLockReleased()` — PostDelay 완료 후 큐된 슬롯 자동 발동
-- **Instant 완료** → `SkillPostDelay`(기본 0.3s) 후 잠금 해제 → 큐 발동
+- **Instant 완료** → `SkillPostDelay` 후 잠금 해제 → 큐 발동 (실제 적용값은 `BP_Sorceress`의 SkillManager 컴포넌트에 **0.1s**로 설정돼 있음 — C++ 기본값과 다르니 점유율 계산 시 주의)
 - **Cast/Charge 완료·취소** → PostDelay 후 잠금 해제 → 큐 발동
 - **Hold 완료·취소** → 즉시 잠금 해제 (PostDelay 없음)
 - **Hold 활성 중** → 다른 스킬 키 완전 씹힘 (큐 등록조차 안 됨)
@@ -307,6 +336,37 @@
 - `FanZoneClass` 미할당 시 EnterState에서 바로 Failed (경고 로그로 원인 표시) — `AIController`는 이제 필수 아님(없어도 패턴 자체는 동작, 다만 잔여 이동을 못 멈춤)
 - **버그였던 것**: `SpawnFan()`에서 스폰 위치로 `Boss->GetActorLocation()`을 그대로 썼더니 장판이 공중에 떠 보임 — 이 값은 캡슐 **중심** 좌표(지면에서 캡슐 절반 높이만큼 위)라서, `GetCapsuleComponent()->GetScaledCapsuleHalfHeight()`만큼 Z를 빼서 발밑(지면) 높이로 보정 후 스폰
 
+## 보스 앞/뒤 방향 표시 (`Source/LoA/Raid/BossDirectionIndicatorComponent.h/.cpp`) — 2026-09-22
+
+- 로스트아크의 정면/백어택 표시와 같은 역할 — 보스 발밑에 호(arc) 두 개를 그려 앞뒤를 알려준다
+- **`UProceduralMeshComponent` 서브클래스**라 `AEchidnaBoss` 캡슐(루트)에 붙이기만 하면 **보스가 회전할 때 같이 돈다** — 매 틱 방향을 갱신하는 코드가 전혀 없음
+- **정면 호(섹션 0, 로컬 +X)**: 가운데가 바깥으로 뾰족하게 튀어나옴 / **후방 호(섹션 1, 로컬 -X)**: 매끈한 고리 조각
+- **뾰족한 부분은 별도 삼각형이 아니다** — `OuterRadius`를 각도의 함수로 두고, 중심에서 `SpikeHalfAngle`만큼 떨어지면 0이 되는 선형 보간(`Spike = SpikeLength * max(0, 1 - |각도차|/SpikeHalfAngle)`)으로 만든다. 호와 자연스럽게 이어지고 특수 케이스 처리가 없음. `FrontSpikeLength=0`이면 후방과 같은 매끈한 호가 됨
+- **발밑 정렬**: `bSnapToOwnerFeet`이 BeginPlay에서 오너 캐릭터의 캡슐 절반 높이만큼 내린다. 안 하면 보스 허리 높이에 떠 보임(`GetActorLocation`이 캡슐 중심인 것과 같은 함정)
+- 지오메트리/머티리얼 컨벤션은 HexArena 벽·부채꼴 장판·하트 메시와 동일 (`CreateMeshSection` + `M_MirrorLaser`의 `"Base Color"` Vector Parameter에 MID로 색 주입, 양면 감김)
+- 반지름·각도·스파이크 길이/폭·색상·불투명도 전부 컴포넌트 Details에서 조절 가능
+
+## 에키드나 보스 짤패턴 — 끌고간후 장판터지는 (`Source/LoA/Raid/EchidnaTetherActor.h/.cpp`, `EchidnaBossStateTreeUtility.h/.cpp`)
+
+### 패턴 개요 (레퍼런스 이미지 "1. 끌고간후 장판터지는 패턴")
+- 1단계: 보스 정면 기준 부채꼴로 줄기(`AEchidnaTetherActor`) `TetherCount`(기본 7)개를 동시에 뻗음 → `SnapDelay` 뒤 범위 안 대상을 1회 판정
+- 2단계: **맞은 대상이 멈췄다가 보스 앞까지 끌려온 뒤에** 1번 장판(좁게) → 2번 장판(넓게) 순서로 터짐
+- 아무도 안 맞았으면(`AnyTetherHit` false) 장판 없이 바로 패턴 종료 — 아무도 안 끌려왔는데 장판이 터지는 걸 막기 위함
+
+### 끌어당기기 = "잠깐 멈춤 → 강제 드래그" 2단계 (`ALoACharacter::ApplyPull`) — 2026-09-22
+- **버그였던 것**: 예전엔 `ApplyPull`이 보스 방향으로 `LaunchCharacter` 임펄스 **한 번**을 주는 게 전부였다. 마찰·지형·현재 속도에 따라 도달 거리가 들쭉날쭉해서 "끌려간다"가 아니라 "살짝 밀린다"에 가까웠고, 멈추는 연출도 없었음
+- 현재 동작: ①맞는 즉시 캐스팅/사거리이동을 끊고 `StopMovementImmediately()`로 **`PullHoldDuration`(기본 0.4초) 동안 제자리에 묶임** → ②`PullSpeedCmS`(StateTree의 `PullStrength`를 속도 cm/s로 재해석)로 목표 지점까지 **Tick에서 위치를 직접 보간**해 끌고 감 → ③도착하거나 `PullMaxDragTime`(기본 1.5초)이 지나면 해제
+- 임펄스가 아니라 `AddActorWorldOffset(..., bSweep=true)`로 직접 옮기므로 **항상 보스 앞까지 확실히 도달**한다(벽은 스윕이 막아줌). `PullStopDistance`(기본 200cm)만큼 앞에서 멈춰 보스와 겹치지 않게 함
+- **끌려간 뒤에도 패턴이 끝날 때까지 계속 묶여 있다** — 도착 시 `FinishPullDrag()`가 드래그만 멈추고 `bIsPulled`는 유지한다. 해제는 `ReleasePull()`이 담당하고, `FStateTreeTask_EchidnaDragFanPattern::ExitState`에서 호출된다(Succeeded/Failed 구분 없이 불리므로 패턴이 중간에 강제 전이돼도 반드시 풀림)
+- **안전장치**: `PullMaxHoldTime`(기본 8초) 타이머가 `ReleasePull()`을 강제 호출한다. 이게 없으면 패턴이 비정상 종료될 때 플레이어가 영구히 못 움직인다 — 패턴 전체 길이보다 넉넉하게 잡을 것
+- `bIsPulled`가 `IsActionLocked()`에 포함되어 멈춤·드래그·속박 내내 조작 불가. 연출 훅은 `OnPullVisualChanged(bool)` (경직/기절과 동일 패턴)
+- **`PullStrength`의 의미가 바뀌었다** — 임펄스 세기가 아니라 **끌려가는 속도(cm/s)**. StateTree 인스턴스 데이터 레이아웃을 건드리면 배치된 Task가 Live Coding에서 크래시 나므로 필드를 지우지 않고 의미만 재해석한 것(`GuidedHoverHeight`와 같은 선례)
+
+### 타이밍 — 끌려오는 중에 장판이 터지지 않도록
+- `AEchidnaTetherActor::IsFinished()`는 예전엔 판정 즉시 true였는데, 그러면 아직 끌려오는 중에 다음 단계 장판이 터진다
+- 이제 누군가 맞았으면 `PullResolveDelay`(기본 1.2초) 뒤 `FinishSnap()`에서야 `bSnapped=true`가 된다. **`ALoACharacter`의 `PullHoldDuration` + 실제 드래그 시간보다 넉넉히 잡을 것** (기본값 기준 0.4 + 드래그 ≒ 1.2초)
+- 소멸(`SetLifeSpan`)도 `FinishSnap`에서야 예약한다 — 그 전에 사라지면 `AreTethersFinished`가 null을 "완료"로 세고 `DidHit()` 정보도 같이 날아가 "아무도 안 맞음"으로 오판한다
+
 ## 에키드나 보스 짤패턴 — 두번긋고 도넛장판 (`Source/LoA/Raid/EchidnaBossStateTreeUtility.h/.cpp`) — 2026-09-21
 
 ### 패턴 개요 (레퍼런스 이미지 "5. 두번긋고 도넛장판")
@@ -390,20 +450,120 @@
 - `Boss`/`AIController` 컨텍스트 바인딩, `HeartClass`에 `AEchidnaHeartActor` BP 서브클래스 할당 필요
 - **주의**: 새 C++ 클래스(`AEchidnaHeartActor`)와 새 StateTree Task/Enum 타입을 추가한 변경이라 Live Coding(Ctrl+Alt+F11)이 새 UCLASS/USTRUCT 리플렉션 타입을 못 잡아낼 수 있음 — 에디터에서 새 Task가 노드 목록에 안 뜨면 에디터를 완전히 닫고 풀 빌드해야 함
 
+## 에키드나 보스 짤패턴 — 백스탭 후 하트발사 (`EchidnaBossStateTreeUtility.h/.cpp`) — 2026-09-22
+
+### 패턴 개요 (레퍼런스 이미지 "8. 백스탭 후 하트발사")
+- 보스가 **플레이어를 바라본 채 뒤로 크게 튕겨나가고**, 착지할 즈음 정면으로 하트 4개를 부채꼴로 발사 (`FStateTreeTask_EchidnaBackstepHeartPattern`)
+- Phase: `Backstep`(튕겨나가는 중, 매 틱 플레이어를 다시 바라봄) → `Fire`(하트 발사 후 `FireLingerDuration` 대기) → Succeeded
+- **새 액터 클래스 없음** — "전방향 하트발사"의 `AEchidnaHeartActor`를 그대로 재사용한다(맞으면 데미지 + 기절 + 매혹 1스택)
+- 레퍼런스의 "상태이상은 정화로 해제가능"은 이 프로젝트에 정화 시스템이 없어 **기존 기절(`ApplyStun`)로 대체**함
+
+### 조준 — 백스텝 중에는 계속 추적, 발사 순간에 고정
+- `FacePlayer()`가 플레이어 방향을 구해 `Boss->SetActorRotation()`으로 보스를 즉시 돌리고 그 Rotation을 반환한다. `Backstep` 단계에서 **매 틱** 호출되므로 뒤로 밀려나는 동안에도 정면이 계속 플레이어를 향한다(레퍼런스 그림의 "물러나면서 앞으로 쏘는" 모양)
+- 발사 직전 시점의 값이 `BaseAimRotation`으로 남아 부채꼴 기준선이 되고, `FireFan()`은 이 기준선 ± 오프셋만 쓴다 — RetreatFan과 달리 패턴 **시작** 시점이 아니라 **발사** 시점에 고정되는 게 차이점
+- 보스가 `bOrientRotationToMovement=false`(EchidnaBoss 생성자)라 `LaunchCharacter`로 밀려나도 이동 방향으로 자동 회전하지 않는다 — 이게 없으면 뒤로 밀리는 방향을 쳐다보게 됨
+
+### 부채꼴 각도 분배
+- `FireFan()`: 하트 i의 Yaw 오프셋 = `Lerp(-FanSpreadAngle/2, +FanSpreadAngle/2, i/(Count-1))` — 개수와 무관하게 **양 끝이 항상 부채꼴 경계**에 오고 나머지는 균등 분포. `HeartCount=1`이면 정면 하나만
+- 기본값 `HeartCount=4`, `FanSpreadAngle=60도` → -30 / -10 / +10 / +30도
+- **발사 높이**: `GetActorLocation()`은 캡슐 중심이라 그대로 쓰면 하트가 떠 보인다. 캡슐 절반 높이를 빼 발밑으로 내린 뒤 `HeartFireHeight`(기본 100cm, 플레이어 캡슐 중심 높이와 비슷)를 더한다 — 안 맞추면 플레이어 위를 그냥 지나감(전방향 하트발사에서 이미 겪은 문제)
+
+### 백스텝 — LaunchCharacter + 낙사 방지
+- `Backstep()`은 `FacePlayer` 직후 호출되므로 "정면의 반대"가 곧 플레이어 반대 방향
+- 착지 예상 지점(`BackstepCheckDistance` 뒤)에 수직 라인트레이스(`ECC_Visibility`)로 바닥이 없으면 **`LaunchCharacter` 자체를 건너뛴다** — 맵 끝자락에서도 떨어지지 않고 제자리에서 발사만 함 (RetreatFan의 `HopBackward`와 동일한 안전장치)
+- `BackstepDuration`(기본 0.6초)은 "튕겨나가서 착지할 때쯤 발사"되도록 맞춘 값 — `BackstepStrength`/`BackstepUpwardStrength`를 바꾸면 체공 시간이 달라지므로 같이 조정할 것
+
+### StateTree 배치 (미완)
+- `SmallPatternRotation` 안에 `Echidna Backstep Heart Pattern` Task 하나만 넣고 On State Completed → `Cooldown` 연결
+- `Boss`/`AIController` 컨텍스트 바인딩 + `HeartClass`에 **`BP_EchidnaHeart`** 할당 필요 (네이티브 `EchidnaHeartActor`가 아니라 BP를 넣을 것 — 전방향 하트발사에서 이걸 잘못 물려 한참 헤맸음)
+- **새 Task/Enum 타입 추가라 Live Coding으로는 노드 목록에 안 뜰 수 있음** — 에디터를 닫고 풀 빌드할 것
+
+## 에키드나 보스 짤패턴 — 되돌아오는 구체(자야패턴) (`Source/LoA/Raid/EchidnaOrbActor.h/.cpp`, `EchidnaBossStateTreeUtility.h/.cpp`) — 2026-09-22
+
+### 패턴 개요 (레퍼런스 이미지 "10. 되돌아오는 구체(자야패턴)")
+- 큰 구체를 전방으로 던지는데 **한 번 나간 구체는 그 경로를 그대로 되짚어 돌아온다** — 나갈 때 피했어도 돌아올 때 다시 맞을 수 있다("6개 구체 모두 되돌아오니 주의")
+- 순서(`FStateTreeTask_EchidnaReturningOrbPattern`): 플레이어 조준 → 1번째 → `ThrowInterval`(1.2초) 뒤 **다시 조준해서** 2번째 → 백스텝 → 착지 무렵 정면 부채꼴 `FanOrbCount`(4)개 → 총 6개가 전부 돌아오면 Succeeded
+- **조준 방식이 앞뒤로 다르다**: 앞의 2개는 발사 시점마다 다시 조준해 플레이어를 쫓아가고, 부채꼴 4개는 발사 직전 `BaseAimRotation`으로 한 번 고정해 각도 간격을 일정하게 유지 (RetreatFan·BackstepHeart와 같은 방침)
+
+### AEchidnaOrbActor — Outgoing → Returning 2단계
+- `Outgoing`: `FlyDirection`으로 `MaxRange`(기본 1400cm)까지 전진 → `Returning` → `Done`(`IsFinished()`가 true, StateTree가 폴링)
+- **복귀는 발사 지점에서 멈추지 않는다.** `+MaxRange → 0(발사 지점) → -MaxRange`로 관통해서 반대편까지 가므로, 복귀 구간의 이동 거리는 `MaxRange`가 아니라 **`2*MaxRange`**이고 구체가 훑는 총 길이는 보스 앞뒤를 합쳐 `2*MaxRange`다. **보스 뒤에 서 있어도 안전하지 않다**
+- **피격 기록(`AlreadyHit`)은 왕복 구간마다 초기화**한다(`BeginReturn`) — 한 구체에 최대 두 번(나갈 때 1회, 돌아올 때 1회) 맞을 수 있고 한 구간 안에서는 중복 피격이 없다
+- **하트와 달리 맞아도 소멸하지 않는다** — 계속 날아가 되돌아와야 하므로. 이 차이 때문에 `bHasHit` 단일 플래그가 아니라 `TSet` 기록 방식을 쓴다
+- 비주얼은 엔진 기본 Sphere + `M_MirrorLaser`(색상만) — 거울 액터와 같은 컨벤션이라 VFX 에셋 없이도 보인다
+- ⚠️ **크기/판정 반지름은 컴포넌트가 아니라 Class Defaults에서 바꿀 것.** `BeginPlay`가 `OrbVisualScale`/`OrbCollisionRadius` 값으로 `OrbMeshComp->SetRelativeScale3D()`·`CollisionComp->SetSphereRadius()`를 **강제로 덮어쓴다.** BP 컴포넌트 트리에서 `CollisionComp`의 Sphere Radius나 `OrbMeshComp`의 Scale을 직접 만지면 BeginPlay가 즉시 되돌려놔서 "오버라이드가 안 먹는" 것처럼 보인다 (하트·거울 액터도 같은 구조)
+- **StateTree에서도 조절 가능**: Task의 `Orb|Override` 카테고리 4개(`OrbCollisionRadiusOverride`/`OrbVisualScaleOverride`/`OrbSpeedOverride`/`OrbMaxRangeOverride`)를 `AEchidnaOrbActor::ApplyOverrides()`가 스폰 직후 적용한다. **음수면 BP 값을 그대로 쓴다.** BeginPlay 뒤에 호출되므로 BP 기본값을 확실히 덮어쓴다
+- 발사 높이는 Task가 캡슐 절반 높이를 빼 발밑으로 내린 뒤 `OrbSpawnHeight`(100cm)를 더한다 — 안 맞추면 플레이어 위를 그냥 지나간다(하트발사에서 이미 겪은 문제)
+
+### 안전장치
+- 착지 예상 지점에 바닥이 없으면 백스텝을 건너뛰고 제자리에서 쏜다(낙사 방지 — RetreatFan과 동일)
+- `MaxWaitDuration`(기본 10초)이 지나면 아직 안 돌아온 구체가 있어도 패턴을 끝낸다 — 구체가 지형에 끼면 State가 영영 안 끝나기 때문
+
+### StateTree 배치 (미완)
+- `SmallPatternRotation` 안에 `Echidna Returning Orb Pattern` Task 하나만 넣고 On State Completed → `Cooldown` 연결
+- `Boss`/`AIController` 바인딩 + `OrbClass`에 **`BP_EchidnaOrb`**(`/Game/LostArk/Raid/Echidna/Pattern/`) 할당 — 네이티브 클래스가 아니라 BP를 넣을 것
+
+## 에키드나 보스 짤패턴 — 정면 리본 공격 (`EchidnaBossStateTreeUtility.h/.cpp`, `EchidnaTetherActor.h/.cpp`) — 2026-09-22
+
+### 패턴 개요 (레퍼런스 이미지 "11. 정면 리본 공격")
+```
+정면 2갈래 리본
+├─ 맞음   → 기절 3초 + 매혹 1스택 → 보스 중심 원형 장판(넉다운) → 종료
+└─ 빗나감 → 리본 끝자락으로 이동 → 플레이어 재조준 → 2차 리본
+             ├─ 맞음   → 원형 장판 → 종료
+             └─ 빗나감 → 좌측 전방 호(arc) 내려치기 → 종료
+```
+- **피격 여부로 갈라지는 분기 패턴** — 다른 짤패턴들이 정해진 순서를 그대로 진행하는 것과 다르다. `AnyRibbonHit()` 결과로 다음 Phase가 결정된다
+
+### 새 액터 없이 기존 둘을 재사용
+- **리본 = `AEchidnaTetherActor`**. 끌기 전용이던 액터에 피격 효과 스위치(`bApplyPullOnHit`/`bApplyStunOnHit`/`StunDuration`/`CharmGaugeAmount`)를 추가해 BP 설정만으로 두 패턴이 갈라지게 했다
+
+  | | `BP_EchidnaTether`(끌고간후) | `BP_EchidnaRibbon`(리본) |
+  |---|---|---|
+  | `bApplyPullOnHit` | true | **false** |
+  | `bApplyStunOnHit` | false | **true** (3초) |
+  | `CharmGaugeAmount` | 0 | **1** |
+  | `TetherRange` | 1200 | 1600 |
+
+- **끌기를 안 쓰면 `PullResolveDelay`를 기다리지 않는다** (`PerformSnap`의 `!bDidHit || !bApplyPullOnHit` 조건) — 안 그러면 리본에 맞고도 1.2초를 멍하니 기다린다
+- **원형 장판 / 호 = `AEchidnaFanZoneActor`**. 원형은 `FanAngle=360`(도넛과 같은 수법), 호는 `ArcInnerRadius`를 준 얇은 고리(두번긋고 도넛장판의 슬래시와 같은 방식). 둘 다 `RingCount=1`로 강제해 "예고 후 단발 판정"만 나오게 함
+- **리본 자체는 데미지 0** — 기절+매혹만 주고 데미지는 뒤이어 터지는 원형 장판이 담당한다
+- **버그였던 것 (겹친 구간에서 매혹 2스택)**: 2갈래는 서로를 모르는 별개 액터라 각자 `AddCharmGauge(1)`을 불렀고, 둘 다 맞으면 한 번에 2스택이 쌓였다. **먼저 맞은 갈래가 걸어둔 기절을 신호로 삼아** 중복을 막는다(`bAlreadyStunned`면 매혹 건너뜀) — 전방향 하트발사의 "기절 중 매혹 중복 축적 방지"와 같은 방식. 두 갈래의 `PerformSnap`은 같은 `SnapDelay` 타이머라 같은 틱에 순차 실행되므로 이 검사가 성립한다. **`ApplyStun()` 호출 전에 검사해야 한다** — 부르는 순간 `bIsStunned`가 true가 되어 판정이 무의미해짐
+
+### 리본 끝자락 이동 — NavMesh가 아니라 직접 보간
+- `MoveToLocation`은 도착 시점이 들쭉날쭉해 다음 리본 타이밍이 어긋나고 NavMesh 유무에도 의존한다. `MoveDuration` 동안 `SetActorLocation(Lerp(...), bSweep=true)`로 직접 옮긴다(두번긋고 도넛장판의 상승/하강과 같은 방침)
+- 목표 지점은 스폰된 리본 액터의 `TetherRange`를 실제로 읽어 계산한다(`RibbonEndLocation`) — 길이를 바꾸면 이동 거리가 자동으로 따라온다
+- **길이/폭은 StateTree에서도 조절 가능**: Task의 `Ribbon|Override` 2개(`RibbonRangeOverride`/`RibbonHalfWidthOverride`, 음수면 BP 값 유지)를 `SpawnRibbons()`가 **`Activate()` 호출 전에** 덮어쓴다. `Activate()`가 이 값으로 표시 메시와 판정 박스를 만들기 때문에 순서가 중요하다 (Orb는 `BeginPlay`가 값을 적용해서 별도 `ApplyOverrides()`가 필요했지만, Tether는 `Activate()`가 읽으므로 스폰 직후 대입만으로 충분)
+- 높이는 이동 전 Z를 유지한다(지면 높낮이는 무시)
+
+### StateTree 배치 (미완)
+- `SmallPatternRotation` 안에 `Echidna Ribbon Pattern` Task 하나만 넣고 On State Completed → `Cooldown` 연결
+- `RibbonClass` = **`BP_EchidnaRibbon`**, `CircleZoneClass` = **`BP_EhidnaFanZone`**(넉다운 O), `ArcZoneClass`는 원하는 CC의 FanZone BP
+- `ArcYawOffset`은 **음수가 좌측**(기본 -60)
+
 ## 매혹 게이지 스택 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `LoAPlayerController.h/.cpp`, `UI/CharmGaugeWidget.h/.cpp`) — 2026-09-21
 
-### 개요 — 기존 0~10 누적 게이지를 3스택 + 공유 타이머 방식으로 전면 재설계
-- **버그였던 것(설계 미비)**: 기존 `CharmGauge`는 그냥 0~`MaxCharmGauge`(10) 사이를 클램프하며 누적만 되는 값이었고, 스택이 다 찼을 때의 디버프도 자연 감소도 전혀 구현되어 있지 않았음(CLAUDE.md에도 "매혹 게이지 가득 찼을 때의 디버프 효과 미구현"으로 TODO 남아있었음)
-- 새 설계: `MaxCharmGauge=3`(스택), `CharmGaugeStackDuration=30초`(전체 유지시간, **스택별 개별 타이머가 아니라 공유 타이머 1개**) — `AddCharmGauge(Amount)` 호출마다(기존 호출부는 그대로 재사용, 다들 Amount=1) 스택을 최대 3까지 올리고 타이머를 30초로 통째로 리셋. 예: 1스택 찍고 5초 뒤(25초 남음) 재히트하면 2스택+타이머 다시 30초로 초기화 — 유저 스펙 그대로 구현
-- 타이머가 다 되도록 재히트가 없으면 `ClearCharmGauge()`가 스택을 한 번에 0으로 되돌림(스택을 1개씩 까는 방식이 아님)
-- `bIsCharmed`(3스택 도달 시 true) + `FOnCharmedChanged` 델리게이트 신설 — `AddCharmGauge`가 3스택에 도달하는 "그 순간"에만 브로드캐스트(이미 3스택인 채로 재히트해서 타이머만 갱신되는 경우는 중복 브로드캐스트 안 함), `ClearCharmGauge`가 0으로 돌아가는 순간 false로 브로드캐스트
+### 개요 — 기존 0~10 누적 게이지를 3스택 + 스택 단위 감소 방식으로 전면 재설계
+- **버그였던 것(설계 미비)**: 기존 `CharmGauge`는 그냥 0~`MaxCharmGauge`(10) 사이를 클램프하며 누적만 되는 값이었고, 스택이 다 찼을 때의 디버프도 자연 감소도 전혀 구현되어 있지 않았음
+- 현재 설계: `MaxCharmGauge=3`(스택), `CharmGaugeStackDuration=30초`(**1스택이 빠지는 간격**), `CharmedDuration=5초`(매혹 상태 지속시간)
+- **스택 감소는 1개씩** (`DecayCharmGauge`, 루핑 타이머): 2스택이면 30초 뒤 1스택, 다시 30초 뒤 0스택. `AddCharmGauge()`로 재히트하면 이 타이머가 처음부터 다시 갱신됨
+  - **버그였던 것**: 예전엔 `ClearCharmGauge()`가 스택이 몇 개든 30초 뒤 한 번에 전부 0으로 밀어버렸음(`SetTimer(..., false)` 단발 + 전체 초기화). 루핑 타이머 + 1씩 감소로 교체
+- **매혹 상태는 `CharmedDuration`(5초)만 지속**: 3스택 도달 → `bIsCharmed=true` + `OnCharmedChanged(true)` 브로드캐스트 + 스택 감소 타이머 정지 + 5초 타이머 시작 → `EndCharm()`이 `bIsCharmed=false` 브로드캐스트하고 **스택을 0으로 통째 초기화**
+  - 매혹 중 `AddCharmGauge()`는 **맨 앞에서 그냥 return** — 재히트로 5초가 연장되면 "매혹은 5초만"이 깨지고, 스택도 이미 최대라 할 일이 없음
+- `FOnCharmedChanged` 델리게이트는 3스택에 "도달하는 그 순간"과 `EndCharm()`에서만 브로드캐스트되므로 중복 호출이 없음
 
 ### 매혹 상태 — "조종 불가 + 무작위 이동/스킬 사용" (`ALoAPlayerController::OnPlayerCharmedChanged`)
 - 넉다운/경직/기절과 달리 **완전히 멈추는 게 아니라 캐릭터가 제멋대로 움직이고 스킬을 씀** — 그래서 `IsActionLocked()`(Tick 맨 위에서 이동 처리 자체를 건너뛰는 조건)에는 **일부러 안 넣음**. 매혹 중에도 Tick의 `bAutoMoving` 처리 경로는 정상 작동해야 무작위 이동이 먹히기 때문
 - 대신 `OnInputStarted`/`OnSetDestinationTriggered`/`OnSkillKeyDown`/`OnSkillKeyHeld`/`OnDashInput` 등 **실제 플레이어 입력이 들어오는 지점마다** `Char->IsCharmed()`를 개별 체크해서 진짜 입력만 씹음 — "이동 처리 자체는 살아있어야 하지만 플레이어가 그 이동을 지시할 순 없어야 한다"는 요구사항을 이렇게 분리해서 만족시킴
-- `OnPlayerCharmedChanged(true)`: 그 즉시 무작위 행동 1회 실행 + `CharmActionInterval`(기본 1.5초)마다 반복하는 타이머 시작. `false`: 타이머 정지, 붙잡고 있던 스킬 슬롯 있으면 떼기
-- `PerformRandomCharmAction()`: ①실제 클릭 이동과 동일한 매커니즘(`bAutoMoving`+`CachedDestination`)으로 캐릭터 주변 `CharmWanderRadius`(기본 400cm) 안의 무작위 지점을 목표로 설정 ②Q~F(슬롯 0~7) 중 무작위 슬롯 하나를 `SkillManager->HandleKeyDown()`으로 직접 눌러서(컨트롤러의 `OnSkillKeyDown` 래퍼를 거치지 않음 — 그 래퍼는 `IsCharmed()`면 막아버리므로 매혹 스스로의 행동은 SkillManager를 직접 호출해야 함) 0.15~0.6초 무작위 홀드 후 자동으로 뗌(`ReleaseCharmSkill`)
-- 마나 부족 등으로 실제 발동에 실패해도 그냥 조용히 무시됨(SkillManager 자체 검증에 맡김) — "멋대로 스킬을 소모"의 단순한 구현
+- `OnPlayerCharmedChanged(true)`: 그 즉시 무작위 행동 1회 실행 + `CharmActionInterval`(기본 0.8초)마다 반복하는 타이머 시작. `false`: 타이머 2개 정지, 붙잡고 있던 스킬 슬롯 있으면 떼기
+- `PerformRandomCharmAction()` — 매 틱 순서대로:
+  1. **스킬을 붙잡고 있으면(`CharmActiveSkillSlot >= 0`) 그대로 return.** 여기서 매 틱 이동 목표를 덮어쓰면 사거리 밖 Cast 스킬의 `ForceMoveTo`와 싸워서 영원히 사거리에 못 들어간다 — 붙잡는 동안은 스킬이 이동을 주도하게 둔다
+  2. 실제 클릭 이동과 동일한 매커니즘(`bAutoMoving`+`CachedDestination`)으로 `CharmWanderRadius`(기본 400cm) 안 무작위 지점을 목표로 설정
+  3. 슬롯 0~7 중 **`IsSlotAssigned() && !IsSlotOnCooldown()`인 것만 모아서** 그 중 하나를 고름 → `SkillManager->HandleKeyDown()` 직접 호출 (컨트롤러의 `OnSkillKeyDown` 래퍼는 `IsCharmed()`면 막아버리므로 매혹 스스로의 행동은 SkillManager를 직접 호출해야 함)
+  4. `GetSlotSkillData()`로 타입을 보고 **실제 발동에 필요한 만큼** 붙잡음 — Cast는 `CastTime+0.3`, Charge는 `ChargeMaxTime+0.3`, Hold는 `HoldMaxTime`의 50~100%, Instant는 0.1초
+- **버그였던 것**: 예전엔 `FMath::RandRange(0,7)`로 쿨타임을 안 보고 뽑고 0.15~0.6초만 붙잡았음. 스킬 쿨타임이 1~3초이던 시절엔 대충 맞았지만 실제 로아 쿨타임(10~30초)으로 바꾼 뒤로는 ①뽑은 슬롯이 대부분 쿨 중이라 불발되고 ②어쩌다 Cast를 뽑아도 0.6초 만에 떼버려서 캐스팅이 취소만 되고 쿨타임만 날아감 → 매혹이 거의 무해해졌다. "쓸 수 있는 것만 고르고, 나갈 만큼 붙잡는다"로 고침
+- 매혹 중엔 실제 키 입력이 전부 차단되므로 `Tick`에서 `CharmActiveSkillSlot`에 대해 `HandleKeyHeld()`를 대신 흘려준다 — 사거리 밖 Cast의 진입 판정과 Hold 스킬의 지속 누적이 이 호출에 의존
+- 마나 부족 등으로 실제 발동에 실패해도 그냥 조용히 무시됨(SkillManager 자체 검증에 맡김)
 
 ### 머리 위 UI — 연꽃 배경 제거 + 120도 부채꼴(파이) 3등분, 흑백/컬러 겹침 (`UCharmGaugeWidget`, 텍스처/위젯 전부 Unreal MCP로 직접 작업)
 - **배경 제거**: numpy 없이 순수 PIL로 처리 — 원본 사진은 배경(똥장판 등 어두운 잎/암전)이 전부 어둡고(V 0~0.2) 꽃만 밝아서(V 0.5~1.0) 값(Value) 채널 기준 스무스스텝(0.25~0.45 사이 페더링) 알파를 만들고 `GaussianBlur(1.2)`로 경계를 살짝 부드럽게 처리 — 별도 세그멘테이션 모델(rembg 등 미설치) 없이도 히스토그램이 두 덩어리로 확실히 갈려서(중간값 픽셀이 거의 없음) 깔끔하게 분리됨(`flower_cutout.png`로 결과 확인)
@@ -442,6 +602,71 @@
 - 이 프로젝트의 스킬 슬롯 쿨타임 UI는 **재사용 함수가 아니라 슬롯마다 Event Tick에 하드코딩된 노드 뭉치**임 (`RefreshingSlot`/`Slot Images` 배열은 드래그앤드랍 아이콘 갱신용 별개 시스템, Q~F 전용) — 새 슬롯 UI 추가할 땐 기존 슬롯(대시)의 Tick 체인을 통째로 복사해서 슬롯번호만 바꾸는 게 이 코드베이스의 기존 패턴
 - **HorizontalBox 자동 중앙정렬**: 부모 Canvas 슬롯에 `Size To Content` + `Alignment(0.5,0.5)`를 걸면, 자식(Border_Dash/Border_GetUp) 중 Visibility가 **Collapsed**인 것은 레이아웃에서 완전히 빠지므로 1개만 보일 때 자동으로 정중앙에 옴 (Hidden은 자리를 계속 차지하니 안 됨). 자식 크기는 각각 `SizeBox`로 Width/Height Override 고정 — Auto로 두면 아이콘 텍스처 원본 해상도 그대로 desired size로 잡혀서 화면을 뒤덮을 만큼 커짐
 - **버그였던 것 (Q~F 아이콘이 전부 흰 박스로 나옴)**: Construct 그래프에서 기상기 아이콘 초기화 `Branch`(아이콘 유효성 체크)의 **True 쪽 체인 끝이 `Delay` 노드로 연결이 안 되어 있어서**, DT_Skills에 아이콘이 있어 True로 빠지는 경우 그 뒤에 있는 Q~F 아이콘 로딩 루프 전체가 실행되지 않음 (False만 연결해뒀던 게 원인 — True/False 둘 다 결국 같은 `Delay`로 합류하도록 고쳐야 함). Tick 이벤트 안에서는 **브레이크포인트가 정상 작동 안 할 때가 있어서**(에디터가 멈춘 채 진행 안 됨) True/False 양쪽에 각각 다른 문구 찍는 `Print String`으로 대체 디버깅
+
+## 데미지/HP 밸런스 (2026-09-22)
+
+### 기준값
+| 항목 | 값 | 실제 저장 위치 |
+|---|---|---|
+| 플레이어 최대 HP | 100,000 | `DA_Sorceress.MaxHP` |
+| 플레이어 AttackPower | 35,000 | `DA_Sorceress.AttackPower` |
+| 보스 최대 HP | 21,000,000 | `BP_Echidna` CDO |
+| 보스 체력 줄 | 210 (에키드나 2관문 **솔로** 기준, 다인 하드는 285) | `BP_Echidna` CDO |
+| 1줄당 HP | 100,000 = 플레이어 풀피 1개분 | — |
+| 거울 카운터 발동 줄 | 155 (285줄 기준 210줄을 솔로로 환산) | `BP_Echidna` CDO `BigPatternThresholds` |
+
+⚠️ `BigPatternThresholds`의 `TriggerLine`은 **반드시 `TotalLines`보다 작아야 한다.** 285→210으로 줄일 때 트리거가 210에 그대로 남아 있어서 풀피에서 대형 패턴이 즉시 발동하던 버그가 있었음.
+
+스킬 데미지 = `AttackPower × DamageCoefficient`. 킬타임 조절은 **`AttackPower` 하나만** 만지면 전체가 비례해 움직인다.
+
+### 스킬 계수/쿨타임 (`DT_Skills`) — 쿨타임은 실제 로아 소서리스 10레벨 값 그대로
+| 스킬 | 계수 | 데미지 | 쿨타임 |
+|---|---|---|---|
+| 기본공격 | 0.35 | 12,250 | 0.8s |
+| 블레이즈 | 2.0 | 70,000 | 10s |
+| 돌풍 | 4.0 | 140,000 | 14s |
+| 인페르노 | 6.0 | 210,000 | 14s |
+| 아이스 에로우 | 5.0 | 175,000 | 22s |
+| 혹한의 부름 | 8.0 | 280,000 | 24s |
+| 익스플로전 | 9.0 | 315,000 | 28s |
+| 천벌 | 14.0 | 490,000 | 28s |
+| 종말의 날 | 25.0 | 875,000 | 30s |
+
+예상 킬타임: 이론 DPS 약 118,000 → 완벽 플레이 **3분**, 패턴 회피 포함 실전 **약 4분**
+
+### "스킬 점유율" — 로테이션이 비는지 판단하는 기준
+스킬마다 `(시전시간 + SkillPostDelay) ÷ 쿨타임`을 구해 전부 더한 값.
+- 이 프로젝트 현재 합계 **약 0.35** → 전체 시간의 65%는 스킬을 못 씀
+- 실제 로아 소서리스도 **약 0.52**로 100%가 아님 — 빈 시간을 기본공격·이동·패턴 회피가 채우는 게 정상이고, 그게 "정갈하게 흘러가는" 상태
+- **그래서 기본공격 계수가 민감함**: 올리면 "좌클릭 연타가 최적"이 되어버린다. 0.35는 기본공격이 전체 딜의 6~7%를 차지하도록 역산한 값
+
+### 보스 패턴 데미지 (플레이어 100,000 기준)
+| 패턴 | 저장 위치 | 값 | 비율 |
+|---|---|---|---|
+| 4거울 레이저 (1틱) | `ST_Echidna` → `4Mirror` | 4,000 | 4% (4틱 풀히트 16%) |
+| 8거울 레이저 (1틱) | `ST_Echidna` → `8Mirror` | 3,000 | 3% |
+| 개인 유도레이저 | `ST_Echidna` → `8Mirror` GuidedDamage | 5,000 | 5% |
+| 뒤로 빠지며 좌우장판 | `ST_Echidna` → `RetreatFan` | 12,000 | 12% |
+| 끌고간후 장판 | `ST_Echidna` → `DragFan` | 15,000 | 15% |
+| 두번긋고 도넛장판 | `ST_Echidna` → `DonutSlash` | 15,000 | 15% |
+| 전방향 하트발사 | `ST_Echidna` → `HeartBurst` HeartDamage | 10,000 | 10% (+3초 기절) |
+| 똥장판 틱 | `ABP_HexTile` CDO `PoopTickDamage` | 2,000/초 | 2%/초 |
+
+설계 의도: 짤패턴 **5~8대 맞으면 사망** (로아 짤패턴 체감과 동일)
+
+### ⚠️ C++ 기본값은 전부 에셋에 덮어써진다
+밸런스 수치를 바꿀 때 **C++ 헤더만 고치면 아무 일도 일어나지 않는다.** 실제로 동작하는 값은 전부 에셋에 직렬화되어 있음:
+
+| C++ 기본값 | 실제로 읽히는 곳 |
+|---|---|
+| `CharacterDataAsset.h` MaxHP/AttackPower | `DA_Sorceress` (`PostInitializeComponents`가 덮어씀) |
+| `EchidnaBoss.h` MaxHP/TotalLines | `BP_Echidna` CDO **+ 레벨 배치 인스턴스의 자체 오버라이드** |
+| `HexTile.h` PoopTickDamage | `ABP_HexTile` CDO (`AHexArena.TileClass`로 지정돼 있음) |
+| `EchidnaBossStateTreeUtility.h` 각 Task의 `Damage` | `ST_Echidna`의 Task 인스턴스 데이터 |
+| `FSkillData` 구조체 기본값 | `DT_Skills` 행 — 단 `SkillRowName`이 비어 있으면 DT 로드에 실패하고 **구조체 기본값이 조용히 그대로 남음** (기본공격이 이 상태로 계수 1.0 = 모든 스킬보다 강했던 적 있음) |
+
+- **레벨에 배치된 액터는 CDO를 바꿔도 자체 오버라이드가 우선**한다. 프로퍼티 우클릭 → Reset to Default로 오버라이드를 지워야 CDO를 따름
+- **StateTree Task 인스턴스 값은 Unreal MCP로 쓸 수 없다** (읽기 전용 툴만 제공) — 에디터에서 직접 입력해야 함. 읽기는 `StateTreeTools.get_root_states`/`get_children`/`get_tasks`로 가능
 
 ## 구현된 기능 (2026-07-03 기준)
 - [x] 마우스 클릭 이동
@@ -486,8 +711,17 @@
 - [x] 기절(스턴) 시스템 — `ALoACharacter::ApplyStun(Duration)`, 경직과 같은 방식이지만 지속시간을 호출마다 지정, 전방향 하트발사에 연결
 - [x] 에키드나 보스 짤패턴 "전방향 하트발사"(단순화판, 잡기/씨앗 제외) — 2초 예고(보스 정지) → 2초간 0.3초 간격으로 완전 전방향(0~360도 랜덤) 랜덤 개수 하트 발사, 피격 시 데미지+3초 기절+매혹 1스택 (C++ 구현 완료, StateTree `ST_Echidna` 에디터 배치는 미완 — 위 섹션 참조)
 - [ ] Border_GetUp UI 최종 위치/스타일 다듬기
-- [ ] DT_Skills에 `InstantGetUp` 행 Cooldown/Icon 값 채워졌는지 재확인 (비어있으면 쿨타임 무력화됨)
-- [ ] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 필요 — `SmallPatternRotation` 안에 4거울과 나란히 추가, `FanZoneClass`(BP_EchidnaFanZone 등)/Boss/AIController 바인딩, On State Completed → `Cooldown` 연결
+- [x] DT_Skills `InstantGetUp` 행 — Cooldown 15초 + Icon 채워짐 확인 완료 (2026-09-22)
+- [x] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 완료 (`RetreatFan` State)
+- [x] 데미지/HP 밸런스 1차 세팅 완료 — 위 "데미지/HP 밸런스" 섹션 참조 (보스 2,100만/210줄, AttackPower 35,000, 스킬 쿨타임을 실제 로아 소서리스 값으로 교체, 기본공격 행 신설)
+- [x] 보스 HP UI — 로아식 줄별 색상 바(현재 줄 잔량 + 뒤에 다음 줄 색), `UBossHPWidget` + `WBP_BossHP` 생성/컴파일/저장, `BP_LoAPlayerController.BossHPWidgetClass` 할당까지 완료 (PIE 육안 확인만 남음)
+- [x] 캐스팅/차지/홀딩 진행바 UI — `UCastBarWidget` + `WBP_CastBar` 생성/컴파일/저장 완료. **`CastBarWidgetClass`/`BossHPWidgetClass`는 에디터에서 직접 할당 필요** (MCP CDO 쓰기가 런타임에 반영 안 됨 — 위 UI 섹션 경고 참조)
+- [x] 에키드나 보스 짤패턴 "백스탭 후 하트발사" — 플레이어를 바라본 채 후방 백스텝 → 착지 무렵 정면 부채꼴로 하트 4개 발사, 피격 시 데미지+기절+매혹 1스택 (C++ 구현 완료, StateTree `ST_Echidna` 배치는 미완 — 위 섹션 참조)
+- [x] 에키드나 보스 짤패턴 "정면 리본 공격" — 2갈래 리본 → 피격 시 기절+매혹+원형장판(넉다운) / 빗나가면 끝자락 이동 후 재시도 / 둘 다 빗나가면 좌측 전방 호. C++ + `BP_EchidnaRibbon` 생성 완료, StateTree 배치는 미완 — 위 섹션 참조
+- [x] 에키드나 보스 짤패턴 "되돌아오는 구체(자야패턴)" — 플레이어 조준 2회 → 백스텝 → 부채꼴 4개, 총 6개가 전부 왔던 경로로 되돌아옴(돌아올 때 재피격 가능). C++ + `BP_EchidnaOrb` 생성 완료, StateTree 배치는 미완 — 위 섹션 참조
+- [x] 보스 피격 데미지 폰트 — `ADamageNumberActor`(월드 액터) + `WBP_DamageNumber`/`BP_DamageNumber` 생성·연결 완료. 3초 페이드, 최신 타격이 앞(`TranslucentSortPriority`)
+- [x] 보스 앞/뒤 방향 표시 — `UBossDirectionIndicatorComponent`, 정면은 가운데 뾰족한 호/후방은 매끈한 호
+- [x] 끌어당기기(`ApplyPull`) 2단계 재구현 — 멈춤 → 강제 드래그 → 패턴 끝날 때까지 속박
 - [ ] `ST_Echidna`의 `Echidna Donut Slash Pattern` Task에서 `SlashZoneClass`→`BP_EchidnaFanZone_Stagger`, `OuterDonutClass`→`BP_EchidnaFanZone_KnockdownCharm`으로 재할당 필요 (Task 배치·`FanZoneClass`·Boss/AIController 바인딩은 이미 완료, BP 2개도 이미 생성·설정 완료 — 드롭다운 재할당만 남음)
 - [x] StateTree `ST_Echidna`에 `Echidna Heart Burst Pattern` Task는 이미 배치됨 — **다만 `Heart Class`가 `BP_EchidnaHeart`가 아니라 네이티브 `EchidnaHeartActor`로 잘못 바인딩되어 있음, 반드시 `Heart Class`를 `/Game/LostArk/Raid/Echidna/Pattern/BP_EchidnaHeart`로 바꿔야 함** (StateTree 필드 재할당은 MCP로 못 하는 부분이라 에디터에서 직접 드롭다운 변경 필요)
 - [ ] `HeartMeshComp`를 `UProceduralMeshComponent`로 바꾼 뒤 `BP_EchidnaHeart`를 다시 열어서 컴파일 에러/경고 없는지 확인 필요 — 예전(Plane 스프라이트 시절)에 이 컴포넌트에 걸어둔 Material/Rotation 오버라이드들은 컴포넌트 타입 자체가 바뀌면서 무효화됐을 가능성이 있음(에디터가 자동으로 정리하거나, 혹은 에러를 띄울 수 있음) — 컴파일 후 한 번은 반드시 직접 열어서 확인할 것

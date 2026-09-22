@@ -41,6 +41,10 @@ public:
     // SkillManagerComponent가 이동 입력 시 강제 취소할 때 호출
     virtual void ForceCancel(AActor* Owner);
 
+    /** 캐스팅/차지 진행 상황 — 진행 중일 때만 true를 반환하고 경과/전체 시간을 채운다.
+     *  즉발·홀딩처럼 "차오르는 진행도" 개념이 없는 타입은 기본 구현 그대로 false. 캐스트바 UI가 이걸로 폴링한다 */
+    virtual bool GetCastProgress(float& OutElapsed, float& OutTotal) const { return false; }
+
 protected:
 
     // 실제 스킬 효과 발동 (서브클래스에서 오버라이드)

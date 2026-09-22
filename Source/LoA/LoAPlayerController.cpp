@@ -7,6 +7,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "LoACharacter.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "EnhancedInputComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -15,6 +16,10 @@
 #include "Engine/LocalPlayer.h"
 #include "LoA.h"
 #include "Skill/SkillManagerComponent.h"
+#include "Raid/EchidnaBoss.h"
+#include "Kismet/GameplayStatics.h"
+#include "UI/BossHPWidget.h"
+#include "UI/CastBarWidget.h"
 #include "UI/HUD_ViewModel.h"
 #include "UI/SkillTree_ViewModel.h"
 #include "Blueprint/UserWidget.h"
@@ -102,6 +107,88 @@ void ALoAPlayerController::BeginPlay()
 			SkillTreeWidget->AddToViewport(10);
 			SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
 		}
+	}
+
+	// 보스 HP 바 — 레벨에 배치된 AEchidnaBoss를 찾아서 연결. 보스가 없는 레벨이면 위젯을 아예 만들지 않는다
+	if (BossHPWidgetClass && IsLocalController())
+	{
+		if (AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass())))
+		{
+			BossHPWidget = CreateWidget<UBossHPWidget>(this, BossHPWidgetClass);
+			if (BossHPWidget)
+			{
+				BossHPWidget->AddToViewport();
+				TrackedBoss = Boss;
+				Boss->OnHPChanged.AddUObject(this, &ALoAPlayerController::OnBossHPChanged);
+
+				// 보스가 이미 BeginPlay를 돈 경우를 위한 초기 1회 갱신.
+				// 반대로 보스가 아직이면 보스 BeginPlay의 브로드캐스트가 곧 올바른 값으로 덮어쓴다
+				OnBossHPChanged(Boss->GetHP(), Boss->MaxHP);
+
+				UE_LOG(LogTemp, Log, TEXT("[BossHP] 위젯 생성 완료"));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BossHP] CreateWidget 실패 — WBP 컴파일 에러(BindWidget 미해결) 가능성"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("[BossHP] 레벨에 AEchidnaBoss가 없어 보스 HP UI를 만들지 않음"));
+		}
+	}
+	else
+	{
+		// 이 분기가 찍히면 클래스가 아예 안 물린 것 — 로그가 통째로 없어서 원인을 못 가리던 문제를 막는다
+		UE_LOG(LogTemp, Warning, TEXT("[BossHP] 생성 건너뜀 — BossHPWidgetClass:%s, IsLocal:%d"),
+			BossHPWidgetClass ? TEXT("설정됨") : TEXT("미설정"), IsLocalController());
+	}
+
+	// 캐스팅/차지 진행바 — 만들어두고 숨겨놨다가 Tick이 진행 중일 때만 띄운다
+	if (CastBarWidgetClass && IsLocalController())
+	{
+		CastBarWidget = CreateWidget<UCastBarWidget>(this, CastBarWidgetClass);
+		if (CastBarWidget)
+		{
+			CastBarWidget->AddToViewport();
+			CastBarWidget->HideBar();
+			UE_LOG(LogTemp, Log, TEXT("[CastBar] 위젯 생성 완료"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CastBar] CreateWidget 실패 — WBP 컴파일 에러(BindWidget 미해결) 가능성"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CastBar] 생성 건너뜀 — CastBarWidgetClass:%s, IsLocal:%d"),
+			CastBarWidgetClass ? TEXT("설정됨") : TEXT("미설정"), IsLocalController());
+	}
+}
+
+void ALoAPlayerController::OnBossHPChanged(float NewHP, float NewMaxHP)
+{
+	if (!BossHPWidget || !TrackedBoss.IsValid()) return;
+
+	BossHPWidget->SetBossHP(NewHP, NewMaxHP, TrackedBoss->TotalLines);
+}
+
+void ALoAPlayerController::UpdateCastBar()
+{
+	USkillManagerComponent* SM = GetSkillManager();
+	float Elapsed = 0.f;
+	float Total = 0.f;
+	const bool bCasting = SM && SM->GetActiveCastProgress(Elapsed, Total);
+
+	if (!CastBarWidget) return;
+
+	if (bCasting)
+	{
+		CastBarWidget->SetProgress(Elapsed, Total);
+	}
+	else
+	{
+		CastBarWidget->HideBar();
 	}
 }
 
@@ -269,6 +356,10 @@ void ALoAPlayerController::PerformRandomCharmAction()
 	ALoACharacter* Char = GetPawn<ALoACharacter>();
 	if (!Char || !Char->IsCharmed()) return;
 
+	// 스킬을 붙잡고 있는 동안에는 이동 목표를 건드리지 않는다.
+	// 여기서 매 틱 목적지를 덮어쓰면 사거리 밖 Cast 스킬의 ForceMoveTo와 싸워서 영원히 사거리에 못 들어간다.
+	if (CharmActiveSkillSlot >= 0) return;
+
 	// 무작위 이동 — 실제 클릭 이동과 동일한 방식(bAutoMoving+CachedDestination)을 그대로 재사용
 	const float RandAngle = FMath::FRandRange(0.f, 2.f * PI);
 	const float RandRadius = FMath::FRandRange(CharmWanderRadius * 0.3f, CharmWanderRadius);
@@ -276,20 +367,35 @@ void ALoAPlayerController::PerformRandomCharmAction()
 	bAutoMoving = true;
 	bHoldMoving = false;
 
-	// 무작위 스킬 사용 — 이전에 붙잡고 있던 슬롯이 있으면 먼저 떼고 새로 하나(Q~F, 0~7)를 무작위로 누름
-	if (USkillManagerComponent* SM = GetSkillManager())
+	USkillManagerComponent* SM = GetSkillManager();
+	if (!SM) return;
+
+	// 쿨타임이 돌아서 실제로 나갈 수 있는 슬롯만 모은 뒤 그 중에서 고른다.
+	// 0~7에서 무작정 뽑으면 쿨타임이 10~30초인 현재 구성에서는 대부분 불발되어 매혹이 무해해진다.
+	TArray<int32, TInlineAllocator<8>> UsableSlots;
+	for (int32 Slot = 0; Slot <= 7; ++Slot)
 	{
-		if (CharmActiveSkillSlot >= 0)
+		if (SM->IsSlotAssigned(Slot) && !SM->IsSlotOnCooldown(Slot))
 		{
-			SM->HandleKeyUp(CharmActiveSkillSlot);
+			UsableSlots.Add(Slot);
 		}
-
-		CharmActiveSkillSlot = FMath::RandRange(0, 7);
-		SM->HandleKeyDown(CharmActiveSkillSlot);
-
-		const float HoldTime = FMath::FRandRange(0.15f, 0.6f);
-		GetWorldTimerManager().SetTimer(CharmSkillReleaseTimerHandle, this, &ALoAPlayerController::ReleaseCharmSkill, HoldTime, false);
 	}
+	if (UsableSlots.Num() == 0) return;
+
+	CharmActiveSkillSlot = UsableSlots[FMath::RandRange(0, UsableSlots.Num() - 1)];
+	SM->HandleKeyDown(CharmActiveSkillSlot);
+
+	// 타입별로 실제 발동에 필요한 만큼 붙잡는다 — 짧게 떼면 캐스팅이 취소만 되고 쿨타임만 날아간다
+	const FSkillData SkillData = SM->GetSlotSkillData(CharmActiveSkillSlot);
+	float HoldTime = 0.1f;
+	switch (SkillData.InputType)
+	{
+	case ESkillInputType::Cast:   HoldTime = SkillData.CastTime + 0.3f; break;
+	case ESkillInputType::Charge: HoldTime = SkillData.ChargeMaxTime + 0.3f; break;
+	case ESkillInputType::Hold:   HoldTime = FMath::FRandRange(SkillData.HoldMaxTime * 0.5f, SkillData.HoldMaxTime); break;
+	default: break;
+	}
+	GetWorldTimerManager().SetTimer(CharmSkillReleaseTimerHandle, this, &ALoAPlayerController::ReleaseCharmSkill, HoldTime, false);
 }
 
 void ALoAPlayerController::ReleaseCharmSkill()
@@ -384,9 +490,22 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	UCharacterMovementComponent* CMC = Cast<UCharacterMovementComponent>(ControlledPawn->GetMovementComponent());
 	if (!CMC) return;
 
+	// 행동불능 체크보다 먼저 — 캐스팅 도중 기절/넉다운으로 스킬이 끊겼을 때도 바가 남지 않고 사라져야 한다
+	UpdateCastBar();
+
 	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn); Char && Char->IsActionLocked())
 	{
 		return;
+	}
+
+	// 매혹 중에는 실제 키 입력이 전부 차단되므로, 붙잡고 있는 슬롯의 Held를 여기서 대신 흘려준다.
+	// 사거리 밖 Cast의 진입 판정과 Hold 스킬의 지속 누적이 이 호출에 의존한다.
+	if (CharmActiveSkillSlot >= 0)
+	{
+		if (USkillManagerComponent* SM = GetSkillManager())
+		{
+			SM->HandleKeyHeld(CharmActiveSkillSlot, DeltaSeconds);
+		}
 	}
 
 	if (bDashSuppressed)

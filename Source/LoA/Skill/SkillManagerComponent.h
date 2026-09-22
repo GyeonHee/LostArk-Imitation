@@ -98,6 +98,10 @@ public:
     UFUNCTION(BlueprintCallable, Category="Skills")
     UTexture2D* GetSlotIcon(int32 SlotIndex) const;
 
+    /** 지금 캐스팅/차지 중인 슬롯의 진행 상황을 찾아 반환 — 진행 중인 게 없으면 false.
+     *  캐스트바 UI가 매 틱 폴링한다. 스킬 잠금 시스템상 동시에 둘 이상 진행될 수 없어 첫 번째를 바로 반환 */
+    bool GetActiveCastProgress(float& OutElapsed, float& OutTotal) const;
+
     // 슬롯에 스킬이 배정되어 있는지 확인
     UFUNCTION(BlueprintPure, Category="Skills")
     bool IsSlotAssigned(int32 SlotIndex) const;

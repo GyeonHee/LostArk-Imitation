@@ -28,6 +28,7 @@ public:
 	float MoveSpeed = 600.f;
 
 	// 스킬 계수 곱셈 기준값 (스킬 데미지 = AttackPower * DamageCoefficient)
+	// 보스 HP(2100만) 대비 목표 킬타임을 조절하는 단일 다이얼 — 이 값만 올리면 전체 DPS가 비례해서 오른다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats")
-	float AttackPower = 100.f;
+	float AttackPower = 35000.f;
 };

@@ -37,6 +37,17 @@ void USkillFrostCall::OnKeyUp(AActor* Owner)
     ElapsedTime = 0.f;
 }
 
+bool USkillFrostCall::GetCastProgress(float& OutElapsed, float& OutTotal) const
+{
+    if (!bIsActive) return false;
+
+    // OnKeyHeld의 자동 종료 판정과 같은 폴백을 써야 바가 실제 지속시간과 어긋나지 않는다
+    const float MaxHold = SkillData.HoldMaxTime > 0.f ? SkillData.HoldMaxTime : 4.f;
+    OutElapsed = FMath::Clamp(ElapsedTime, 0.f, MaxHold);
+    OutTotal = MaxHold;
+    return true;
+}
+
 void USkillFrostCall::ForceCancel(AActor* Owner)
 {
     Super::ForceCancel(Owner);

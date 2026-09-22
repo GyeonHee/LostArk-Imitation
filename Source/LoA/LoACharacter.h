@@ -66,10 +66,31 @@ private:
 
 	void EndStun();
 
-	// 매혹 게이지 전체 유지시간이 끝나면 스택을 한 번에 0으로 초기화하는 타이머 — AddCharmGauge에서 재히트마다 갱신됨
+	// 끌어당기기 — 맞은 직후 멈춰 있는 동안 도는 타이머. 끝나면 실제 드래그가 시작된다
+	FTimerHandle PullHoldTimerHandle;
+
+	// 패턴이 ReleasePull()을 못 부르고 끝나버려도 영구히 묶이지 않도록 하는 안전장치
+	FTimerHandle PullSafetyTimerHandle;
+
+	bool bPullDragging = false;
+	FVector PullDestination = FVector::ZeroVector;
+	float PullSpeedCmS = 0.f;
+	float PullDragElapsed = 0.f;
+
+	void BeginPullDrag();
+	void TickPullDrag(float DeltaSeconds);
+
+	/** 드래그만 끝내고 묶인 상태(bIsPulled)는 그대로 유지 — 해제는 ReleasePull()이 담당 */
+	void FinishPullDrag();
+
+	// 스택을 하나씩 깎는 루핑 타이머 — CharmGaugeStackDuration마다 1스택씩 감소, 재히트 시 다시 처음부터 갱신됨
 	FTimerHandle CharmGaugeTimerHandle;
 
-	void ClearCharmGauge();
+	// 매혹 상태 지속 타이머 — CharmedDuration 뒤 EndCharm()이 매혹 해제 + 스택 전체 초기화
+	FTimerHandle CharmedTimerHandle;
+
+	void DecayCharmGauge();
+	void EndCharm();
 
 public:
 
@@ -81,7 +102,7 @@ public:
 	TObjectPtr<UCharacterDataAsset> CharacterData;
 
 	UPROPERTY(BlueprintReadOnly, Category="Stats")
-	float AttackPower = 100.f;
+	float AttackPower = 35000.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
 	float HP;
@@ -96,17 +117,22 @@ public:
 	float MaxMP;
 
 	// 매혹 게이지(스택) — 똥장판/에키드나 매혹 패턴에 맞을 때마다 1스택씩 쌓임(최대 MaxCharmGauge, 기본 3).
-	// 스택별 개별 타이머가 아니라 "전체 유지시간" 하나만 있음 — 맞을 때마다 CharmGaugeStackDuration(기본 30초)으로
-	// 통째로 갱신되고, 그 시간 안에 재히트가 없으면 스택 전부가 한 번에 0으로 초기화됨(AddCharmGauge/ClearCharmGauge 참조)
+	// 스택별 개별 타이머가 아니라 공용 타이머 하나가 CharmGaugeStackDuration마다 "1스택씩" 깎는다
+	// (예: 2스택 → 30초 뒤 1스택 → 다시 30초 뒤 0스택). 재히트하면 그 타이머가 처음부터 다시 갱신됨.
+	// 최대 스택에 도달하면 매혹 상태로 들어가고, 그때부터는 CharmedDuration 뒤 스택이 통째로 0이 됨(EndCharm 참조)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
 	int32 CharmGauge = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
 	int32 MaxCharmGauge = 3;
 
-	// 매혹 게이지 1스택이 유지되는 시간(초) — 재히트 시 이 시간으로 통째로 리셋됨
+	// 매혹 게이지가 1스택 줄어드는 데 걸리는 시간(초) — 재히트 시 이 시간으로 다시 갱신됨
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
 	float CharmGaugeStackDuration = 30.f;
+
+	// 최대 스택 도달로 들어간 매혹 상태가 유지되는 시간(초) — 끝나면 스택이 전부 0으로 초기화됨
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
+	float CharmedDuration = 10.f;
 
 	// 매혹 상태 여부 — CharmGauge가 MaxCharmGauge에 도달하면 true. 이 동안은 컨트롤러가 실제 플레이어 입력을
 	// 막고 대신 무작위 이동/스킬 사용을 대신 실행함 (ALoAPlayerController::Tick 참조)
@@ -148,6 +174,27 @@ public:
 	// 패턴마다 기절 시간이 다를 수 있어서
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stun")
 	bool bIsStunned = false;
+
+	// 끌려가는 중 여부 — "멈춤" 구간과 "드래그" 구간을 모두 포함한다(둘 다 조작 불가)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Pull")
+	bool bIsPulled = false;
+
+	// 끌기에 맞은 직후 제자리에 멈춰 있는 시간 (초) — 이 뒤에 실제로 끌려가기 시작한다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Pull")
+	float PullHoldDuration = 0.4f;
+
+	// 목표 지점(보스) 앞 이만큼 남기고 멈춤 (cm) — 0이면 보스와 완전히 겹쳐버린다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Pull")
+	float PullStopDistance = 200.f;
+
+	// 드래그 강제 종료 시간 (초) — 지형에 막혀 목표에 영원히 도달 못 하는 경우를 대비한 안전장치
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Pull")
+	float PullMaxDragTime = 1.5f;
+
+	// 끌려간 뒤 묶여 있는 최대 시간 (초) — 정상적으로는 패턴이 끝나며 ReleasePull()이 풀어주지만,
+	// 패턴이 비정상 종료되어 호출되지 않는 경우에도 영구 속박이 되지 않도록 하는 안전장치
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Pull")
+	float PullMaxHoldTime = 8.f;
 
 	FOnHPChanged OnHPChanged;
 	FOnMPChanged OnMPChanged;
@@ -197,8 +244,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual void RestoreMP(float Amount);
 
-	/** 매혹 게이지 스택 추가 (MaxCharmGauge에서 클램프) — 호출될 때마다 전체 유지시간이 CharmGaugeStackDuration으로
-	 * 통째로 리셋됨. MaxCharmGauge에 도달하면 IsCharmed()가 true로 바뀌고 OnCharmedChanged가 브로드캐스트됨 */
+	/** 매혹 게이지 스택 추가 (MaxCharmGauge에서 클램프) — 호출될 때마다 스택 감소 타이머가 CharmGaugeStackDuration으로
+	 * 다시 갱신됨. MaxCharmGauge에 도달하면 IsCharmed()가 true로 바뀌고 OnCharmedChanged가 브로드캐스트되며,
+	 * CharmedDuration 뒤 EndCharm()이 매혹 해제 + 스택 초기화를 한다.
+	 * 이미 매혹 상태면 아무 일도 하지 않는다 — 매혹 지속시간이 재히트로 늘어나면 안 되기 때문 */
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual void AddCharmGauge(int32 Amount);
 
@@ -211,11 +260,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
 	virtual void ApplyKnockdown(const FVector& SourceLocation);
 
-	/** TargetLocation 방향으로 수평으로 끌어당김 (예: 에키드나 "줄기" 촉수 패턴) — 넉다운과 달리 상태 전환/입력 차단 없이
-	 * 순수하게 이동만 발생. 수직 속도는 건드리지 않으므로(LaunchCharacter의 bZOverride=false) bConstrainToPlane을
-	 * 따로 풀어줄 필요 없음 */
-	UFUNCTION(BlueprintCallable, Category="Knockdown")
-	virtual void ApplyPull(const FVector& TargetLocation, float PullStrength);
+	/** 끌어당기기 (에키드나 "끌고간후 장판터지는"의 줄기 촉수) — 맞는 즉시 PullHoldDuration만큼 제자리에
+	 * 멈췄다가(발이 묶인 연출) TargetLocation 쪽으로 PullSpeed(cm/s)로 강제로 끌려간다.
+	 * 물리 임펄스가 아니라 Tick에서 위치를 직접 보간하므로 지형/속도와 무관하게 항상 목표 근처까지 확실히
+	 * 도달한다. 끌려가는 내내 IsActionLocked()가 true라 조작 불가 */
+	UFUNCTION(BlueprintCallable, Category="Pull")
+	virtual void ApplyPull(const FVector& TargetLocation, float PullSpeed);
 
 	/** 넉다운 즉시 해제 (자동 기상/즉시 기상 공통 진입점) */
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
@@ -247,9 +297,21 @@ public:
 	UFUNCTION(BlueprintPure, Category="Stun")
 	bool IsStunned() const { return bIsStunned; }
 
-	/** 넉다운·경직·기절 중 하나라도 걸려 있으면 이동/스킬 입력이 막혀야 하는 상태인지 — 컨트롤러의 입력 차단 체크에서 사용 */
+	/** 끌려간 뒤에도 유지되는 속박을 푼다 — 끌기를 건 패턴이 끝날 때(StateTree ExitState) 호출할 것.
+	 * 호출되지 않아도 PullMaxHoldTime이 지나면 자동으로 풀린다(영구 속박 방지) */
+	UFUNCTION(BlueprintCallable, Category="Pull")
+	void ReleasePull();
+
+	UFUNCTION(BlueprintPure, Category="Pull")
+	bool IsBeingPulled() const { return bIsPulled; }
+
+	/** 끌려가는 상태가 바뀔 때 호출 — 버티는/끌려가는 애니메이션은 BP에서 구현 */
+	UFUNCTION(BlueprintImplementableEvent, Category="Pull")
+	void OnPullVisualChanged(bool bPulled);
+
+	/** 넉다운·경직·기절·끌려가는 중 하나라도 걸려 있으면 이동/스킬 입력이 막혀야 하는 상태인지 — 컨트롤러의 입력 차단 체크에서 사용 */
 	UFUNCTION(BlueprintPure, Category="Stagger")
-	bool IsActionLocked() const { return bIsKnockedDown || bIsStaggered || bIsStunned; }
+	bool IsActionLocked() const { return bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled; }
 
 	/** 경직 상태가 바뀔 때 호출 — 짧은 피격 리액션 애니메이션은 BP에서 구현 */
 	UFUNCTION(BlueprintImplementableEvent, Category="Stagger")

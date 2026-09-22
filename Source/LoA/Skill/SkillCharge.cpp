@@ -33,6 +33,15 @@ void USkillCharge::OnKeyHeld(AActor* Owner, float DeltaTime)
         FString::Printf(TEXT("[차징] 차징 중... %.1f / %.1f초"), ElapsedTime, SkillData.ChargeMaxTime));
 }
 
+bool USkillCharge::GetCastProgress(float& OutElapsed, float& OutTotal) const
+{
+    if (!bIsActive || SkillData.ChargeMaxTime <= 0.f) return false;
+
+    OutElapsed = FMath::Clamp(ElapsedTime, 0.f, SkillData.ChargeMaxTime);
+    OutTotal = SkillData.ChargeMaxTime;
+    return true;
+}
+
 void USkillCharge::OnKeyUp(AActor* Owner)
 {
     if (!bIsActive) return;

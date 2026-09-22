@@ -5,6 +5,8 @@
 #include "EchidnaFanZoneActor.h"
 #include "EchidnaTetherActor.h"
 #include "EchidnaHeartActor.h"
+#include "EchidnaOrbActor.h"
+#include "LoACharacter.h"
 #include "LoA.h"
 #include "AIController.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -865,6 +867,16 @@ void FStateTreeTask_EchidnaDragFanPattern::ExitState(FStateTreeExecutionContext&
 	{
 		InstanceData.AIController->StopMovement();
 	}
+
+	// 줄기에 맞아 끌려온 대상은 장판 2개가 다 터질 때까지 묶여 있다가 여기서 풀린다.
+	// 패턴이 중간에 강제 전이되어도 반드시 풀리도록 Succeeded/Failed 구분 없이 ExitState에서 처리
+	if (InstanceData.Boss)
+	{
+		if (ALoACharacter* PlayerChar = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(InstanceData.Boss->GetWorld(), 0)))
+		{
+			PlayerChar->ReleasePull();
+		}
+	}
 }
 
 #if WITH_EDITOR
@@ -1338,6 +1350,759 @@ void FStateTreeTask_EchidnaHeartBurstPattern::ExitState(FStateTreeExecutionConte
 FText FStateTreeTask_EchidnaHeartBurstPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
 {
 	return LOCTEXT("EchidnaHeartBurstPatternDesc", "<b>Echidna Heart Burst Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+// ─── 백스탭 후 하트발사 ───────────────────────────────────────────────────────
+
+FRotator FStateTreeTask_EchidnaBackstepHeartPattern::FacePlayer(AEchidnaBoss* Boss) const
+{
+	if (!Boss)
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	FRotator AimRotation = Boss->GetActorRotation();
+
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			AimRotation = ToPlayer.GetSafeNormal().Rotation();
+		}
+	}
+
+	// 보스 모델도 같은 방향으로 즉시 돌린다 — 뒤로 밀려나는 동안에도 정면이 플레이어를 향해야
+	// 레퍼런스처럼 "물러나면서 앞으로 쏘는" 모양이 된다
+	const FRotator YawOnly(0.f, AimRotation.Yaw, 0.f);
+	Boss->SetActorRotation(YawOnly);
+	return YawOnly;
+}
+
+bool FStateTreeTask_EchidnaBackstepHeartPattern::HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const
+{
+	UWorld* World = InstanceData.Boss ? InstanceData.Boss->GetWorld() : nullptr;
+	if (!World) return false;
+
+	FHitResult Hit;
+	const FVector TraceStart = Location + FVector(0.f, 0.f, 200.f);
+	const FVector TraceEnd = Location - FVector(0.f, 0.f, 500.f);
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(InstanceData.Boss);
+
+	return World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, QueryParams);
+}
+
+void FStateTreeTask_EchidnaBackstepHeartPattern::Backstep(FInstanceDataType& InstanceData) const
+{
+	if (!InstanceData.Boss) return;
+
+	// FacePlayer로 이미 플레이어를 보고 있으므로 "정면의 반대"가 곧 플레이어 반대 방향
+	FVector Backward = -InstanceData.Boss->GetActorForwardVector();
+	Backward.Z = 0.f;
+	if (Backward.IsNearlyZero()) return;
+	Backward = Backward.GetSafeNormal();
+
+	// 착지 예상 지점에 바닥이 없으면 백스텝을 건너뛴다 — 맵 끝자락에서 떨어지지 않도록 (RetreatFan과 동일)
+	const FVector LandingPoint = InstanceData.Boss->GetActorLocation() + Backward * InstanceData.BackstepCheckDistance;
+	if (!HasGroundBelow(InstanceData, LandingPoint))
+	{
+		UE_LOG(LogLoA, Log, TEXT("[EchidnaBackstepHeart] 백스텝 취소 — 착지 예상 지점에 바닥 없음: %s"), *LandingPoint.ToString());
+		return;
+	}
+
+	const FVector LaunchVelocity = Backward * InstanceData.BackstepStrength
+		+ FVector(0.f, 0.f, InstanceData.BackstepUpwardStrength);
+	InstanceData.Boss->LaunchCharacter(LaunchVelocity, true, true);
+}
+
+void FStateTreeTask_EchidnaBackstepHeartPattern::FireFan(FInstanceDataType& InstanceData) const
+{
+	if (!InstanceData.Boss || !InstanceData.HeartClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	const int32 Count = FMath::Max(InstanceData.HeartCount, 1);
+	AController* BossController = InstanceData.Boss->GetController();
+
+	// GetActorLocation은 캡슐 "중심"이라 그대로 쓰면 하트가 떠 보인다 — 발밑으로 내린 뒤 발사 높이를 더한다
+	FVector Origin = InstanceData.Boss->GetActorLocation();
+	Origin.Z -= InstanceData.Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	Origin.Z += InstanceData.HeartFireHeight;
+
+	const float HalfSpread = InstanceData.FanSpreadAngle * 0.5f;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		// 1개면 정면 하나, 2개 이상이면 [-절반, +절반] 구간에 균등 분포 (양 끝이 항상 부채꼴 경계)
+		const float YawOffset = (Count > 1)
+			? FMath::Lerp(-HalfSpread, HalfSpread, static_cast<float>(i) / static_cast<float>(Count - 1))
+			: 0.f;
+
+		const FRotator HeartRotation(0.f, InstanceData.BaseAimRotation.Yaw + YawOffset, 0.f);
+		const FVector Direction = HeartRotation.Vector();
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = InstanceData.Boss;
+		AEchidnaHeartActor* Heart = World->SpawnActor<AEchidnaHeartActor>(
+			InstanceData.HeartClass, Origin, HeartRotation, SpawnParams);
+
+		if (Heart)
+		{
+			Heart->Launch(Direction, BossController, InstanceData.HeartSpeed, InstanceData.HeartDamage,
+				InstanceData.HeartStunDuration, InstanceData.HeartCharmGaugeAmount);
+		}
+		else
+		{
+			UE_LOG(LogLoA, Warning, TEXT("[EchidnaBackstepHeart] Heart SpawnActor 실패 (YawOffset=%.1f)"), YawOffset);
+		}
+	}
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaBackstepHeartPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (!InstanceData.Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaBackstepHeart] Boss 미바인딩 — 패턴 실패"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!InstanceData.HeartClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaBackstepHeart] HeartClass 미할당 — 패턴 실패"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	InstanceData.BaseAimRotation = FacePlayer(InstanceData.Boss);
+	Backstep(InstanceData);
+
+	InstanceData.Phase = EEchidnaBackstepHeartPhase::Backstep;
+	InstanceData.PhaseElapsed = 0.f;
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaBackstepHeartPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.PhaseElapsed += DeltaTime;
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaBackstepHeartPhase::Backstep:
+	{
+		// 밀려나는 동안에도 계속 플레이어를 바라본다 — 발사 직전의 이 값이 그대로 부채꼴 기준선이 된다
+		InstanceData.BaseAimRotation = FacePlayer(InstanceData.Boss);
+
+		if (InstanceData.PhaseElapsed >= InstanceData.BackstepDuration)
+		{
+			FireFan(InstanceData);
+			InstanceData.Phase = EEchidnaBackstepHeartPhase::Fire;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaBackstepHeartPhase::Fire:
+	{
+		if (InstanceData.PhaseElapsed >= InstanceData.FireLingerDuration)
+		{
+			InstanceData.Phase = EEchidnaBackstepHeartPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaBackstepHeartPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaBackstepHeartPatternDesc", "<b>Echidna Backstep Heart Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+// ─── 되돌아오는 구체 ─────────────────────────────────────────────────────────
+
+FRotator FStateTreeTask_EchidnaReturningOrbPattern::FacePlayer(AEchidnaBoss* Boss) const
+{
+	if (!Boss)
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	FRotator AimRotation = Boss->GetActorRotation();
+
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			AimRotation = ToPlayer.GetSafeNormal().Rotation();
+		}
+	}
+
+	const FRotator YawOnly(0.f, AimRotation.Yaw, 0.f);
+	Boss->SetActorRotation(YawOnly);
+	return YawOnly;
+}
+
+bool FStateTreeTask_EchidnaReturningOrbPattern::HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const
+{
+	UWorld* World = InstanceData.Boss ? InstanceData.Boss->GetWorld() : nullptr;
+	if (!World) return false;
+
+	FHitResult Hit;
+	const FVector TraceStart = Location + FVector(0.f, 0.f, 200.f);
+	const FVector TraceEnd = Location - FVector(0.f, 0.f, 500.f);
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(InstanceData.Boss);
+
+	return World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, QueryParams);
+}
+
+void FStateTreeTask_EchidnaReturningOrbPattern::Backstep(FInstanceDataType& InstanceData) const
+{
+	if (!InstanceData.Boss) return;
+
+	FVector Backward = -InstanceData.Boss->GetActorForwardVector();
+	Backward.Z = 0.f;
+	if (Backward.IsNearlyZero()) return;
+	Backward = Backward.GetSafeNormal();
+
+	const FVector LandingPoint = InstanceData.Boss->GetActorLocation() + Backward * InstanceData.BackstepCheckDistance;
+	if (!HasGroundBelow(InstanceData, LandingPoint))
+	{
+		UE_LOG(LogLoA, Log, TEXT("[EchidnaReturningOrb] 백스텝 취소 — 착지 예상 지점에 바닥 없음: %s"), *LandingPoint.ToString());
+		return;
+	}
+
+	const FVector LaunchVelocity = Backward * InstanceData.BackstepStrength
+		+ FVector(0.f, 0.f, InstanceData.BackstepUpwardStrength);
+	InstanceData.Boss->LaunchCharacter(LaunchVelocity, true, true);
+}
+
+void FStateTreeTask_EchidnaReturningOrbPattern::ThrowOrb(FInstanceDataType& InstanceData, float YawDeg) const
+{
+	if (!InstanceData.Boss || !InstanceData.OrbClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	// GetActorLocation()은 캡슐 중심이라 발밑으로 내린 뒤 발사 높이를 더한다 —
+	// 안 맞추면 구체가 플레이어 위를 그냥 지나간다(하트발사에서 이미 겪은 문제)
+	FVector Origin = InstanceData.Boss->GetActorLocation();
+	Origin.Z -= InstanceData.Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	Origin.Z += InstanceData.OrbSpawnHeight;
+
+	const FRotator OrbRotation(0.f, YawDeg, 0.f);
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	if (AEchidnaOrbActor* Orb = World->SpawnActor<AEchidnaOrbActor>(
+		InstanceData.OrbClass, Origin, OrbRotation, SpawnParams))
+	{
+		// BeginPlay가 이미 BP 기본값을 적용한 뒤라, 오버라이드는 여기서 덮어써야 한다 (음수는 무시됨)
+		Orb->ApplyOverrides(InstanceData.OrbVisualScaleOverride, InstanceData.OrbCollisionRadiusOverride,
+			InstanceData.OrbSpeedOverride, InstanceData.OrbMaxRangeOverride);
+
+		Orb->Launch(OrbRotation.Vector(), InstanceData.Boss->GetController(), InstanceData.OrbDamage);
+		InstanceData.SpawnedOrbs.Add(Orb);
+	}
+	else
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaReturningOrb] Orb SpawnActor 실패 (Yaw=%.1f)"), YawDeg);
+	}
+}
+
+void FStateTreeTask_EchidnaReturningOrbPattern::ThrowFan(FInstanceDataType& InstanceData) const
+{
+	const int32 Count = FMath::Max(InstanceData.FanOrbCount, 1);
+	const float HalfSpread = InstanceData.FanSpreadAngle * 0.5f;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		// 1개면 정면, 2개 이상이면 [-절반, +절반]에 균등 분포 (양 끝이 항상 부채꼴 경계)
+		const float YawOffset = (Count > 1)
+			? FMath::Lerp(-HalfSpread, HalfSpread, static_cast<float>(i) / static_cast<float>(Count - 1))
+			: 0.f;
+
+		ThrowOrb(InstanceData, InstanceData.BaseAimRotation.Yaw + YawOffset);
+	}
+}
+
+bool FStateTreeTask_EchidnaReturningOrbPattern::AreOrbsFinished(const FInstanceDataType& InstanceData) const
+{
+	for (const TObjectPtr<AEchidnaOrbActor>& Orb : InstanceData.SpawnedOrbs)
+	{
+		if (Orb && !Orb->IsFinished())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaReturningOrbPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.SpawnedOrbs.Reset();
+
+	if (!InstanceData.Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaReturningOrb] Boss 미바인딩 — 패턴 실패"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!InstanceData.OrbClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaReturningOrb] OrbClass 미할당 — 패턴 실패"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	// 1번째 — 그 시점의 플레이어 방향으로
+	const FRotator Aim = FacePlayer(InstanceData.Boss);
+	ThrowOrb(InstanceData, Aim.Yaw);
+
+	InstanceData.Phase = EEchidnaReturningOrbPhase::Throw1;
+	InstanceData.PhaseElapsed = 0.f;
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaReturningOrbPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.PhaseElapsed += DeltaTime;
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaReturningOrbPhase::Throw1:
+	{
+		if (InstanceData.PhaseElapsed >= InstanceData.ThrowInterval)
+		{
+			// 2번째도 "그 시점의" 플레이어를 다시 조준 — 앞의 두 개는 플레이어를 쫓아간다
+			const FRotator Aim = FacePlayer(InstanceData.Boss);
+			ThrowOrb(InstanceData, Aim.Yaw);
+
+			InstanceData.Phase = EEchidnaReturningOrbPhase::Throw2;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaReturningOrbPhase::Throw2:
+	{
+		if (InstanceData.PhaseElapsed >= InstanceData.ThrowInterval)
+		{
+			FacePlayer(InstanceData.Boss);
+			Backstep(InstanceData);
+
+			InstanceData.Phase = EEchidnaReturningOrbPhase::Backstep;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaReturningOrbPhase::Backstep:
+	{
+		// 밀려나는 동안에도 계속 플레이어를 바라본다 — 발사 직전 값이 그대로 부채꼴 기준선이 된다
+		InstanceData.BaseAimRotation = FacePlayer(InstanceData.Boss);
+
+		if (InstanceData.PhaseElapsed >= InstanceData.BackstepDuration)
+		{
+			ThrowFan(InstanceData);
+
+			InstanceData.Phase = EEchidnaReturningOrbPhase::WaitReturn;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaReturningOrbPhase::WaitReturn:
+	{
+		// 지형에 끼어 영영 안 돌아오는 구체가 있어도 패턴이 멈추지 않도록 상한을 둔다
+		if (AreOrbsFinished(InstanceData) || InstanceData.PhaseElapsed >= InstanceData.MaxWaitDuration)
+		{
+			InstanceData.Phase = EEchidnaReturningOrbPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaReturningOrbPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaReturningOrbPatternDesc", "<b>Echidna Returning Orb Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+// ─── 정면 리본 공격 ──────────────────────────────────────────────────────────
+
+FRotator FStateTreeTask_EchidnaRibbonPattern::FacePlayer(AEchidnaBoss* Boss) const
+{
+	if (!Boss)
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	FRotator AimRotation = Boss->GetActorRotation();
+
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			AimRotation = ToPlayer.GetSafeNormal().Rotation();
+		}
+	}
+
+	const FRotator YawOnly(0.f, AimRotation.Yaw, 0.f);
+	Boss->SetActorRotation(YawOnly);
+	return YawOnly;
+}
+
+FVector FStateTreeTask_EchidnaRibbonPattern::GetBossFeetLocation(const AEchidnaBoss* Boss) const
+{
+	if (!Boss)
+	{
+		return FVector::ZeroVector;
+	}
+
+	// GetActorLocation()은 캡슐 중심이라 그대로 쓰면 장판/리본이 공중에 떠 보인다
+	FVector Feet = Boss->GetActorLocation();
+	Feet.Z -= Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	return Feet;
+}
+
+void FStateTreeTask_EchidnaRibbonPattern::SpawnRibbons(FInstanceDataType& InstanceData) const
+{
+	InstanceData.SpawnedRibbons.Reset();
+
+	if (!InstanceData.Boss || !InstanceData.RibbonClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	const FVector Origin = GetBossFeetLocation(InstanceData.Boss);
+	AController* BossController = InstanceData.Boss->GetController();
+
+	const int32 Count = FMath::Max(InstanceData.RibbonCount, 1);
+	const float HalfSpread = InstanceData.RibbonSpreadAngle * 0.5f;
+
+	float LongestRange = 0.f;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		const float YawOffset = (Count > 1)
+			? FMath::Lerp(-HalfSpread, HalfSpread, static_cast<float>(i) / static_cast<float>(Count - 1))
+			: 0.f;
+
+		const FRotator SpawnRotation(0.f, InstanceData.BaseAimRotation.Yaw + YawOffset, 0.f);
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = InstanceData.Boss;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AEchidnaTetherActor* Ribbon = World->SpawnActor<AEchidnaTetherActor>(
+			InstanceData.RibbonClass, Origin, SpawnRotation, SpawnParams);
+
+		if (Ribbon)
+		{
+			// Activate()가 이 값들로 표시 메시와 판정 박스를 만들므로 **반드시 그 전에** 덮어써야 한다
+			// (음수면 BP 기본값 유지). BeginPlay가 아니라 Activate가 읽는 값이라 Orb처럼 별도 오버라이드
+			// 함수가 필요 없다
+			if (InstanceData.RibbonRangeOverride > 0.f)
+			{
+				Ribbon->TetherRange = InstanceData.RibbonRangeOverride;
+			}
+			if (InstanceData.RibbonHalfWidthOverride > 0.f)
+			{
+				Ribbon->TetherHalfWidth = InstanceData.RibbonHalfWidthOverride;
+			}
+
+			// PullTarget은 bApplyPullOnHit=false인 리본 설정에서는 쓰이지 않지만, 같은 액터를
+			// 끌기 용도로도 쓸 수 있으므로 일단 보스 위치를 넘겨둔다
+			Ribbon->Activate(InstanceData.Boss->GetActorLocation(), 0.f, BossController);
+			InstanceData.SpawnedRibbons.Add(Ribbon);
+			LongestRange = FMath::Max(LongestRange, Ribbon->TetherRange);
+		}
+		else
+		{
+			UE_LOG(LogLoA, Warning, TEXT("[EchidnaRibbon] Ribbon SpawnActor 실패 (YawOffset=%.1f)"), YawOffset);
+		}
+	}
+
+	// 1차가 빗나갔을 때 이동할 목표 — 리본이 실제로 뻗은 길이를 액터에서 읽어 계산한다
+	InstanceData.RibbonEndLocation = Origin + InstanceData.BaseAimRotation.Vector() * LongestRange;
+}
+
+bool FStateTreeTask_EchidnaRibbonPattern::AreRibbonsFinished(const FInstanceDataType& InstanceData) const
+{
+	for (const TObjectPtr<AEchidnaTetherActor>& Ribbon : InstanceData.SpawnedRibbons)
+	{
+		if (Ribbon && !Ribbon->IsFinished())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool FStateTreeTask_EchidnaRibbonPattern::AnyRibbonHit(const FInstanceDataType& InstanceData) const
+{
+	for (const TObjectPtr<AEchidnaTetherActor>& Ribbon : InstanceData.SpawnedRibbons)
+	{
+		if (Ribbon && Ribbon->DidHit())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void FStateTreeTask_EchidnaRibbonPattern::SpawnCircleZone(FInstanceDataType& InstanceData) const
+{
+	InstanceData.CurrentZone = nullptr;
+
+	if (!InstanceData.Boss || !InstanceData.CircleZoneClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	AEchidnaFanZoneActor* Zone = World->SpawnActor<AEchidnaFanZoneActor>(
+		InstanceData.CircleZoneClass, GetBossFeetLocation(InstanceData.Boss), FRotator::ZeroRotator, SpawnParams);
+
+	if (!Zone)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRibbon] 원형 장판 SpawnActor 실패"));
+		return;
+	}
+
+	// FanAngle=360이면 IsActorInRing의 각도 판정(반각 180도)이 항상 참이라 완전한 원이 된다 —
+	// 별도 원형 액터 없이 부채꼴 액터를 그대로 쓰는 기존 방식(두번긋고 도넛장판과 동일)
+	Zone->FanAngle = 360.f;
+	Zone->FanInnerRadius = InstanceData.CircleInnerRadius;
+	Zone->FanRange = InstanceData.CircleRadius;
+	Zone->TelegraphDuration = InstanceData.CircleTelegraphDuration;
+	Zone->RingCount = 1;	// 예고 후 단발 판정 (계단식 확장은 이 패턴에서 안 씀)
+
+	Zone->Activate(InstanceData.Damage, InstanceData.Boss->GetController());
+	InstanceData.CurrentZone = Zone;
+}
+
+void FStateTreeTask_EchidnaRibbonPattern::SpawnArcZone(FInstanceDataType& InstanceData) const
+{
+	InstanceData.CurrentZone = nullptr;
+
+	if (!InstanceData.Boss || !InstanceData.ArcZoneClass) return;
+
+	UWorld* World = InstanceData.Boss->GetWorld();
+	if (!World) return;
+
+	// 음수 Yaw가 좌측 — 레퍼런스의 "좌측 전방으로 내려침"
+	FRotator SpawnRotation = InstanceData.BaseAimRotation;
+	SpawnRotation.Yaw += InstanceData.ArcYawOffset;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	AEchidnaFanZoneActor* Zone = World->SpawnActor<AEchidnaFanZoneActor>(
+		InstanceData.ArcZoneClass, GetBossFeetLocation(InstanceData.Boss), SpawnRotation, SpawnParams);
+
+	if (!Zone)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRibbon] 호 장판 SpawnActor 실패"));
+		return;
+	}
+
+	// ArcInnerRadius > 0이라 중심에서 뻗는 부채꼴이 아니라 호 끝부분만 타격하는 얇은 고리가 된다
+	Zone->FanAngle = InstanceData.ArcAngle;
+	Zone->FanInnerRadius = InstanceData.ArcInnerRadius;
+	Zone->FanRange = InstanceData.ArcRange;
+	Zone->TelegraphDuration = InstanceData.ArcTelegraphDuration;
+	Zone->RingCount = 1;
+
+	Zone->Activate(InstanceData.Damage, InstanceData.Boss->GetController());
+	InstanceData.CurrentZone = Zone;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaRibbonPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.SpawnedRibbons.Reset();
+	InstanceData.CurrentZone = nullptr;
+
+	if (!InstanceData.Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRibbon] Boss 미바인딩 — 패턴 실패"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!InstanceData.RibbonClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRibbon] RibbonClass 미할당 — 패턴 실패"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	InstanceData.BaseAimRotation = FacePlayer(InstanceData.Boss);
+	SpawnRibbons(InstanceData);
+
+	InstanceData.Phase = EEchidnaRibbonPhase::Ribbon1;
+	InstanceData.PhaseElapsed = 0.f;
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaRibbonPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.PhaseElapsed += DeltaTime;
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaRibbonPhase::Ribbon1:
+	{
+		if (!AreRibbonsFinished(InstanceData))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		if (AnyRibbonHit(InstanceData))
+		{
+			SpawnCircleZone(InstanceData);
+			InstanceData.Phase = EEchidnaRibbonPhase::CircleZone;
+			InstanceData.PhaseElapsed = 0.f;
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 빗나감 — 리본이 뻗었던 끝자락으로 이동한다. 높이는 현재 높이를 유지(지면 높낮이는 무시)
+		InstanceData.MoveStartLocation = InstanceData.Boss->GetActorLocation();
+		InstanceData.MoveTargetLocation = InstanceData.RibbonEndLocation;
+		InstanceData.MoveTargetLocation.Z = InstanceData.MoveStartLocation.Z;
+
+		InstanceData.Phase = EEchidnaRibbonPhase::MoveToEnd;
+		InstanceData.PhaseElapsed = 0.f;
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaRibbonPhase::MoveToEnd:
+	{
+		const float Alpha = (InstanceData.MoveDuration > 0.f)
+			? FMath::Clamp(InstanceData.PhaseElapsed / InstanceData.MoveDuration, 0.f, 1.f)
+			: 1.f;
+
+		// NavMesh 대신 직접 보간 — 도착 시점이 정확해야 다음 리본 타이밍이 안 어긋난다.
+		// bSweep=true라 벽은 여전히 막아준다
+		InstanceData.Boss->SetActorLocation(
+			FMath::Lerp(InstanceData.MoveStartLocation, InstanceData.MoveTargetLocation, Alpha), true);
+
+		if (Alpha >= 1.f)
+		{
+			// 도착한 자리에서 플레이어를 다시 조준해 2차 리본
+			InstanceData.BaseAimRotation = FacePlayer(InstanceData.Boss);
+			SpawnRibbons(InstanceData);
+
+			InstanceData.Phase = EEchidnaRibbonPhase::Ribbon2;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaRibbonPhase::Ribbon2:
+	{
+		if (!AreRibbonsFinished(InstanceData))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		if (AnyRibbonHit(InstanceData))
+		{
+			SpawnCircleZone(InstanceData);
+			InstanceData.Phase = EEchidnaRibbonPhase::CircleZone;
+		}
+		else
+		{
+			// 둘 다 빗나감 — 좌측 전방으로 호 내려치기
+			SpawnArcZone(InstanceData);
+			InstanceData.Phase = EEchidnaRibbonPhase::ArcSlash;
+		}
+		InstanceData.PhaseElapsed = 0.f;
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaRibbonPhase::CircleZone:
+	case EEchidnaRibbonPhase::ArcSlash:
+	{
+		// 장판이 스폰조차 안 됐으면(클래스 미할당 등) 기다릴 것도 없이 종료
+		const bool bZoneDone = !InstanceData.CurrentZone || InstanceData.CurrentZone->IsFinished();
+		if (bZoneDone || InstanceData.PhaseElapsed >= InstanceData.ZoneWaitTimeout)
+		{
+			InstanceData.Phase = EEchidnaRibbonPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaRibbonPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaRibbonPatternDesc", "<b>Echidna Ribbon Pattern</b>");
 }
 #endif // WITH_EDITOR
 

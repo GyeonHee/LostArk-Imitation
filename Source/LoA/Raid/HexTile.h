@@ -59,8 +59,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Tile|PoopZone")
 	float PoopTickInterval = 1.f;
 
+	// 초당 플레이어 최대체력(10만)의 2% — 밟고 버티면 아프지만 즉사는 아닌 수준
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Tile|PoopZone")
-	float PoopTickDamage = 10.f;
+	float PoopTickDamage = 2000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Tile|PoopZone")
 	int32 PoopCharmGaugePerTick = 1;

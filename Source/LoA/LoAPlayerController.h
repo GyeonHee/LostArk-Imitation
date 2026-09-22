@@ -15,6 +15,9 @@ class USkillManagerComponent;
 class UHUD_ViewModel;
 class USkillTree_ViewModel;
 class ALoACharacter;
+class UBossHPWidget;
+class UCastBarWidget;
+class AEchidnaBoss;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
 
@@ -76,6 +79,30 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<UUserWidget> HUDWidget;
 
+	/** 보스 HP 바 위젯 클래스 — BP_LoAPlayerController에서 WBP_BossHP 할당.
+	 *  레벨에 AEchidnaBoss가 없으면 위젯 자체를 만들지 않는다 */
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UBossHPWidget> BossHPWidgetClass;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	TObjectPtr<UBossHPWidget> BossHPWidget;
+
+	/** HP 갱신 때마다 남은 줄 수를 다시 물어보기 위해 들고 있는 참조 */
+	TWeakObjectPtr<AEchidnaBoss> TrackedBoss;
+
+	/** AEchidnaBoss::OnHPChanged 구독 콜백 — 위젯에 HP 비율과 줄 수를 넘긴다 */
+	void OnBossHPChanged(float NewHP, float NewMaxHP);
+
+	/** 캐스팅/차지 진행바 위젯 클래스 — BP_LoAPlayerController에서 WBP_CastBar 할당 */
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UCastBarWidget> CastBarWidgetClass;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	TObjectPtr<UCastBarWidget> CastBarWidget;
+
+	/** Tick에서 매 프레임 호출 — SkillManager를 폴링해 진행바를 갱신하거나 숨긴다 */
+	void UpdateCastBar();
+
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<UHUD_ViewModel> HUDViewModel;
 
@@ -135,9 +162,10 @@ protected:
 	/** 매혹 중 현재 붙잡고 있는 스킬 슬롯 (-1=없음) */
 	int32 CharmActiveSkillSlot = -1;
 
-	/** 매혹 중 무작위 행동(이동 목표 재설정 + 스킬 사용)을 반복하는 간격 (초) */
+	/** 매혹 중 무작위 행동(이동 목표 재설정 + 쓸 수 있는 스킬 소모)을 반복하는 간격 (초).
+	 *  짧을수록 이동이 산만해지고 쿨이 도는 족족 스킬이 빠져나간다 */
 	UPROPERTY(EditAnywhere, Category="Charm")
-	float CharmActionInterval = 1.5f;
+	float CharmActionInterval = 0.8f;
 
 	/** 매혹 중 무작위 이동 목표 지점을 고를 반경 (cm) */
 	UPROPERTY(EditAnywhere, Category="Charm")
@@ -196,10 +224,11 @@ protected:
 	/** 매혹 상태(3스택) 전환 시 호출 — 시작되면 무작위 이동/스킬 사용 타이머 시작, 끝나면 정지하고 붙잡고 있던 스킬 키를 뗌 */
 	void OnPlayerCharmedChanged(bool bCharmed);
 
-	/** 매혹 중 CharmActionInterval마다 호출 — 무작위 지점으로 이동 목표 설정 + 무작위 스킬 슬롯 하나를 짧게 누름 */
+	/** 매혹 중 CharmActionInterval마다 호출 — 무작위 지점으로 이동 목표를 다시 잡고,
+	 *  쿨타임이 돌아 쓸 수 있는 슬롯(0~7) 중 하나를 골라 타입별 필요 시간만큼 붙잡아 실제로 발동시킨다 */
 	void PerformRandomCharmAction();
 
-	/** 매혹 중 무작위로 눌렀던 스킬 슬롯을 짧은 홀드 시간 뒤에 떼는 콜백 */
+	/** 매혹 중 붙잡고 있던 스킬 슬롯을 떼는 콜백 — 떼는 순간 다음 틱에서 새 스킬을 고를 수 있게 된다 */
 	void ReleaseCharmSkill();
 
 	/** 캐릭터의 HP/MP 변경 델리게이트에 바인딩하고 ViewModel 초기화 */
