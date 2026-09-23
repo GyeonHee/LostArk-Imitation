@@ -7,6 +7,7 @@
 class UProgressBar;
 class UTextBlock;
 class UImage;
+class UTexture2D;
 
 /**
  * 보스 HP 바 — 로스트아크식 "줄" 표시.
@@ -28,7 +29,20 @@ public:
 	UBossHPWidget(const FObjectInitializer& ObjectInitializer);
 
 	UFUNCTION(BlueprintCallable, Category = "BossHP")
-	void SetBossHP(float NewHP, float NewMaxHP, int32 TotalLines);
+	void SetBossHP(double NewHP, double NewMaxHP, int32 TotalLines);
+
+	/** 체력바 왼쪽의 광폭화 타이머 — "광폭화까지 / 00:08:56". 컨트롤러가 매 Tick 호출하지만
+	 *  표시 초가 바뀔 때만 텍스트를 다시 만든다 */
+	UFUNCTION(BlueprintCallable, Category = "BossHP")
+	void SetEnrageTime(float RemainingSeconds, bool bEnraged);
+
+	/** 초상화 아래 2칸 정산 게이지 — 1칸 = 0~50%, 2칸 = 50~100% */
+	UFUNCTION(BlueprintCallable, Category = "BossHP")
+	void SetSettlementGauge(float Percent);
+
+	/** 정산 게이지 정지 표시 — 초상화는 흑백 텍스처로, 게이지 2칸·% 글자는 회색으로. 풀리면 원래대로 */
+	UFUNCTION(BlueprintCallable, Category = "BossHP")
+	void SetSettlementPaused(bool bPaused);
 
 protected:
 	/** 줄마다 돌아가며 쓰는 색 — 줄 L의 색은 LineColors[(L-1) % Num].
@@ -45,7 +59,53 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidget))
 	TObjectPtr<UTextBlock> LineText;
 
+	// 광폭화 라벨/시간 — Optional이라 WBP에 없어도 컴파일은 된다(타이머만 안 보임)
+	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> EnrageLabelText;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> EnrageTimeText;
+
+	// 정산 게이지 2칸 + 수치 — Optional
+	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> SettlementBar1;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> SettlementBar2;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> SettlementText;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BossHP", meta = (BindWidgetOptional))
+	TObjectPtr<UImage> PortraitImage;
+
+	// 정지 중 초상화 — 원래 텍스처는 WBP의 PortraitImage 브러시를 그대로 기억해 두었다가 되돌린다
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP")
+	TSoftObjectPtr<UTexture2D> PortraitPausedTexture = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/T_EchidnaPortrait_Gray.T_EchidnaPortrait_Gray")));
+
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP")
+	FLinearColor SettlementPausedColor = FLinearColor(0.35f, 0.35f, 0.35f, 1.f);
+
+	// 평소 타이머 색 (로아 UI의 금색)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BossHP")
+	FLinearColor EnrageNormalColor = FLinearColor(0.85f, 0.65f, 0.25f);
+
+	// 1분 이하 남았을 때와 광폭화 이후 색
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BossHP")
+	FLinearColor EnrageWarningColor = FLinearColor(0.95f, 0.15f, 0.1f);
+
 private:
 	/** 줄 번호에 대응하는 색. 0 이하(= 더 깎을 줄이 없음)면 투명 */
 	FLinearColor GetLineColor(int32 Line) const;
+
+	int32 LastShownEnrageSecond = -1;
+
+	// 정지 표시 전 원래 모습 (처음 정지할 때 캡처)
+	bool bSettlementPausedShown = false;
+	bool bCapturedSettlementLook = false;
+	FSlateBrush OriginalPortraitBrush;
+	FLinearColor OriginalBarFill = FLinearColor::White;
+	FSlateColor OriginalSettlementTextColor;
+	float LastShownSettlement = -1.f;
+	bool bLastShownEnraged = false;
 };

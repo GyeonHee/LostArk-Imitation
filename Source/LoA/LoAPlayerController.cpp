@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LoAPlayerController.h"
+#include "UI/ScreenFogWidget.h"
 #include "GameFramework/Pawn.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "NiagaraSystem.h"
@@ -166,11 +167,48 @@ void ALoAPlayerController::BeginPlay()
 	}
 }
 
-void ALoAPlayerController::OnBossHPChanged(float NewHP, float NewMaxHP)
+void ALoAPlayerController::OnBossHPChanged(double NewHP, double NewMaxHP)
 {
 	if (!BossHPWidget || !TrackedBoss.IsValid()) return;
 
 	BossHPWidget->SetBossHP(NewHP, NewMaxHP, TrackedBoss->TotalLines);
+}
+
+void ALoAPlayerController::SetScreenFog(bool bEnable, float FadeTime)
+{
+	if (bEnable && !ScreenFogWidget && IsLocalController())
+	{
+		ScreenFogWidget = CreateWidget<UScreenFogWidget>(this, UScreenFogWidget::StaticClass());
+		if (ScreenFogWidget)
+		{
+			// HUD(ZOrder 0)보다 아래 — 연기 속에서도 보스 HP·스킬 슬롯은 보여야 한다
+			ScreenFogWidget->AddToViewport(-1);
+			ScreenFogWidget->SetFogOpacity(0.f);
+			FogCurrentOpacity = 0.f;
+		}
+	}
+
+	FogTargetOpacity = bEnable ? 1.f : 0.f;
+	FogFadeSpeed = FadeTime > 0.f ? 1.f / FadeTime : 1000.f;
+}
+
+void ALoAPlayerController::UpdateScreenFog(float DeltaSeconds)
+{
+	if (!ScreenFogWidget) return;
+	if (FMath::IsNearlyEqual(FogCurrentOpacity, FogTargetOpacity)) return;
+
+	FogCurrentOpacity = FMath::FInterpConstantTo(FogCurrentOpacity, FogTargetOpacity, DeltaSeconds, FogFadeSpeed);
+	ScreenFogWidget->SetFogOpacity(FogCurrentOpacity);
+	ScreenFogWidget->SetVisibility(FogCurrentOpacity > 0.f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+}
+
+void ALoAPlayerController::UpdateEnrageTimer()
+{
+	if (!BossHPWidget || !TrackedBoss.IsValid()) return;
+
+	BossHPWidget->SetEnrageTime(TrackedBoss->GetEnrageRemainingTime(), TrackedBoss->IsEnraged());
+	BossHPWidget->SetSettlementGauge(TrackedBoss->SettlementGauge);
+	BossHPWidget->SetSettlementPaused(TrackedBoss->IsSettlementPaused());
 }
 
 void ALoAPlayerController::UpdateCastBar()
@@ -492,6 +530,8 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 	// 행동불능 체크보다 먼저 — 캐스팅 도중 기절/넉다운으로 스킬이 끊겼을 때도 바가 남지 않고 사라져야 한다
 	UpdateCastBar();
+	UpdateEnrageTimer();
+	UpdateScreenFog(DeltaSeconds);
 
 	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn); Char && Char->IsActionLocked())
 	{

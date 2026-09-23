@@ -1,4 +1,5 @@
 #include "Raid/EchidnaHeartActor.h"
+#include "Raid/EchidnaBoss.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -6,6 +7,9 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/GameplayStatics.h"
 #include "LoACharacter.h"
+#include "Raid/EchidnaPoopMarkActor.h"
+#include "Raid/HexArena.h"
+#include "EngineUtils.h"
 
 namespace
 {
@@ -173,6 +177,10 @@ void AEchidnaHeartActor::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
+	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
+	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
+
 	CollisionComp->OnComponentBeginOverlap.AddDynamic(this, &AEchidnaHeartActor::OnOverlapBegin);
 
 	// EditDefaultsOnly 프로퍼티는 BP 서브클래스에서 오버라이드될 수 있으므로 생성자가 아니라 여기서 적용
@@ -249,7 +257,44 @@ void AEchidnaHeartActor::ApplyHit(AActor* Target)
 
 		if (!bAlreadyStunned)
 		{
-			Character->AddCharmGauge(CharmGaugeAmount);
+			if (bSpawnPoopMarkOnHit)
+			{
+				SpawnPoopMark(Character);
+			}
+			else
+			{
+				Character->AddCharmGauge(CharmGaugeAmount);
+			}
 		}
+	}
+}
+
+void AEchidnaHeartActor::SpawnPoopMark(ALoACharacter* Character)
+{
+	UWorld* World = GetWorld();
+	if (!World || !Character) return;
+
+	// 이미 이 플레이어에게 진행 중인 게이지가 있으면 또 붙이지 않는다 (게이지가 겹쳐 보이는 것 방지)
+	for (TActorIterator<AEchidnaPoopMarkActor> It(World); It; ++It)
+	{
+		if (It->GetTarget() == Character && !It->IsFinished()) return;
+	}
+
+	AHexArena* Arena = nullptr;
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		Arena = *It;
+		break;
+	}
+
+	UClass* MarkClass = PoopMarkClass ? PoopMarkClass.Get() : AEchidnaPoopMarkActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = GetOwner();
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	// 하트는 맞자마자 Destroy되므로 게이지는 하트와 독립된 액터로 남아 스스로 진행한다
+	if (AEchidnaPoopMarkActor* Mark = World->SpawnActor<AEchidnaPoopMarkActor>(MarkClass, Character->GetActorTransform(), SpawnParams))
+	{
+		// 하트 기절(3초)이 풀린 뒤부터 5초 게이지 시작
+		Mark->Activate(Character, Arena, true);
 	}
 }

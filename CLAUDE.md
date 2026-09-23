@@ -124,9 +124,11 @@
 - `USkillDragDropOperation` — 스킬 드래그앤드랍
 - `WBP_BossHP` (`/Game/LostArk/UI/`) — 보스 HP 바. **MVVM이 아니라 `UBossHPWidget`(C++) 상속 + `BindWidget`** 방식
   - MVVM은 ViewModel 바인딩을 에디터에서 손으로 걸어야 해서 MCP로 끝까지 못 만든다. `UCharmGaugeWidget`과 동일하게 C++ Setter를 호출하는 방식이면 위젯 BP까지 MCP로 생성 가능 — 새 UI를 추가할 땐 이 쪽이 작업이 빠름
-  - 트리: `RootCanvas` → `BossHPRoot`(VerticalBox, 상단 중앙 앵커 900x70) → `BossNameText`(고정 라벨) + `BarOverlay` → **`NextLineImage` → `HPBar` → `LineText`** (Overlay는 나중 자식이 위에 그려지므로 이 순서가 곧 뒤→앞 순서)
+  - 트리: `RootCanvas` → `BossHPRoot`(VerticalBox, 상단 중앙 앵커 1010x70) → `BossNameText`(고정 라벨) + `BarRow`(HorizontalBox) → [`EnrageBox`(VerticalBox: `EnrageLabelText` + `EnrageTimeText`, 광폭화 타이머) + `BarOverlay`(Fill) → **`NextLineImage` → `HPBar` → `LineText`**] (Overlay는 나중 자식이 위에 그려지므로 이 순서가 곧 뒤→앞 순서)
+  - `EnrageLabelText`/`EnrageTimeText`는 `BindWidgetOptional` — 없어도 컴파일은 되고 타이머만 안 보인다
+  - 화면 좌상단(`RootCanvas` 직속 `SettlementRoot`, 앵커 0,0 / 위치 20,20)에 **초상화 + 2칸 정산 게이지**: `PortraitImage`(`T_EchidnaPortrait` 128x128 — 레퍼런스 스크린샷에서 잘라낸 저해상도 임시 이미지, 좋은 원본이 생기면 교체) → `SettlementBarSize`(120x10) → `SettlementBarRow` → `SettlementBar1`/`SettlementBar2` + `SettlementText`(%). 세 개 다 `BindWidgetOptional`
   - `HPBar`/`NextLineImage`/`LineText` 세 개가 C++ `BindWidget` 대상이라 **이름을 바꾸면 컴파일 에러**가 난다. `BossNameText`는 C++이 모르는 순수 디자이너 라벨
-  - `LineText` 표기: `현재체력 / 최대체력    남은줄수` (예: `21,000,000 / 21,000,000    210`). 체력이 천만 단위라 `FString::FormatAsNumber`로 자릿수 구분
+  - `LineText` 표기: `현재체력 / 최대체력    남은줄수` (예: `4,746,719,168 / 4,746,719,168    285`). 체력이 int32 범위를 넘으므로 `FText::AsNumber(int64)`로 자릿수 구분
   - **줄마다 색이 바뀌는 로아식 바**: `HPBar`의 Percent는 전체 HP가 아니라 **현재 줄 안의 잔량**이고, 색은 `LineColors[(현재줄-1) % Num]`. 뒤에 깔린 `NextLineImage`는 **한 줄 아래**의 색이라, 현재 줄이 비어갈수록 다음 줄 색이 드러난다. 마지막 1줄에서는 `GetLineColor(0)`이 투명을 반환해 빈 칸이 보임
   - 이게 성립하려면 **`HPBar`의 `WidgetStyle.BackgroundImage` 틴트 알파가 0**이어야 한다(기본값은 흰색 불투명이라 뒤를 가림). `NextLineImage`는 텍스처 없이도 확실히 그려지도록 브러시를 `RoundedBox`(cornerRadii 0 = 단색 사각형)로 설정해둠
   - `LineColors`는 `EditDefaultsOnly`라 WBP Class Defaults에서 색/개수 조절 가능 (기본 5색 순환)
@@ -217,6 +219,8 @@
   → 안쪽 변 길이는 그대로, 바깥쪽 변이 자동으로 늘어나 인접 조각과 꼭짓점을 정확히 공유 (사다리꼴)
 - **메시**: 변 하나당 Top/Outer/Inner 3개 쿼드 (`AddQuad` 헬퍼가 지정한 Normal 기준으로 winding 자동 보정), 닫힌 루프라 이음매(end cap) 불필요
 - **콜리전**: `bUseComplexAsSimpleCollision = true`
+- **보이지 않는 충돌벽 `BarrierMesh`** (2026-09-24): 벽 안쪽 면을 바닥부터 벽 위 `InvisibleBarrierHeight`(1500cm)까지 세운 PMC. 보스 백스텝(RetreatFan 홉·BackstepHeart·ReturningOrb)이나 넉다운으로 뜬 캐릭터가 **벽 윗면에 올라가 못 움직이던 버그** 수정용
+  - **Pawn 채널만 Block, 나머지 Ignore** — 벽(`WallMeshes`)처럼 BlockAll이면 Visibility도 막아서 카메라 쪽 가장자리에서 마우스 클릭 이동 트레이스를 가로챈다. 그래서 별도 컴포넌트로 분리함
 
 ### BP_HexArena 파라미터
 | 카테고리 | 파라미터 | 기본값 | 설명 |
@@ -265,6 +269,23 @@
 2. 캐릭터가 그 타일 위를 지나가면 `OverlapBox`가 감지 → 매혹 게이지 누적 + 데미지 자동 진행
 3. 여러 개의 똥장판이 한 타일을 완전히 둘러싸면 `NotifyTileTypeChanged`가 자동으로 그 타일을 Flower로 전환 (별도 호출 불필요)
 
+### 레이드 시작 배치 — 비활성 오염 장판 8칸 + 파란 테두리 타일 2칸 (2026-09-23)
+- `AHexArena::BeginPlay` → 타일 스폰 → **다음 틱**에 `SetupInitialLayout()` (플레이어 폰이 스폰된 뒤에 돌아야 폰이 선 타일을 뺄 수 있어서 한 틱 미룸)
+- **오염 장판 8칸**(`InitialPoopTileCount`)은 **비활성 상태로 깔린다 — 밟아도 매혹·데미지 없음**, 살짝 핑크빛. 나중에 특정 패턴이 `AHexArena::SetAllPoopTilesActive(true)`(또는 타일별 `SetPoopActive`)로 켜면 **빨간색 + 빨간 테두리**가 되고 그때부터 밟으면 매혹 스택 + 데미지
+  - 폰(플레이어·보스)이 서 있는 타일만 제외(**파란 테두리 타일도 오염될 수 있음** — 비활성 오염이면 핑크 바닥 + 파란 테두리, 활성화되면 빨간 테두리가 우선), **시작부터 꽃이 피는 배치는 건너뜀**(후보를 넣었을 때 어떤 Normal 타일이 완전히 둘러싸이면 스킵)
+  - 타일은 타입과 무관하게 **위에 서 있는 캐릭터를 항상 기억**한다 → 서 있는 도중에 활성화돼도 즉시 틱 시작(`RefreshPoopTicking`)
+  - `SetTileType`으로 PoopZone이 아니게 되면 활성 플래그도 꺼짐. 꽃 개화 판정은 활성 여부와 무관하게 PoopZone 타입 기준
+- **파란 테두리 2칸**(반정산 패턴용 정보): 외곽 링에서 랜덤 1칸 + 거기서 헥스 거리 `MarkerTileDistance`(2)인 **안쪽(외곽 아닌) 타일** 1칸. SideCount=4면 어느 외곽 타일에서 출발해도 후보가 3~4개 있음(검증). `MarkerTileCoords[0]`=외곽, `[1]`=안쪽
+- 테두리는 **타일 타입이 아니라 별도 표시** — `HighlightMesh`(PMC)가 헥스 외곽선을 따라 바닥 링 + 낮은 띠를 그림. 우선순위: **활성 오염(빨강 `ActivePoopBorderColor`) > 파란 테두리(`HighlightColor`) > 숨김** (`RefreshBorder`). 타일 액터가 TileYaw(30도) 돌아 있어서 로컬 꼭짓점은 0/60/120...도, 꼭짓점 반지름 = 내접원 반지름 × 2/√3. 높이는 `TileMesh->Bounds` 꼭대기 기준
+- 테두리 색은 `M_MirrorLaser`(Translucent+Unlit) `"Base Color"`에 HDR 값 → 1보다 큰 값이 블룸으로 빛남
+- **타일 머티리얼**: `M_HexTileTinted`(= `M_Gemini` 복제 + `Tint` Vector로 텍스처 곱 → Base Color, `× Glow` Scalar → Emissive). `MI_HexTile_PoopInactive`(진한 핑크 틴트 — 처음 값(1,0.72,0.82)은 너무 옅어서 안 보였음, `ABP_HexTile.PoopMaterial`) / `MI_HexTile_PoopActive`(빨강 틴트 + 약한 발광, `ActivePoopMaterial` — C++ 생성자에서 기본값으로 박음). 색 조절은 두 MI의 `Tint`/`Glow`
+- `WorldToTileCoord()`(월드 → q,r, 큐브 반올림), `GetHexDistance()`는 패턴에서 "플레이어가 어느 타일에 있나"·거리 판정에 사용
+
+### 큰 꽃 (Flower 타일) — 2026-09-23
+- 오염 장판에 완전히 둘러싸인 타일이 Flower가 되면(`NotifyTileTypeChanged`) **바닥은 항상 `PoopMaterial`(비활성 오염과 같은 핑크)** — 예전 `FlowerMaterial`(불 텍스처 `MI_Rock_Inst_7`)은 BP에서 MCP로 비워도 PIE에서 옛 값이 남아 불이 계속 나와서 **필드 자체를 삭제**함 + **큰 꽃**(`AEchidnaBigFlowerActor`)이 타일 위에 핌
+- `AEchidnaBigFlowerActor`: 에셋 없이 PMC로 꽃잎 3겹(바깥 7장 → 안쪽 5장, 바깥일수록 크고 눕고 안쪽일수록 작고 섬, 색은 바깥 붉은 분홍 → 안쪽 살구/크림) + 꽃술 돔 + 바닥 잎 `LeafCount`(4)장(초록). `BloomDuration` 동안 ease-out-back으로 피고, 이후 천천히 회전·상하로 흔들림. 순수 비주얼 — 모양/색은 Class Defaults. 타일이 `RefreshFlower()`로 스폰/제거하고 `EndPlay`에서 정리(붙은 액터는 자동으로 안 사라져서)
+- **매혹 오라**: `AHexArena::TickFlowerAura()`(1초 루핑 타이머, 항상 돎) — 꽃 타일과의 헥스 거리 `FlowerAuraRange`(1) 이하 타일(꽃 타일 자신 포함)에 서 있으면 `FlowerCharmAmount`(1) 매혹 스택. 꽃이 여러 개여도 1초에 한 번만. Flower 타일은 PoopZone이 아니라 오염 틱 데미지는 없음
+
 ### ALoACharacter 추가 (`LoACharacter.h/.cpp`)
 - `CharmGauge`/`MaxCharmGauge` (기본 0/10), `OnCharmGaugeChanged` 델리게이트 — HP/MP와 동일한 패턴
 - `AddCharmGauge(int32 Amount)` — 클램프 누적 + 델리게이트 브로드캐스트 (게이지 가득 찼을 때의 디버프 효과는 아직 미구현)
@@ -283,7 +304,7 @@
   - 데미지: `LaserDamageTickInterval`(기본 1/3초)마다 반복 판정 — 맞는 순간 즉시 1틱 + 그 뒤 3틱 = 1초간 총 4틱. `MaxDamageTicks`는 `floor(FiringDuration/Interval)+1`로 계산 (아래 "넉다운 시스템" 참조, 예전엔 `round()`라 "즉시 1틱+반복" 구조와 안 맞았음)
   - 판정: `GetActorsInBeamBox()`로 박스 오버랩
   - 별도 넉백 시스템(`KnockbackTickInterval`/`KnockbackStrength` 등)은 **제거됨** — 대신 데미지 틱마다 `ALoACharacter::ApplyKnockdown()` 호출로 통합 (아래 "넉다운 시스템" 참조)
-  - `TrackingRotationSpeed` 기본값 60 → 100 → 80 → **50**도/초로 재조정 (플레이어 피드백 기준)
+  - `TrackingRotationSpeed` 기본값 60 → 100 → 80 → 50 → 15 → **8**도/초 (C++ 기본값 + `BP_EchidnaMirror` 둘 다). 걸어서 피할 수 있으려면 각속도×MaxRange(3000) < 걷기 600cm/s → 약 11도/초 이하
 - 완료 후 `LifeAfterBeam` 뒤 소멸
 
 ### 비주얼 — 별도 에셋 없이도 즉시 보이게
@@ -351,7 +372,7 @@
 ### 패턴 개요 (레퍼런스 이미지 "1. 끌고간후 장판터지는 패턴")
 - 1단계: 보스 정면 기준 부채꼴로 줄기(`AEchidnaTetherActor`) `TetherCount`(기본 7)개를 동시에 뻗음 → `SnapDelay` 뒤 범위 안 대상을 1회 판정
 - 2단계: **맞은 대상이 멈췄다가 보스 앞까지 끌려온 뒤에** 1번 장판(좁게) → 2번 장판(넓게) 순서로 터짐
-- 아무도 안 맞았으면(`AnyTetherHit` false) 장판 없이 바로 패턴 종료 — 아무도 안 끌려왔는데 장판이 터지는 걸 막기 위함
+- **아무도 안 맞아도 1번·2번 장판은 순서대로 터진다** (2026-09-24 변경 — 예전엔 `AnyTetherHit` false면 장판 없이 끝났음, 지금은 로그만 남김)
 
 ### 끌어당기기 = "잠깐 멈춤 → 강제 드래그" 2단계 (`ALoACharacter::ApplyPull`) — 2026-09-22
 - **버그였던 것**: 예전엔 `ApplyPull`이 보스 방향으로 `LaunchCharacter` 임펄스 **한 번**을 주는 게 전부였다. 마찰·지형·현재 속도에 따라 도달 거리가 들쭉날쭉해서 "끌려간다"가 아니라 "살짝 밀린다"에 가까웠고, 멈추는 연출도 없었음
@@ -418,7 +439,10 @@
 - 레퍼런스 원본은 "①머리위 하트 표시 → ②전방향 하트발사 → ③피격자 중 랜덤 1명 잡기+무력패턴(딜타임) → ④잡힌 사람 씨앗 생성" 4단계지만, 이번 구현은 ①·②만 하고 ③·④(잡기/씨앗)는 제외한 단순화 버전 — 대신 맞은 사람에게 스턴+매혹을 적용
 - 흐름(`FStateTreeTask_EchidnaHeartBurstPattern`): 패턴 시작 → `TelegraphDuration`(기본 2초) 동안 보스 머리 위에 하트 마커 표시, 보스는 완전히 가만히 있음(이동/회전 명령 없음) → 예고가 끝나면 `FireDuration`(기본 2초) 동안 `FireInterval`(기본 0.3초)마다 한 웨이브씩 하트를 발사 → `FireDuration`이 다 지나면 (날아가는 하트가 남아있어도) 바로 Succeeded
 - **8방향 고정이 아니라 완전 전방향**: 처음엔 8방향(45도 간격)을 Fisher-Yates로 섞어 그중 일부만 쏘는 방식이었으나, "8방향이 아니라 전방향으로" 요청에 따라 각 하트의 각도를 `FMath::FRandRange(0.f, 360.f)`로 매번 완전히 새로 뽑는 방식으로 교체 — 이제 방향에 정해진 슬롯 자체가 없음. 웨이브당 개수만 `[MinHeartsPerWave, MaxHeartsPerWave]`(기본 2~6, 더 이상 8개로 상한 없음) 범위에서 랜덤으로 정함 — 매번 개수도 방향도 전부 달라짐
-- 맞으면: 데미지 + `HeartStunDuration`(기본 3초) 완전 기절(`ALoACharacter::ApplyStun`) + `HeartCharmGaugeAmount`(기본 1) 매혹 게이지
+- 맞으면: 데미지 + `HeartStunDuration`(기본 3초) 완전 기절(`ALoACharacter::ApplyStun`) + **발밑에 오염 장판 게이지**(`AEchidnaPoopMarkActor` — 똥장판 패턴의 그 5초 원형 게이지, 다 차면 서 있는 타일이 **비활성** 오염 장판)
+  - 변경(2026-09-23): 예전엔 매혹 1스택이었는데 오염 장판 생성으로 바꿈. Task가 스폰한 하트마다 `SetSpawnPoopMarkOnHit(true)` — **백스탭 하트발사는 같은 하트 액터지만 이걸 안 켜서 여전히 매혹 스택**
+  - 이미 기절 중이면(직전 하트에 맞음) 게이지를 또 붙이지 않고, 그 플레이어에게 진행 중인 게이지가 있어도 중복 생성 안 함
+  - **게이지는 하트 기절(3초)이 풀린 뒤에 시작**(`Activate(..., bWaitForStunEnd=true)` — 기절 중엔 숨긴 채 대기)
 
 ### AEchidnaHeartActor — 예고 마커와 발사체를 하나의 클래스로 겸용
 - `Launch()`를 호출하기 전까지는 `bLaunched=false`라 Tick에서 이동하지 않고 제자리에 가만히 떠 있음 — 이 성질을 그대로 이용해서 **같은 클래스를 예고 마커(Launch 안 함)와 실제 발사체(Launch 함) 양쪽에 재사용**함(새 클래스 하나 안 만들어도 됨)
@@ -541,6 +565,120 @@
 - `RibbonClass` = **`BP_EchidnaRibbon`**, `CircleZoneClass` = **`BP_EhidnaFanZone`**(넉다운 O), `ArcZoneClass`는 원하는 CC의 FanZone BP
 - `ArcYawOffset`은 **음수가 좌측**(기본 -60)
 
+## 광폭화 시스템 (`Raid/EchidnaBoss.h/.cpp`, `UI/BossHPWidget`) — 2026-09-23
+
+- 레이드 시작(보스 `BeginPlay`)부터 `EnrageTimeLimit`(기본 540초 = 9분)이 지나면 `AEchidnaBoss::Enrage()` → **속도 x2(`EnrageSpeedMultiplier`), 플레이어가 받는 데미지 x2(`EnrageDamageMultiplier`)**
+- 광폭화 전에 보스를 잡으면 남은 시간이 그 값에서 멈춘다(`FrozenEnrageRemaining`)
+- **속도 = `CustomTimeDilation`**: 보스 · 보스 AI 컨트롤러 · 광폭화 중 스폰된 패턴 액터 전부에 건다
+  - 컴포넌트 틱은 소유 액터의 `CustomTimeDilation`을 따른다(엔진 `FActorComponentTickFunction::ExecuteTickHelper`). 그래서 보스에 걸면 **캐릭터 무브먼트·애니메이션·LaunchCharacter 궤적**이, 컨트롤러에 걸면 **StateTreeAIComponent의 Task Tick 누적 시간·Cooldown Wait·PathFollowing**이 전부 같이 빨라진다 — 패턴 Task 코드를 하나도 안 고쳐도 되는 이유
+  - 패턴 액터(FanZone/Mirror/Tether/Heart/Orb)는 `BeginPlay`에서 `CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this)`를 설정 → Tick 기반 이동/추적은 자동으로 빨라짐
+  - ⚠️ **월드 타이머(`SetTimer`)는 `CustomTimeDilation`을 따르지 않는다.** 그래서 패턴 액터의 `SetTimer`는 시간을 `/ CustomTimeDilation`으로 나눠서 건다. **새 패턴 액터를 만들 때도 이 두 가지(BeginPlay 설정 + 타이머 나누기)를 반드시 따를 것**
+  - 예외: `AEchidnaTetherActor::PullResolveDelay`는 안 나눈다 — 플레이어가 끌려오는 시간(플레이어 쪽 타이밍, 광폭화 무관)을 기다리는 값이라, 줄이면 끌려오는 도중에 장판이 터진다
+  - `SetLifeSpan`(소멸 대기)도 안 나눔 — 연출상 영향 없음
+  - 광폭화 **순간 이미 진행 중이던** 패턴 액터는 원래 속도로 끝난다(다음 패턴부터 2배속). 보스·AI는 즉시 2배속
+- **데미지 = `ALoACharacter::ReceiveDamage` 한 곳**에서 `GetEnrageDamageMultiplier()`를 곱한다. 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기서 일괄 처리 — 똥장판 틱 데미지도 2배가 됨
+- `GetEnrageTimeScale`/`GetEnrageDamageMultiplier`는 static — 월드의 모든 `AEchidnaBoss`를 훑어 광폭화 중인 보스의 배율을 반환(보스가 여럿이어도 동작)
+- UI: `ALoAPlayerController::UpdateEnrageTimer()`(Tick, `UpdateCastBar`와 같이 `IsActionLocked` 조기 return보다 앞) → `UBossHPWidget::SetEnrageTime()`. 표기는 `광폭화까지 / 00:08:56`(초 올림), 60초 이하·광폭화 후엔 `EnrageWarningColor`(빨강), 광폭화 후 라벨은 `광폭화`. 표시 초가 바뀔 때만 텍스트를 갱신
+
+## 정산 게이지 (`Raid/EchidnaBoss.h/.cpp`, `EchidnaBossStateTreeUtility`, `UI/BossHPWidget`) — 2026-09-23
+
+- 보스 `SettlementGauge` 0~100%. UI는 2칸(1칸 = 50%). **25% / 50%(반정산) / 75% / 100%(풀정산)**에 패턴 — 25%와 75%는 같은 패턴. **패턴 내용은 아직 미정(유저가 나중에 알려주기로 함)**, 지금은 발동 틀만 있음
+- **발동 지점과 패턴**: 25% = 똥장판, 50% = 거울잇기(반정산), 75% = 똥장판, 100% = 거울잇기(풀정산) → 100% 거울잇기가 끝나면(`ExitState`) **게이지 0 + 발동 지점 초기화**로 다음 바퀴
+- **발동 판정은 이름이 아니라 숫자** (2026-09-24 재설계): 보스가 `SettlementThresholds`({25,50,75,100})와 사용한 지점 `ConsumedSettlementThresholds`를 추적. `GetNextSettlementThreshold()` = 게이지가 넘었고 아직 안 쓴 지점 중 **가장 낮은 것** → 게이지가 한 번에 25·50을 넘어도 25부터 차례로. 정산 패턴 Task(똥장판·거울잇기)는 진입 시 `ConsumeNextSettlementThreshold()`로 소모
+  - 이유: 같은 패턴이 두 지점(25/75, 50/100)에서 나와야 하는데, 이름 방식은 조건·Task 이름 불일치로 무한 반복 버그가 두 번 났었음
+- 상승 규칙 (전부 `BP_Echidna`의 Settlement 카테고리):
+  - 자연 상승: **1.4~1.8초(평균 1.6초)마다 1%** — 매혹 없이 레이드 시작 40초(광폭화까지 8분 20초)쯤 25%. 예전 4~5초는 너무 느렸음
+  - 매혹 스택 1 증가마다 +2~3%, 매혹 3스택 도달 시 추가 +10~15% (`ALoACharacter::AddCharmGauge` → `AEchidnaBoss::NotifyCharmStackGained()`)
+  - 자연 상승만 기준 대략: 25% 0:40 / 50% 1:20 / 75% 2:00 / 100% 2:40 (패턴 진행 중에도 게이지는 계속 오름). 매혹이 쌓일수록 당겨짐
+- 보스가 죽으면 자연 상승 정지. `Reset Settlement Gauge` Task는 이제 보통 필요 없음(거울잇기 100%가 자동 초기화)
+- **큰 패턴(시간·정산) 진행 중엔 게이지 정지** (2026-09-24): `AEchidnaBoss::IsSettlementPaused()` = `IsTimedPatternActive()` → `AddSettlementGauge`가 무시(자연 상승·매혹 보너스 전부). 패턴이 끝나면(`ClearActiveTimedPattern`) 다음 자연 상승부터 재개
+- **정지 중 UI 흑백**: `UBossHPWidget::SetSettlementPaused()`(컨트롤러 Tick이 매 프레임 넘김, 바뀔 때만 적용) — 초상화는 `T_EchidnaPortrait_Gray`(PIL로 만든 흑백본)로 브러시 텍스처 교체, 게이지 2칸·% 글자는 `SettlementPausedColor`(회색). 원래 모습은 처음 정지할 때 WBP 값을 캡처해 두었다가 되돌림(색 하드코딩 안 함). `PortraitImage`도 `BindWidgetOptional`
+- UI 갱신: `ALoAPlayerController::UpdateEnrageTimer()`(Tick)가 `UBossHPWidget::SetSettlementGauge()`도 같이 호출
+
+## 에키드나 정산 패턴 — 게이지 25%·75% "똥장판" (처음엔 광폭화 8분 20초 시간 패턴으로 잘못 만들었음 — 그 시간대에 25%가 차서 착각) (`EchidnaPoopMarkActor`, `EchidnaPoopBeamActor`, `EchidnaBossStateTreeUtility`) — 2026-09-23
+
+### 흐름 (`FStateTreeTask_EchidnaPoopPattern`)
+1. 진입: 보스 정지(패턴 내내 매 틱 `StopMovementImmediately`), **카메라 줌아웃**(`ALoACharacter::SetCameraZoomOverride(CameraArmLength=1500)`), **비활성 오염 장판 전부 활성화**(`AHexArena::SetAllPoopTilesActive(true)` → 빨강 + 빨간 테두리)
+2. 플레이어 발밑에 **5초 원형 게이지**(`AEchidnaPoopMarkActor`, 플레이어를 매 틱 따라감) — 다 차면 그 순간 밟고 있는 타일을 **비활성 오염 장판**(핑크)으로(이미 오염이면 변화 없음). 처음엔 활성으로 만들었는데 서 있던 플레이어에게 생성 즉시 매혹 스택이 쌓여서 비활성으로 바꿈
+3. `BeamSpawnDelay`(4초) 뒤 보스 발밑에서 **추적 장판**(`AEchidnaPoopBeamActor`) — 직사각형(보스→플레이어) + 보스 중심 원
+   - `TrackDuration`(3초) 동안 `TrackingRotationSpeed`(**8도/초** — 90→45→20→8. 장판이 플레이어를 휩쓰는 속도 = 각속도×거리라, 걷기 600cm/s로 맵 끝 4000cm에서도 피하려면 ω < 약 8.6도/초) 제한으로 플레이어를 따라 회전, 안쪽이 **보스 쪽부터 게이지처럼 차오름**(직사각형은 길이, 원은 반지름이 같은 비율) → 언제 터지는지 보임
+   - 꽉 차면 **원이 먼저 터지고**, 직사각형은 `ExplosionSegmentCount`(8)칸으로 나뉘어 **보스 쪽부터 `ExplosionSegmentInterval`(0.07초) 간격으로 순차 폭발**(블레이즈처럼 앞으로 뻗어나감)
+   - 한 캐릭터는 원+직사각형 통틀어 **한 번만** 맞음(원 안이면 `CircleDamage`, 아니면 `BeamDamage`), `bApplyKnockdownOnHit`(기본 true)
+4. 게이지·장판 둘 다 끝나면 Succeeded. `ExitState`에서 카메라 복구 + 오염 장판 비활성화 + 중간에 끊겼으면 남은 액터 정리
+- `BeamLength` 기본 4000 — 2400이었을 땐 보스와 플레이어가 맵 끝과 끝에 있으면 안 닿았음(타일 중심 간 최대 3180cm)
+- 범위 조절: Beam BP 값(`BeamLength`/`BeamHalfWidth`/`CircleRadius`) 또는 Task의 `Pattern|Override`(음수 = BP 값 유지)
+- `MarkClass`/`BeamClass`는 **비워두면 네이티브 클래스로 스폰** — BP 할당을 깜빡해 패턴이 조용히 실패하던 전례(하트 등) 때문에 폴백을 둠
+- 두 액터 다 Tick 기반 + `BeginPlay`에서 `GetEnrageTimeScale()` → 광폭화 규칙 준수(월드 타이머 안 씀)
+- **패턴이 끝나면(중간에 끊겨도) `ExitState`에서 오염 장판을 전부 다시 비활성(핑크)으로** — 활성(빨강)은 패턴 진행 중에만
+
+### 트리거 — `Boss Settlement Gauge Reached` 조건 25 / 75 (예전 `Boss Enrage Time Reached` 500은 폐기)
+- Root에 On Tick Transition 2개(GaugePercent 25, 75) → 둘 다 PoopPattern State. Task가 진입 시 발동 지점 소모
+- (이하 예전 시간 조건 시절 기록)
+- Task가 **진입 즉시 스스로** `MarkPatternTriggered` — `Mark Boss Pattern Triggered` Task를 같은 State에 나란히 두면 그게 즉시 Succeeded를 반환해 State가 바로 끝날 수 있어서
+- ⚠️ Enter Condition은 **State 선택 시점에만** 검사된다 → 짤패턴 도중에 8:20이 되면 그 패턴 + Cooldown이 끝난 뒤에 시작(몇 초 늦을 수 있음). 정확히 맞추려면 `SmallPatternRotation`에 `On Tick` 전이 + 같은 조건을 추가해야 함
+
+### StateTree 배치 (에디터 수동 — MCP는 StateTree 쓰기 불가)
+- 루트 아래 `MirrorCounter`와 같은 레벨, **`SmallPatternRotation`보다 위**에 새 State `PoopPattern` 추가
+- Enter Condition: `Boss Enrage Time Reached` (Boss 바인딩, RemainingSeconds 500, PatternName `PoopPattern`)
+- Task: `Echidna Poop Pattern` 하나만 (Boss / AIController 바인딩, PatternName `PoopPattern`)
+- Transition: On State Succeeded → `SmallPatternRotation` (MirrorCounter와 동일)
+
+### 카메라 줌 (`ALoACharacter`)
+- `SetCameraZoomOverride(ArmLength)` / `ClearCameraZoomOverride()` — Tick에서 `CameraBoom->TargetArmLength`를 `FInterpTo(CameraZoomInterpSpeed=2.5)`로 보간. 기본 길이는 **BeginPlay 시점 값**을 기억(BP에서 바꾼 값도 존중)
+
+## 에키드나 시간 패턴 — 광폭화 7분 40초 "랜잡" (`EchidnaFlytrapZoneActor`, `UI/ScreenFogWidget`, `EchidnaBossStateTreeUtility`) — 2026-09-23
+
+### 흐름 (`FStateTreeTask_EchidnaRandomGrabPattern`)
+1. 진입: 보스 정지(매 틱), **비활성 오염 장판 전부 활성화**, 진입 즉시 `MarkPatternTriggered` + `SetActiveTimedPattern`
+2. `FogDelay`(3초) 뒤 **화면 전체 핑크 연기**, 그로부터 `FirstTrapDelay`(1초) 뒤부터 장판 판정 시작
+3. **앞 장판의 꽃이 다 나오면(`IsTrapShown`) 그 순간 플레이어가 서 있는 타일에 다음 파란 장판**(`AEchidnaFlytrapZoneActor`). 한 번에 하나씩, **같은 타일엔 중복 불가**(이미 꽃이 있는 타일에 서 있으면 다른 타일로 옮길 때까지 대기). 총 `RoundCount`(5)개
+   - 변천사: "꽃 나온 뒤 0.2초 텀" → "체류 0.5초면 동시에 여러 개" → "꽃 나온 뒤 + 체류 0.5초" → **"꽃 나온 뒤 바로"**(현재, 체류 조건 `DwellTime` 삭제)
+4. 파란 장판이 `FillDuration`(1초) 동안 꽉 차면 파리지옥 — **꽃은 패턴이 끝날 때까지 남는다.** 장판이 꽉 찰 때 그 타일에 있거나, **이후 꽃 타일을 밟으면** 먹힘
+   - 먹힘 = **최대 HP × `EatDamageRatio`(0.9)** 데미지 + **패턴이 끝날 때까지 붙잡힘**(`ALoACharacter::SetHeldByPattern(true)` → `IsActionLocked`). 이미 붙잡힌 사람은 다시 먹지 않음(데미지 중복 방지)
+5. 마무리 조건: 더 깔 게 없음(5개 다 깔았거나 / 플레이어가 붙잡혔거나 / 장판 단계 `MaxRoundsDuration` 15초 초과 — 계속 움직여서 안 깔리는 경우 대비) **그리고** 깔린 것들이 전부 꽃까지 나옴 → `EndDelay`(1.5초) 후 Succeeded
+6. `ExitState`(중간에 끊겨도): **꽃 전부 `Dismiss()`(가라앉아 사라짐)**, **붙잡힌 플레이어 해제**, 연기 걷힘, 오염 장판 비활성, 시간 패턴 잠금 해제
+
+### "붙잡힘" 상태 (`ALoACharacter::bIsHeld`)
+- 기절(`ApplyStun`)과 같은 방식(캐스팅·사거리 이동 취소 + 제자리 정지)이지만 **시간 제한이 없다** — 건 쪽이 반드시 풀어야 함(랜잡은 `ExitState`에서 월드의 모든 `ALoACharacter`를 해제). 연출 훅 `OnHeldVisualChanged(bool)`
+
+### ⚠️ PatternName 불일치로 패턴이 무한 반복되던 문제 (RenGrab 2026-09-23, MirrorLink 2026-09-24 — 같은 실수 반복)
+- 조건에는 State 이름(`RenGrab`, `MirrorLink`)을, Task는 기본값(`RandomGrabPattern`, `Settlement50`)을 쓰는 실수가 반복됨 → 조건이 영원히 "미발동" → 끝날 때마다 다시 시작
+- **코드로 해결**: 큰 패턴 Task(똥장판·랜잡·거울잇기)는 공용 `MarkBigPatternTriggered()`로 **Task의 PatternName과 자기 State 이름(`Context.GetStateFromHandle(Context.GetCurrentlyProcessedState())->Name`) 둘 다** 발동 표시 → 조건에 둘 중 뭘 적어도 맞음. 새 큰 패턴 Task도 이 함수를 쓸 것
+- 그 외 조건 PatternName이 둘 다와 다르면 여전히 반복됨 — `재진입` 경고 로그로 확인
+
+### (이전 기록) PatternName은 조건과 Task가 반드시 같아야 한다 (2026-09-23 버그)
+- Root On Tick 조건이 `RenGrab`, Task가 `RandomGrabPattern`으로 표시해서 조건이 영원히 true → **매 틱 State 재진입 → 패턴이 매 프레임 처음부터 다시 시작**(로그에 "패턴 시작"이 프레임마다 찍힘) → 연기·장판·파리지옥이 하나도 안 나오고 끝나지도 않았음
+- **짤패턴과 겹치지 않는다**: Root On Tick 전이는 원래 진행 중인 짤패턴 State를 즉시 끊는데, 짤패턴이 이미 스폰한 거울·장판·하트 등은 독립 액터라 계속 살아서 시간 패턴과 겹쳤음. 그래서 `Boss Enrage Time Reached`가 `Context.GetActiveStateNames()`에 `WaitWhileStatesActive`(기본 `SmallPatternRotation`)가 있으면 false → **짤패턴이 끝나 Patrol(쿨다운)로 넘어가는 순간 시작**. StateTree 수정 불필요(새 필드는 기본값으로 로드됨). 짤패턴 부모 State 이름을 바꾸면 이 목록도 바꿀 것
+- 코드 안전장치: 시간 패턴 Task가 진입 시 `AEchidnaBoss::SetActiveTimedPattern()`, Exit에서 해제. `Boss Enrage Time Reached`는 **시간 패턴 진행 중이면 무조건 false** → 이름이 틀려도 매 틱 재시작은 안 함(단, 끝난 뒤 다시 발동은 여전히 되므로 이름은 맞춰야 함). 시간 패턴끼리 서로 끊지도 않음
+- 재진입 시 Task가 `이미 발동한 패턴('...')에 재진입` 경고 로그를 남김 — 이 로그가 보이면 이름 불일치
+
+### StateTree 배치 (에디터 수동) — 똥장판 패턴과 동일
+- Root 자식으로 State `RandomGrab` 추가, Task `Echidna Random Grab Pattern` 하나(Boss/AIController 바인딩)
+- **Root에 On Tick Transition → RandomGrab**, Condition `Boss Enrage Time Reached`(RemainingSeconds **460** = 7분 40초, PatternName `RandomGrabPattern`)
+- RandomGrab에 On State Completed → Patrol
+- Enter Condition은 넣지 않는다(똥장판 패턴에서 두 곳 값이 어긋나 안 나왔던 전례 — Root Transition 하나로 충분)
+
+## 에키드나 정산 패턴 — 반정산(50%)·풀정산(100%) "거울잇기" (둘 다 같은 패턴, 100% 끝나면 게이지 0) (`EchidnaLinkMirrorActor`, `EchidnaBossStateTreeUtility`) — 2026-09-24
+
+### 흐름 (`FStateTreeTask_EchidnaMirrorLinkPattern`)
+1. 진입: 발동 표시(`Settlement50`) + `SetActiveTimedPattern`(시간 패턴과 서로 안 끊게), 보스 **사라짐**(`SetActorHiddenInGame` + 충돌 끔)
+2. `VanishDuration`(1초) 뒤 **레이드 시작 때 깔린 파란 테두리 2칸**에 동시 등장 — 거울은 외곽(`MarkerTileCoords[0]`), 보스는 안쪽(`[1]`) 타일 윗면에 거울을 바라보고 선다(패턴 내내 매 틱 그 자리 고정)
+3. 거울(`AEchidnaLinkMirrorActor`): `TrackDuration`(5초) 동안 노란 빛줄기로 플레이어 추적(`TrackingRotationSpeed` 45도/초, 거울 원반도 같이 회전) → 끝나면 **플레이어 강제 정지**(`SetHeldByPattern(true)`) + 거울 정면으로 빛 덩어리 직진
+4. 빛 덩어리가 플레이어에 닿으면(2D 거리 ≤ `OrbHitRadius` + 캡슐 반지름) 플레이어 타일 **노란 테두리**(`AHexTile::SetLinkHighlighted`) → 그 타일과 보스 타일이 **헥스 거리 1**이면 보스에게 날아가 **성공**
+5. **실패**: 플레이어에 못 닿고 `MaxTravelDistance`(5000) 초과(맵 밖), 또는 플레이어는 맞았지만 옆 칸에 보스가 없음(유저가 명시 안 해서 실패로 처리) → **전 타일 빨간 점멸**(`AHexArena::SetAllTilesDangerFlash` — 바닥 `ActivePoopMaterial` + 빨간 테두리, 타일 타입은 안 바뀜) + 모든 플레이어에게 **최대 HP × `FailDamageRatio`(10)** → `FailFlashDuration`(2초) 뒤 점멸 해제
+6. `EndDelay`(1초) 후 Succeeded. `ExitState`(끊겨도): **보스 다시 보이게**, 붙잡힘 해제, 노란 테두리·점멸 해제, 거울 제거, 잠금 해제
+- 성공했을 때의 보상(무력화 등)은 아직 없음 — 결과만 로그(`[LinkMirror] ... 성공`)
+- 테두리 우선순위: 위험 점멸·활성 오염(빨강) > 거울잇기(노랑) > 파란 테두리
+
+### 트리거 — `Boss Settlement Gauge Reached` 조건 50 / 100
+- `GetNextSettlementThreshold() == GaugePercent` && **다른 큰 패턴(시간/정산) 진행 중 아님** && **짤패턴(`WaitWhileStatesActive` = `SmallPatternRotation`) 진행 중 아님**. PatternName 필드는 삭제됨(%만 적으면 됨)
+
+### StateTree 배치 (에디터 수동) — 시간 패턴과 동일
+- Root 자식으로 State `MirrorLink`, Task `Echidna Mirror Link Pattern` 하나(Boss/AIController 바인딩, PatternName `Settlement50`)
+- **Root에 On Tick Transition 2개 → MirrorLink**, Condition `Boss Settlement Gauge Reached` GaugePercent **50**, **100** — Enter Condition은 넣지 말 것
+- MirrorLink에 On State Completed → Patrol
+- 테스트: `BP_Echidna`의 `SettlementNaturalAmount`를 크게(예: 20) 하면 금방 50%
+
 ## 매혹 게이지 스택 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `LoAPlayerController.h/.cpp`, `UI/CharmGaugeWidget.h/.cpp`) — 2026-09-21
 
 ### 개요 — 기존 0~10 누적 게이지를 3스택 + 스택 단위 감소 방식으로 전면 재설계
@@ -605,34 +743,36 @@
 
 ## 데미지/HP 밸런스 (2026-09-22)
 
-### 기준값
+### 기준값 (2026-09-23 — 실제 에키드나 싱글모드 수치로 교체)
 | 항목 | 값 | 실제 저장 위치 |
 |---|---|---|
 | 플레이어 최대 HP | 100,000 | `DA_Sorceress.MaxHP` |
-| 플레이어 AttackPower | 35,000 | `DA_Sorceress.AttackPower` |
-| 보스 최대 HP | 21,000,000 | `BP_Echidna` CDO |
-| 보스 체력 줄 | 210 (에키드나 2관문 **솔로** 기준, 다인 하드는 285) | `BP_Echidna` CDO |
-| 1줄당 HP | 100,000 = 플레이어 풀피 1개분 | — |
-| 거울 카운터 발동 줄 | 155 (285줄 기준 210줄을 솔로로 환산) | `BP_Echidna` CDO `BigPatternThresholds` |
+| 플레이어 AttackPower | 7,911,200 | `DA_Sorceress.AttackPower` |
+| 보스 최대 HP | 4,746,719,168 (에키드나 **싱글모드** 실제값) | C++ 기본값 (`BP_Echidna` CDO·레벨 인스턴스 모두 오버라이드를 지워 C++을 따르게 함) |
+| 보스 체력 줄 | 285 (싱글모드) | `BP_Echidna` CDO |
+| 1줄당 HP | 약 16,655,155 | — |
+| 거울 카운터 발동 줄 | 210 | `BP_Echidna` CDO `BigPatternThresholds` |
 
 ⚠️ `BigPatternThresholds`의 `TriggerLine`은 **반드시 `TotalLines`보다 작아야 한다.** 285→210으로 줄일 때 트리거가 210에 그대로 남아 있어서 풀피에서 대형 패턴이 즉시 발동하던 버그가 있었음.
 
-스킬 데미지 = `AttackPower × DamageCoefficient`. 킬타임 조절은 **`AttackPower` 하나만** 만지면 전체가 비례해 움직인다.
+⚠️ **보스 HP는 `double`이다.** 40억대라 float(유효숫자 약 7자리)로는 512 단위로 뭉개지고, `int32`(최대 약 21억)로 반올림하면 오버플로한다. HP 표기도 `FString::FormatAsNumber`(int32 전용) 대신 `FText::AsNumber(int64)`를 쓴다. 보스 HP를 다루는 코드를 새로 짤 때 float/int32로 받지 말 것.
+
+스킬 데미지 = `AttackPower × DamageCoefficient`. 킬타임 조절은 **`AttackPower` 하나만** 만지면 전체가 비례해 움직인다. 7,911,200 = 예전 35,000(보스 2100만 기준) × (4,746,719,168 ÷ 21,000,000) — 계수·쿨타임은 그대로 두고 킬타임이 유지되도록 환산한 값.
 
 ### 스킬 계수/쿨타임 (`DT_Skills`) — 쿨타임은 실제 로아 소서리스 10레벨 값 그대로
 | 스킬 | 계수 | 데미지 | 쿨타임 |
 |---|---|---|---|
-| 기본공격 | 0.35 | 12,250 | 0.8s |
-| 블레이즈 | 2.0 | 70,000 | 10s |
-| 돌풍 | 4.0 | 140,000 | 14s |
-| 인페르노 | 6.0 | 210,000 | 14s |
-| 아이스 에로우 | 5.0 | 175,000 | 22s |
-| 혹한의 부름 | 8.0 | 280,000 | 24s |
-| 익스플로전 | 9.0 | 315,000 | 28s |
-| 천벌 | 14.0 | 490,000 | 28s |
-| 종말의 날 | 25.0 | 875,000 | 30s |
+| 기본공격 | 0.35 | 2,768,920 | 0.8s |
+| 블레이즈 | 2.0 | 15,822,400 | 10s |
+| 돌풍 | 4.0 | 31,644,800 | 14s |
+| 인페르노 | 6.0 | 47,467,200 | 14s |
+| 아이스 에로우 | 5.0 | 39,556,000 | 22s |
+| 혹한의 부름 | 8.0 | 63,289,600 | 24s |
+| 익스플로전 | 9.0 | 71,200,800 | 28s |
+| 천벌 | 14.0 | 110,756,800 | 28s |
+| 종말의 날 | 25.0 | 197,780,000 | 30s |
 
-예상 킬타임: 이론 DPS 약 118,000 → 완벽 플레이 **3분**, 패턴 회피 포함 실전 **약 4분**
+예상 킬타임: 이론 DPS 약 2,670만 → 완벽 플레이 **3분**, 패턴 회피 포함 실전 **약 4분**
 
 ### "스킬 점유율" — 로테이션이 비는지 판단하는 기준
 스킬마다 `(시전시간 + SkillPostDelay) ÷ 쿨타임`을 구해 전부 더한 값.
@@ -660,7 +800,7 @@
 | C++ 기본값 | 실제로 읽히는 곳 |
 |---|---|
 | `CharacterDataAsset.h` MaxHP/AttackPower | `DA_Sorceress` (`PostInitializeComponents`가 덮어씀) |
-| `EchidnaBoss.h` MaxHP/TotalLines | `BP_Echidna` CDO **+ 레벨 배치 인스턴스의 자체 오버라이드** |
+| `EchidnaBoss.h` TotalLines | `BP_Echidna` CDO **+ 레벨 배치 인스턴스의 자체 오버라이드** (MaxHP는 2026-09-23에 오버라이드를 지워 C++ 기본값을 따름) |
 | `HexTile.h` PoopTickDamage | `ABP_HexTile` CDO (`AHexArena.TileClass`로 지정돼 있음) |
 | `EchidnaBossStateTreeUtility.h` 각 Task의 `Damage` | `ST_Echidna`의 Task 인스턴스 데이터 |
 | `FSkillData` 구조체 기본값 | `DT_Skills` 행 — 단 `SkillRowName`이 비어 있으면 DT 로드에 실패하고 **구조체 기본값이 조용히 그대로 남음** (기본공격이 이 상태로 계수 1.0 = 모든 스킬보다 강했던 적 있음) |
@@ -710,6 +850,14 @@
 - [x] 경직(스태거) 시스템 — `ALoACharacter::ApplyStagger()`, 넉다운보다 약하게 짧은 시간만 행동불능(캐릭터를 띄우지 않음), 두번긋고 도넛장판의 슬래시(1·2번)에 연결
 - [x] 기절(스턴) 시스템 — `ALoACharacter::ApplyStun(Duration)`, 경직과 같은 방식이지만 지속시간을 호출마다 지정, 전방향 하트발사에 연결
 - [x] 에키드나 보스 짤패턴 "전방향 하트발사"(단순화판, 잡기/씨앗 제외) — 2초 예고(보스 정지) → 2초간 0.3초 간격으로 완전 전방향(0~360도 랜덤) 랜덤 개수 하트 발사, 피격 시 데미지+3초 기절+매혹 1스택 (C++ 구현 완료, StateTree `ST_Echidna` 에디터 배치는 미완 — 위 섹션 참조)
+- [x] 광폭화 시스템 — 9분 후 보스·패턴 2배속 + 받는 데미지 2배, 보스 HP 바 왼쪽에 남은 시간 표시 (위 "광폭화 시스템" 섹션)
+- [x] 정산 게이지 — 자연 상승 + 매혹 스택/3스택 보너스, 좌상단 초상화 아래 2칸 게이지, StateTree 조건/리셋 Task (위 "정산 게이지" 섹션)
+- [ ] 정산 패턴(25/75%, 50% 반정산, 100% 풀정산) 내용 구현 — 유저가 패턴 설명 주기로 함
+- [x] 레이드 시작 배치 — 비활성 오염 장판 8칸(핑크) + 파란 테두리 타일 2칸(외곽 1 + 안쪽 1, 2칸 간격), 활성화 시 빨강+빨간 테두리 (위 "레이드 시작 배치" 섹션)
+- [x] 광폭화 8분 20초 "똥장판" 패턴 C++ 구현 (위 섹션) — **`ST_Echidna`에 `PoopPattern` State 배치는 에디터에서 수동으로 해야 함**
+- [x] 광폭화 7분 40초 "랜잡" 패턴 C++ 구현 (위 섹션) — **`ST_Echidna`에 `RandomGrab` State + Root On Tick Transition 배치는 에디터에서 수동**
+- [x] 정산 패턴 전부 — 25/75 똥장판, 50/100 거울잇기 (발동 지점 숫자 추적 방식)
+- [ ] 시간 패턴 "그네" (광폭화 3분 40초) — 유저가 설명 주기로 함
 - [ ] Border_GetUp UI 최종 위치/스타일 다듬기
 - [x] DT_Skills `InstantGetUp` 행 — Cooldown 15초 + Icon 채워짐 확인 완료 (2026-09-22)
 - [x] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 완료 (`RetreatFan` State)
@@ -731,7 +879,7 @@
 - [ ] BP_HexArena에서 WallMaterial 재할당 (기존 WallMesh 프로퍼티가 프로시저럴 메시 전환으로 제거됨)
 - [ ] BP_HexTile 서브클래스 생성 + NormalMesh/PoopMesh/FlowerMesh 할당 (NormalMesh는 기존 HISM 메시와 동일하게)
 - [ ] 매혹 게이지 머리 위 UI PIE 실제 확인 필요 — 위치/크기(`CharmGaugeWidgetComponent` Z+160, DrawSize 150x60)가 적절한지, 3등분 이미지가 의도대로 보이는지 육안 확인 안 함
-- [ ] 꽃 개화/똥장판 VFX 연출 (AHexTile::OnTileTypeChanged BlueprintImplementableEvent에서 구현 필요)
+- [x] 큰 꽃 비주얼 + 주변 1칸 매혹 오라 (위 "큰 꽃" 섹션) — 똥장판 자체 VFX는 여전히 없음(머티리얼 색만)
 - [ ] DT_Skills SkillName/Icon 데이터 입력 필요 (혹한의 부름·아이스 에로우·돌풍 포함)
 - [ ] BP_FrostCall / BP_IceArrow / BP_Gust ZoneClass·VFX 에셋 할당
 - [ ] 스킬 레벨에 따른 데미지 계수 연동
@@ -740,6 +888,7 @@
 - [ ] PER_Lava_Brutal 이미터 스케일 조정 (NS_Explosion_Impact 잔상 크기)
 
 ## 자주 쓰는 빌드 명령
+- `LoA.Build.cs`에 **`SlateCore`** 의존성 추가함(2026-09-24) — `FSlateBrush` 등 SlateCore 타입을 멤버로 들고 있으면 LNK2019(`FSlateBrush::FSlateBrush`)가 난다
 ```
 & "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" LoAEditor Win64 Development "C:\Users\User\Documents\Unreal Projects\LoA\LoA.uproject" -NoUBTMakefiles
 ```

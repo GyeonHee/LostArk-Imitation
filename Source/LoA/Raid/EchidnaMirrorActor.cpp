@@ -1,4 +1,5 @@
 #include "Raid/EchidnaMirrorActor.h"
+#include "Raid/EchidnaBoss.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -50,6 +51,10 @@ AEchidnaMirrorActor::AEchidnaMirrorActor()
 void AEchidnaMirrorActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
+	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
+	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
 }
 
 void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator)
@@ -76,7 +81,7 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 		if (LaserDamageTickInterval > 0.f)
 		{
 			GetWorldTimerManager().SetTimer(
-				DamageTimerHandle, this, &AEchidnaMirrorActor::ApplyLaserDamageTick, LaserDamageTickInterval, true);
+				DamageTimerHandle, this, &AEchidnaMirrorActor::ApplyLaserDamageTick, LaserDamageTickInterval / CustomTimeDilation, true);
 		}
 
 		UE_LOG(LogLoA, Log, TEXT("[EchidnaMirror] Activate(SkyGuided) — 상시 발사 시작 Loc=%s"), *GetActorLocation().ToString());
@@ -263,7 +268,7 @@ void AEchidnaMirrorActor::BeginFiring()
 		GetWorldTimerManager().SetTimer(
 			DamageTimerHandle, this,
 			&AEchidnaMirrorActor::ApplyLaserDamageTick,
-			LaserDamageTickInterval, true);
+			LaserDamageTickInterval / CustomTimeDilation, true);
 	}
 }
 

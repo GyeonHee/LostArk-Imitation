@@ -59,6 +59,10 @@ private:
 	// 경직 지속시간이 끝나면 자동 해제하는 타이머 — ApplyStagger에서 재히트마다 갱신됨
 	FTimerHandle StaggerTimerHandle;
 
+	// BeginPlay 시점의 SpringArm 길이 (BP에서 바꿔둔 값 포함) — 줌 오버라이드 해제 시 여기로 돌아간다
+	float DefaultCameraArmLength = 0.f;
+	float CameraArmOverride = -1.f;
+
 	void EndStagger();
 
 	// 기절 지속시간이 끝나면 자동 해제하는 타이머 — ApplyStun에서 재히트마다 갱신됨
@@ -102,7 +106,7 @@ public:
 	TObjectPtr<UCharacterDataAsset> CharacterData;
 
 	UPROPERTY(BlueprintReadOnly, Category="Stats")
-	float AttackPower = 35000.f;
+	float AttackPower = 7911200.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
 	float HP;
@@ -175,6 +179,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stun")
 	bool bIsStunned = false;
 
+	// 패턴에 붙잡힌 상태 — 랜잡 파리지옥에 먹힘 등. 기절과 달리 시간이 아니라 패턴이 끝날 때 풀어준다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Held")
+	bool bIsHeld = false;
+
 	// 끌려가는 중 여부 — "멈춤" 구간과 "드래그" 구간을 모두 포함한다(둘 다 조작 불가)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Pull")
 	bool bIsPulled = false;
@@ -221,6 +229,17 @@ public:
 
 	/** Update */
 	virtual void Tick(float DeltaSeconds) override;
+
+	/** 패턴 연출용 카메라 줌 — SpringArm 길이를 ArmLength로 부드럽게 옮긴다. Clear하면 원래 길이로 복귀 */
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void SetCameraZoomOverride(float ArmLength);
+
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void ClearCameraZoomOverride();
+
+	// 줌 보간 속도 (FInterpTo 속도 — 클수록 빨리 따라감)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	float CameraZoomInterpSpeed = 2.5f;
 
 	float GetHP() const { return HP; }
 	float GetMaxHP() const { return MaxHP; }
@@ -297,6 +316,17 @@ public:
 	UFUNCTION(BlueprintPure, Category="Stun")
 	bool IsStunned() const { return bIsStunned; }
 
+	/** 패턴에 붙잡힘/풀림 — 붙잡히면 캐스팅·사거리 이동을 끊고 제자리에 멈춘 채 풀릴 때까지 조작 불가.
+	 *  시간 제한이 없으므로 건 쪽(패턴 Task의 ExitState)이 반드시 false로 풀어줘야 한다 */
+	UFUNCTION(BlueprintCallable, Category="Held")
+	void SetHeldByPattern(bool bHeld);
+
+	UFUNCTION(BlueprintPure, Category="Held")
+	bool IsHeldByPattern() const { return bIsHeld; }
+
+	UFUNCTION(BlueprintImplementableEvent, Category="Held")
+	void OnHeldVisualChanged(bool bHeld);
+
 	/** 끌려간 뒤에도 유지되는 속박을 푼다 — 끌기를 건 패턴이 끝날 때(StateTree ExitState) 호출할 것.
 	 * 호출되지 않아도 PullMaxHoldTime이 지나면 자동으로 풀린다(영구 속박 방지) */
 	UFUNCTION(BlueprintCallable, Category="Pull")
@@ -311,7 +341,7 @@ public:
 
 	/** 넉다운·경직·기절·끌려가는 중 하나라도 걸려 있으면 이동/스킬 입력이 막혀야 하는 상태인지 — 컨트롤러의 입력 차단 체크에서 사용 */
 	UFUNCTION(BlueprintPure, Category="Stagger")
-	bool IsActionLocked() const { return bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled; }
+	bool IsActionLocked() const { return bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled || bIsHeld; }
 
 	/** 경직 상태가 바뀔 때 호출 — 짧은 피격 리액션 애니메이션은 BP에서 구현 */
 	UFUNCTION(BlueprintImplementableEvent, Category="Stagger")

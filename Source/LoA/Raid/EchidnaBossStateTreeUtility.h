@@ -12,7 +12,13 @@ class AEchidnaFanZoneActor;
 class AEchidnaTetherActor;
 class AEchidnaHeartActor;
 class AEchidnaOrbActor;
+class AEchidnaPoopMarkActor;
+class AEchidnaPoopBeamActor;
+class AEchidnaFlytrapZoneActor;
+class AEchidnaLinkMirrorActor;
+class AHexArena;
 class AAIController;
+class ALoACharacter;
 
 /**
  * FStateTreeCondition_BossLineThreshold의 Instance Data
@@ -86,6 +92,437 @@ struct FStateTreeTask_MarkBossPatternTriggered : public FStateTreeTaskCommonBase
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
 #endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeCondition_BossSettlementGauge의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeBossSettlementGaugeInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// 이 발동 지점(%)이 "다음 차례"면 통과 — 25/75 = 똥장판, 50/100 = 거울잇기 (AEchidnaBoss::SettlementThresholds 중 하나).
+	// 이름은 필요 없다 — 어느 지점을 썼는지는 보스가 숫자로 추적하고, 패턴 Task가 진입 시 소모한다
+	UPROPERTY(EditAnywhere, Category = "Condition", meta = (ClampMin = "0", ClampMax = "100"))
+	int32 GaugePercent = 50;
+
+	// 이 State들 중 하나라도 활성이면 대기 — 짤패턴 도중이면 끝난 뒤 시작 (Boss Enrage Time Reached와 같은 규칙)
+	UPROPERTY(EditAnywhere, Category = "Condition")
+	TArray<FName> WaitWhileStatesActive = { TEXT("SmallPatternRotation") };
+};
+
+/**
+ * 정산 게이지가 GaugePercent를 넘었고 그 지점이 "다음 차례"(아직 안 쓴 지점 중 가장 낮음)면 통과.
+ * Root On Tick Transition의 조건으로 쓴다 — 짤패턴·다른 큰 패턴 진행 중이면 끝날 때까지 대기
+ */
+USTRUCT(meta = (DisplayName = "Boss Settlement Gauge Reached", Category = "EchidnaBoss"))
+struct FStateTreeCondition_BossSettlementGauge : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeBossSettlementGaugeInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeTask_ResetSettlementGauge의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeResetSettlementGaugeInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// 게이지를 0으로 돌리면서 발동 표시를 지워 다음 사이클에 다시 나오게 할 패턴 이름들
+	UPROPERTY(EditAnywhere, Category = "Task")
+	TArray<FName> PatternNamesToRearm = { TEXT("Settlement25"), TEXT("Settlement50"), TEXT("Settlement75"), TEXT("Settlement100") };
+};
+
+/**
+ * 풀정산 패턴이 끝날 때 호출 — 정산 게이지를 0으로 되돌리고 25/50/75/100 패턴을 다시 발동 가능하게 한다
+ */
+USTRUCT(meta = (DisplayName = "Reset Settlement Gauge", Category = "EchidnaBoss"))
+struct FStateTreeTask_ResetSettlementGauge : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeResetSettlementGaugeInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeCondition_BossEnrageTime의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeBossEnrageTimeInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	// "광폭화까지 남은 시간"이 이 값(초) 이하가 되면 통과 — 500 = 광폭화까지 8분 20초
+	UPROPERTY(EditAnywhere, Category = "Condition")
+	float RemainingSeconds = 500.f;
+
+	// 이미 발동한 패턴은 다시 통과하지 않음 (패턴 Task가 스스로 표시하거나 Mark Boss Pattern Triggered로 표시)
+	UPROPERTY(EditAnywhere, Category = "Condition")
+	FName PatternName = TEXT("PoopPattern");
+
+	// 이 State들 중 하나라도 활성이면 대기 — 짤패턴 도중에 시간이 돼도 그 짤패턴이 끝나(쿨다운으로 넘어가)고 나서 시작.
+	// Root On Tick 전이는 원래 진행 중인 짤패턴을 끊어버리는데, 짤패턴이 스폰해둔 거울·장판 등은 계속 살아 있어서 겹쳤음
+	UPROPERTY(EditAnywhere, Category = "Condition")
+	TArray<FName> WaitWhileStatesActive = { TEXT("SmallPatternRotation") };
+};
+
+/**
+ * 광폭화 타이머 기준 시간 패턴 — 남은 시간이 RemainingSeconds 이하이고 아직 발동 전이면 통과.
+ * Boss Line Threshold Reached와 같은 방식으로 SmallPatternRotation보다 앞선 State의 Enter Condition으로 쓴다
+ */
+USTRUCT(meta = (DisplayName = "Boss Enrage Time Reached", Category = "EchidnaBoss"))
+struct FStateTreeCondition_BossEnrageTime : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeBossEnrageTimeInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeTask_EchidnaPoopPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaPoopPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 로그·진행 중 표시용 이름 (정산 패턴이라 발동 판정은 이름이 아니라 게이지 발동 지점으로 한다)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	FName PatternName = TEXT("PoopPattern");
+
+	// 이번에 소모한 정산 발동 지점 (25 또는 75)
+	UPROPERTY()
+	int32 ConsumedThreshold = -1;
+
+	// 비워두면 네이티브 클래스 기본값으로 스폰 (BP 서브클래스를 만들었으면 여기 넣을 것)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaPoopMarkActor> MarkClass;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaPoopBeamActor> BeamClass;
+
+	// 패턴 시작 후 추적 장판이 나오는 시점 (초) — 플레이어 게이지(5초)가 4초쯤 찼을 때
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float BeamSpawnDelay = 4.f;
+
+	// 직사각형 장판 데미지 / 보스 중심 원형 데미지 (둘 다 맞아도 한 번만 — 원 안이면 원 데미지)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float BeamDamage = 15000.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float CircleDamage = 15000.f;
+
+	// 범위 오버라이드 — 음수면 Beam 클래스(BP) 값 사용
+	UPROPERTY(EditAnywhere, Category = "Pattern|Override")
+	float CircleRadiusOverride = -1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Override")
+	float BeamLengthOverride = -1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Override")
+	float BeamHalfWidthOverride = -1.f;
+
+	// 패턴 동안 카메라를 이 길이(SpringArm)로 뒤로 뺀다 — 기본 800
+	UPROPERTY(EditAnywhere, Category = "Camera")
+	float CameraArmLength = 1500.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaPoopMarkActor> Mark;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaPoopBeamActor> Beam;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<ALoACharacter> Player;
+
+	UPROPERTY()
+	float Elapsed = 0.f;
+
+	UPROPERTY()
+	bool bBeamSpawned = false;
+};
+
+/**
+ * 정산 게이지 25%·75% "똥장판" 패턴 (처음엔 광폭화 8분 20초 시간 패턴으로 잘못 알고 만들었음 — 그 시간대에 25%가 찼던 것).
+ *  1) 보스 정지, 카메라 줌아웃, 비활성 오염 장판 전부 활성화(빨강)
+ *  2) 플레이어 발밑에 5초 원형 게이지(AEchidnaPoopMarkActor) — 다 차면 밟고 있는 타일이 오염 장판이 됨
+ *  3) BeamSpawnDelay(4초) 뒤 보스에서 추적 장판(AEchidnaPoopBeamActor) — 3초 따라다니며 차오른 뒤
+ *     보스 중심 원 + 직사각형이 보스 쪽부터 순차 폭발
+ *  4) 게이지와 장판이 모두 끝나면 Succeeded, 카메라 복구
+ */
+USTRUCT(meta = (DisplayName = "Echidna Poop Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaPoopPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaPoopPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	void SpawnBeam(FInstanceDataType& InstanceData) const;
+};
+
+UENUM()
+enum class EEchidnaRandomGrabPhase : uint8
+{
+	WaitFog,	// 패턴 시작 ~ 연기 (보스 정지, 오염 장판 활성)
+	FogIn,		// 연기가 낀 뒤 첫 파란 장판까지
+	Rounds,		// 앞 장판의 꽃이 다 나오면 그 순간 플레이어가 서 있는 타일에 다음 파란 장판 (최대 RoundCount개)
+	Ending,		// 모든 파리지옥이 나온 뒤 잠깐 대기 후 종료
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaRandomGrabPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaRandomGrabPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 진입 시 스스로 발동 표시 — Boss Enrage Time Reached 조건의 PatternName과 같아야 한 번만 나온다
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	FName PatternName = TEXT("RandomGrabPattern");
+
+	// 비워두면 네이티브 클래스로 스폰
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaFlytrapZoneActor> FlytrapClass;
+
+	// 패턴 시작 후 연기가 끼기 시작하는 시점 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FogDelay = 3.f;
+
+	// 연기가 끼기 시작한 뒤 첫 파란 장판까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FirstTrapDelay = 1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FogFadeTime = 1.f;
+
+	// 파란 장판 총 개수
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	int32 RoundCount = 5;
+
+	// 파란 장판을 다 못 깔아도(계속 움직이는 등) 이 시간(초)이 지나면 더 깔지 않고 마무리 — 패턴이 안 끝나는 것 방지
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float MaxRoundsDuration = 15.f;
+
+	// 먹혔을 때 데미지 = 최대 HP × 이 비율. 먹히면 패턴이 끝날 때까지 못 움직인다
+	UPROPERTY(EditAnywhere, Category = "Pattern", meta = (ClampMin = "0", ClampMax = "1"))
+	float EatDamageRatio = 0.9f;
+
+	// 마지막 파리지옥이 나온 뒤 패턴 종료(연기 걷힘·꽃 사라짐)까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float EndDelay = 1.5f;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaFlytrapZoneActor>> Traps;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AHexArena> Arena;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<ALoACharacter> Player;
+
+	UPROPERTY()
+	EEchidnaRandomGrabPhase Phase = EEchidnaRandomGrabPhase::WaitFog;
+
+	UPROPERTY()
+	float PhaseElapsed = 0.f;
+
+	UPROPERTY()
+	int32 RoundsStarted = 0;
+
+
+};
+
+/**
+ * 광폭화 7분 40초 "랜잡" 패턴.
+ *  1) 보스 정지, 비활성 오염 장판 전부 활성화
+ *  2) FogDelay(3초) 뒤 화면 전체 핑크 연기, 그로부터 FirstTrapDelay(1초) 뒤 1회차
+ *  3) 앞 장판의 꽃이 다 나오면 그 순간 플레이어가 서 있는 타일에 파란 장판(1초) → 꽉 차면 파리지옥.
+ *     한 번에 하나씩, 같은 타일엔 중복 불가. 총 RoundCount(5)개. 파리지옥은 패턴 끝까지 남고, 장판이 꽉 찰 때 그 위에 있거나
+ *     나중에 그 타일을 밟으면 먹힘 → 최대 HP의 EatDamageRatio(90%) + 패턴 끝까지 붙잡힘
+ *  4) 다 깔았거나(또는 붙잡혔거나 MaxRoundsDuration 초과) 모든 파리지옥이 나온 뒤 EndDelay 후 Succeeded
+ *     — ExitState에서 꽃 제거, 붙잡힘 해제, 연기 걷힘, 오염 장판 비활성화
+ */
+USTRUCT(meta = (DisplayName = "Echidna Random Grab Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaRandomGrabPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaRandomGrabPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	// Coord 타일에 파란 장판
+	bool SpawnTrapAt(FInstanceDataType& InstanceData, const FIntPoint& Coord) const;
+};
+
+UENUM()
+enum class EEchidnaMirrorLinkPhase : uint8
+{
+	Vanished,	// 보스 사라짐
+	Linking,	// 보스·거울 등장, 거울이 추적 → 발사 → 결과 대기
+	Failing,	// 실패 — 전 타일 빨간 점멸 유지
+	Ending,
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaMirrorLinkPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaMirrorLinkPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 로그·진행 중 표시용 이름 (정산 패턴이라 발동 판정은 게이지 발동 지점으로 한다)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	FName PatternName = TEXT("MirrorLink");
+
+	// 이번에 소모한 정산 발동 지점 (50 또는 100) — 100이면 끝날 때 게이지 초기화
+	UPROPERTY()
+	int32 ConsumedThreshold = -1;
+
+	// 비워두면 네이티브 클래스로 스폰
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaLinkMirrorActor> MirrorClass;
+
+	// 보스가 사라져 있는 시간 (초) — 이후 보스·거울 동시 등장
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float VanishDuration = 1.f;
+
+	// 실패 데미지 = 최대 HP × 이 배율 (즉사급)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FailDamageRatio = 10.f;
+
+	// 실패 시 전 타일이 빨갛게 유지되는 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FailFlashDuration = 2.f;
+
+	// 결과가 난 뒤 패턴 종료까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float EndDelay = 1.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaLinkMirrorActor> Mirror;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AHexArena> Arena;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<ALoACharacter> Player;
+
+	UPROPERTY()
+	EEchidnaMirrorLinkPhase Phase = EEchidnaMirrorLinkPhase::Vanished;
+
+	UPROPERTY()
+	float PhaseElapsed = 0.f;
+
+	UPROPERTY()
+	FIntPoint BossCoord = FIntPoint::ZeroValue;
+
+	UPROPERTY()
+	FVector BossStandLocation = FVector::ZeroVector;
+};
+
+/**
+ * 반정산(50%)·풀정산(100%) "거울잇기" — 둘 다 같은 패턴. 100%가 끝나면 게이지 0으로 한 바퀴.
+ *  1) 보스가 사라지고(숨김 + 충돌 끔) VanishDuration(1초) 뒤, 레이드 시작 때 깔린 파란 테두리 타일 2칸에
+ *     거울(외곽, AHexArena::MarkerTileCoords[0])과 보스(안쪽, [1])가 동시에 등장 — 보스는 그 자리에 가만히
+ *  2) 거울이 5초 동안 노란 빛줄기로 플레이어를 따라가다가, 플레이어를 강제로 멈추고 정면으로 빛 덩어리 발사
+ *  3) 빛 덩어리가 플레이어를 거쳐(그 타일 노란 테두리) 옆 칸 보스에게 닿으면 성공.
+ *     플레이어를 못 맞히거나 옆 칸에 보스가 없으면 실패 — 전 타일 빨간 점멸 + 최대 HP × FailDamageRatio(즉사급)
+ *  4) ExitState: 붙잡힘 해제, 노란 테두리·빨간 점멸 해제, 거울 제거, 보스 보이게 복구
+ */
+USTRUCT(meta = (DisplayName = "Echidna Mirror Link Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaMirrorLinkPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaMirrorLinkPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	// 보스·거울 등장 — 실패하면 false (파란 타일 정보가 없는 등)
+	bool AppearBossAndMirror(FInstanceDataType& InstanceData) const;
 };
 
 /**
@@ -449,9 +886,9 @@ struct FStateTreeEchidnaDragFanPatternInstanceData
 /**
  * "끌고간후 장판터지는" 짤패턴 — 1단계로 보스 정면 기준 부채꼴 모양으로 줄기(촉수) TetherCount개를 동시에 뻗어
  * (레퍼런스: 7개, TetherFanAngle 범위 안에 균등 분포 — 나머지 각도는 안전지대) SnapDelay 뒤 맞은 대상을 보스 쪽으로
- * 끌어당긴다. 줄기에 맞은 대상이 단 한 명도 없으면(AnyTetherHit false) 2단계 없이 바로 패턴이 끝난다 — 아무도
- * 끌려오지 않았는데 장판이 터지는 것을 막기 위함.
- * 누군가 끌려왔다면 2단계로 FirstFanAngle(기본 120도) 부채꼴(1)을 먼저 터뜨리고 이어서 SecondFanAngle(기본 180도,
+ * 끌어당긴다. 줄기에 맞은 대상이 없어도(AnyTetherHit false — 로그만 남김) 2단계는 그대로 진행한다
+ * (예전엔 아무도 안 끌려오면 장판 없이 끝났는데, 유저 요청으로 항상 터지게 바꿈).
+ * 2단계로 FirstFanAngle(기본 120도) 부채꼴(1)을 먼저 터뜨리고 이어서 SecondFanAngle(기본 180도,
  * 1보다 넓음) 부채꼴(2)을 터뜨린다. First/SecondYawOffset을 조절해 두 부채꼴이 살짝만 겹치게 배치 —
  * 겹치는 구간은 1·2 둘 다 맞아 매혹 게이지가 2스택 쌓인다(레퍼런스의 "빨간 원 2스택 주의").
  * 넉백 없이 매혹 게이지만 쌓이도록 FanZoneClass는 bApplyKnockdownOnHit=false / bApplyCharmGaugeOnHit=true로
@@ -741,10 +1178,6 @@ struct FStateTreeEchidnaHeartBurstPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Heart")
 	float HeartStunDuration = 3.f;
 
-	// 하트에 맞으면 쌓이는 매혹 게이지
-	UPROPERTY(EditAnywhere, Category = "Heart")
-	int32 HeartCharmGaugeAmount = 1;
-
 	UPROPERTY(Transient)
 	EEchidnaHeartBurstPhase Phase = EEchidnaHeartBurstPhase::Telegraph;
 
@@ -777,7 +1210,8 @@ struct FStateTreeEchidnaHeartBurstPatternInstanceData
  * 전방향 중 완전히 랜덤(FMath::FRandRange)으로 정해진다 — 매 웨이브마다 개수도 방향도 전부 달라짐.
  * 하트에 맞은 플레이어는 데미지 +
  * HeartStunDuration(기본 3초) 동안 완전 기절(ALoACharacter::ApplyStun — 넉다운과 달리 서 있는 채로
- * 얼어붙어 이동/스킬 입력이 전부 차단됨) + HeartCharmGaugeAmount(기본 1) 매혹 게이지가 적용된다.
+ * 얼어붙어 이동/스킬 입력이 전부 차단됨) + 발밑에 오염 장판 게이지(AEchidnaPoopMarkActor — 5초 뒤 서 있는 타일이
+ * 비활성 오염 장판)가 붙는다. 예전엔 매혹 1스택이었는데 오염 장판 생성으로 바뀜 (백스탭 하트발사는 여전히 매혹 스택).
  * FireDuration이 다 지나면(개별 하트가 아직 날아가고 있어도) 곧바로 Succeeded — 발사된 하트들은 각자
  * 알아서 맞거나 MaxRange에서 소멸한다(패턴 State 종료와 하트 생존은 서로 독립적).
  */

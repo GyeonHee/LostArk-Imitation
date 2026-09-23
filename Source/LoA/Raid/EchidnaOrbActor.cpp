@@ -1,4 +1,5 @@
 #include "Raid/EchidnaOrbActor.h"
+#include "Raid/EchidnaBoss.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -38,6 +39,10 @@ AEchidnaOrbActor::AEchidnaOrbActor()
 void AEchidnaOrbActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
+	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
+	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
 
 	CollisionComp->OnComponentBeginOverlap.AddDynamic(this, &AEchidnaOrbActor::OnOverlapBegin);
 

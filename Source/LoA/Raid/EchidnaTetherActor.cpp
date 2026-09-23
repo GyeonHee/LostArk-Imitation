@@ -1,4 +1,5 @@
 #include "Raid/EchidnaTetherActor.h"
+#include "Raid/EchidnaBoss.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -31,6 +32,10 @@ AEchidnaTetherActor::AEchidnaTetherActor()
 void AEchidnaTetherActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
+	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
+	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
 }
 
 void AEchidnaTetherActor::Activate(const FVector& InPullTarget, float InPullStrength, AController* InInstigator)
@@ -53,7 +58,7 @@ void AEchidnaTetherActor::Activate(const FVector& InPullTarget, float InPullStre
 
 	if (SnapDelay > 0.f)
 	{
-		GetWorldTimerManager().SetTimer(SnapTimerHandle, this, &AEchidnaTetherActor::PerformSnap, SnapDelay, false);
+		GetWorldTimerManager().SetTimer(SnapTimerHandle, this, &AEchidnaTetherActor::PerformSnap, SnapDelay / CustomTimeDilation, false);
 	}
 	else
 	{

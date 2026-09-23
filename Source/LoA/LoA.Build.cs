@@ -21,6 +21,7 @@ public class LoA : ModuleRules
 			"Niagara",
 			"UMG",
 			"Slate",
+			"SlateCore",
 			"ModelViewViewModel",
 			"ProceduralMeshComponent"
 		});

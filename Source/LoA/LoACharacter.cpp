@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LoACharacter.h"
+#include "Raid/EchidnaBoss.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Camera/CameraComponent.h"
 #include "Components/DecalComponent.h"
@@ -87,6 +88,11 @@ void ALoACharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (CameraBoom)
+	{
+		DefaultCameraArmLength = CameraBoom->TargetArmLength;
+	}
+
 	GetCharacterMovement()->MaxAcceleration = 99999.0f;
 
 	OnCharmGaugeChanged.AddUObject(this, &ALoACharacter::HandleCharmGaugeChanged);
@@ -115,6 +121,25 @@ void ALoACharacter::Tick(float DeltaSeconds)
 	}
 
 	TickPullDrag(DeltaSeconds);
+
+	if (CameraBoom && DefaultCameraArmLength > 0.f)
+	{
+		const float TargetArm = CameraArmOverride > 0.f ? CameraArmOverride : DefaultCameraArmLength;
+		if (!FMath::IsNearlyEqual(CameraBoom->TargetArmLength, TargetArm, 0.5f))
+		{
+			CameraBoom->TargetArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, TargetArm, DeltaSeconds, CameraZoomInterpSpeed);
+		}
+	}
+}
+
+void ALoACharacter::SetCameraZoomOverride(float ArmLength)
+{
+	CameraArmOverride = ArmLength;
+}
+
+void ALoACharacter::ClearCameraZoomOverride()
+{
+	CameraArmOverride = -1.f;
 }
 
 void ALoACharacter::ExecuteDash_Implementation(const FVector& TargetLocation)
@@ -136,6 +161,9 @@ float ALoACharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 
 void ALoACharacter::ReceiveDamage(float DamageAmount)
 {
+	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다
+	DamageAmount *= AEchidnaBoss::GetEnrageDamageMultiplier(this);
+
 	HP = FMath::Max(HP - DamageAmount, 0.f);
 	OnHPChanged.Broadcast(HP);
 }
@@ -167,6 +195,9 @@ void ALoACharacter::AddCharmGauge(int32 Amount)
 	if (CharmGauge != OldGauge)
 	{
 		OnCharmGaugeChanged.Broadcast(CharmGauge);
+
+		// 매혹 스택이 쌓이면 보스 정산 게이지도 같이 오른다 (3스택 도달 시 추가 보너스)
+		AEchidnaBoss::NotifyCharmStackGained(this, CharmGauge >= MaxCharmGauge);
 	}
 
 	if (CharmGauge >= MaxCharmGauge)
@@ -442,6 +473,25 @@ void ALoACharacter::EndStagger()
 
 	bIsStaggered = false;
 	OnStaggerVisualChanged(false);
+}
+
+void ALoACharacter::SetHeldByPattern(bool bHeld)
+{
+	if (bIsHeld == bHeld) return;
+	bIsHeld = bHeld;
+
+	if (bIsHeld)
+	{
+		// 기절과 같은 방식으로 하던 걸 끊고 제자리에 세운다
+		if (SkillManager)
+		{
+			SkillManager->CancelActiveCastSkill();
+			SkillManager->CancelPendingRangeMove();
+		}
+		GetCharacterMovement()->StopMovementImmediately();
+	}
+
+	OnHeldVisualChanged(bIsHeld);
 }
 
 void ALoACharacter::ApplyStun(float Duration)

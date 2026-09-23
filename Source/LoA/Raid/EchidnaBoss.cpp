@@ -2,6 +2,9 @@
 #include "BossDirectionIndicatorComponent.h"
 #include "UI/DamageNumberActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
+#include "EngineUtils.h"
+#include "TimerManager.h"
 
 AEchidnaBoss::AEchidnaBoss()
 {
@@ -17,9 +20,9 @@ AEchidnaBoss::AEchidnaBoss()
 	DirectionIndicator = CreateDefaultSubobject<UBossDirectionIndicatorComponent>(TEXT("DirectionIndicator"));
 	DirectionIndicator->SetupAttachment(RootComponent);
 
-	// 285줄(다인 하드) 기준 210줄이던 트리거를 솔로 210줄 기준으로 환산한 값.
+	// 285줄 기준 210줄에서 거울 카운터.
 	// TotalLines와 같은 값을 넣으면 풀피에서 곧바로 발동해버리므로 반드시 그보다 작아야 한다
-	BigPatternThresholds.Add(FBossPatternThreshold{ 155, TEXT("MirrorCounter") });
+	BigPatternThresholds.Add(FBossPatternThreshold{ 210, TEXT("MirrorCounter") });
 }
 
 void AEchidnaBoss::BeginPlay()
@@ -31,16 +34,167 @@ void AEchidnaBoss::BeginPlay()
 
 	// 컨트롤러가 보스보다 먼저 BeginPlay를 돌면 HP가 아직 0이라 빈 바를 보게 되므로 여기서 한 번 밀어준다
 	OnHPChanged.Broadcast(HP, MaxHP);
+
+	// 레이드 시작 = 보스 BeginPlay. 월드 타이머라 보스 자신의 CustomTimeDilation과 무관하게 실제 시간으로 흐른다
+	EnrageStartTime = GetWorld()->GetTimeSeconds();
+	if (EnrageTimeLimit > 0.f)
+	{
+		GetWorldTimerManager().SetTimer(EnrageTimerHandle, this, &AEchidnaBoss::Enrage, EnrageTimeLimit, false);
+	}
+
+	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
+	ScheduleNaturalSettlement();
+}
+
+void AEchidnaBoss::ScheduleNaturalSettlement()
+{
+	const float Interval = FMath::FRandRange(SettlementNaturalIntervalMin, FMath::Max(SettlementNaturalIntervalMin, SettlementNaturalIntervalMax));
+	if (Interval <= 0.f) return;
+
+	GetWorldTimerManager().SetTimer(SettlementTimerHandle, this, &AEchidnaBoss::TickNaturalSettlement, Interval, false);
+}
+
+void AEchidnaBoss::TickNaturalSettlement()
+{
+	if (HP <= 0.0) return;
+
+	AddSettlementGauge(SettlementNaturalAmount);
+	ScheduleNaturalSettlement();
+}
+
+void AEchidnaBoss::AddSettlementGauge(float Amount)
+{
+	if (Amount <= 0.f || HP <= 0.0) return;
+
+	// 큰 패턴 진행 중엔 정지 — 끝나면 다음 자연 상승부터 다시 오른다
+	if (IsSettlementPaused()) return;
+
+	const float OldGauge = SettlementGauge;
+	SettlementGauge = FMath::Clamp(SettlementGauge + Amount, 0.f, 100.f);
+	if (SettlementGauge != OldGauge)
+	{
+		OnSettlementGaugeChanged.Broadcast(SettlementGauge);
+	}
+}
+
+void AEchidnaBoss::ResetSettlementGauge()
+{
+	SettlementGauge = 0.f;
+	ConsumedSettlementThresholds.Reset();
+	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
+}
+
+int32 AEchidnaBoss::GetNextSettlementThreshold() const
+{
+	int32 Lowest = -1;
+	for (const int32 Threshold : SettlementThresholds)
+	{
+		if (SettlementGauge >= Threshold && !ConsumedSettlementThresholds.Contains(Threshold)
+			&& (Lowest < 0 || Threshold < Lowest))
+		{
+			Lowest = Threshold;
+		}
+	}
+	return Lowest;
+}
+
+int32 AEchidnaBoss::ConsumeNextSettlementThreshold()
+{
+	const int32 Threshold = GetNextSettlementThreshold();
+	if (Threshold >= 0)
+	{
+		ConsumedSettlementThresholds.Add(Threshold);
+	}
+	return Threshold;
+}
+
+void AEchidnaBoss::NotifyCharmStackGained(const UObject* WorldContext, bool bReachedMaxStacks)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	if (!World) return;
+
+	for (TActorIterator<AEchidnaBoss> It(World); It; ++It)
+	{
+		AEchidnaBoss* Boss = *It;
+		float Amount = FMath::FRandRange(Boss->SettlementPerCharmStackMin, Boss->SettlementPerCharmStackMax);
+		if (bReachedMaxStacks)
+		{
+			Amount += FMath::FRandRange(Boss->SettlementOnCharmedMin, Boss->SettlementOnCharmedMax);
+		}
+		Boss->AddSettlementGauge(Amount);
+	}
+}
+
+float AEchidnaBoss::GetEnrageRemainingTime() const
+{
+	if (bEnraged) return 0.f;
+	if (FrozenEnrageRemaining >= 0.f) return FrozenEnrageRemaining;
+
+	const UWorld* World = GetWorld();
+	if (!World) return EnrageTimeLimit;
+
+	return FMath::Max(0.f, static_cast<float>(EnrageStartTime + EnrageTimeLimit - World->GetTimeSeconds()));
+}
+
+void AEchidnaBoss::Enrage()
+{
+	if (bEnraged || HP <= 0.0) return;
+	bEnraged = true;
+
+	// 보스 자신: 캐릭터 무브먼트·애니메이션·LaunchCharacter 궤적이 전부 이 배율로 빨라진다
+	CustomTimeDilation = EnrageSpeedMultiplier;
+
+	// AI 컨트롤러: 컴포넌트 틱은 소유 액터의 CustomTimeDilation을 따르므로(FActorComponentTickFunction::ExecuteTickHelper)
+	// StateTreeAIComponent의 패턴 Task 시간 누적, Cooldown의 Wait, PathFollowing 이동까지 같이 빨라진다
+	if (AController* BossController = GetController())
+	{
+		BossController->CustomTimeDilation = EnrageSpeedMultiplier;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[Enrage] 광폭화 — 속도 x%.1f, 데미지 x%.1f"), EnrageSpeedMultiplier, EnrageDamageMultiplier);
+	OnEnraged.Broadcast();
+}
+
+float AEchidnaBoss::GetEnrageTimeScale(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	if (!World) return 1.f;
+
+	float Scale = 1.f;
+	for (TActorIterator<AEchidnaBoss> It(World); It; ++It)
+	{
+		if (It->IsEnraged())
+		{
+			Scale = FMath::Max(Scale, It->EnrageSpeedMultiplier);
+		}
+	}
+	return Scale;
+}
+
+float AEchidnaBoss::GetEnrageDamageMultiplier(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	if (!World) return 1.f;
+
+	float Multiplier = 1.f;
+	for (TActorIterator<AEchidnaBoss> It(World); It; ++It)
+	{
+		if (It->IsEnraged())
+		{
+			Multiplier = FMath::Max(Multiplier, It->EnrageDamageMultiplier);
+		}
+	}
+	return Multiplier;
 }
 
 int32 AEchidnaBoss::GetCurrentLine() const
 {
-	if (MaxHP <= 0.f || TotalLines <= 0)
+	if (MaxHP <= 0.0 || TotalLines <= 0)
 	{
 		return 0;
 	}
 
-	const float LineValue = MaxHP / static_cast<float>(TotalLines);
+	const double LineValue = MaxHP / static_cast<double>(TotalLines);
 	return FMath::Clamp(FMath::CeilToInt(HP / LineValue), 0, TotalLines);
 }
 
@@ -61,7 +215,20 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 
 void AEchidnaBoss::ReceiveDamage(float DamageAmount)
 {
-	HP = FMath::Clamp(HP - DamageAmount, 0.f, MaxHP);
+	HP = FMath::Clamp(HP - static_cast<double>(DamageAmount), 0.0, MaxHP);
+
+	// 광폭화 전에 잡았으면 타이머를 그 시점 값으로 멈춘다 (클리어 타이밍이 UI에 남도록)
+	if (HP <= 0.0 && !bEnraged && FrozenEnrageRemaining < 0.f)
+	{
+		FrozenEnrageRemaining = GetEnrageRemainingTime();
+		GetWorldTimerManager().ClearTimer(EnrageTimerHandle);
+	}
+
+	if (HP <= 0.0)
+	{
+		GetWorldTimerManager().ClearTimer(SettlementTimerHandle);
+	}
+
 	OnHPChanged.Broadcast(HP, MaxHP);
 
 	SpawnDamageNumber(DamageAmount);
@@ -109,4 +276,9 @@ bool AEchidnaBoss::IsPatternTriggered(FName PatternName) const
 void AEchidnaBoss::MarkPatternTriggered(FName PatternName)
 {
 	TriggeredPatterns.Add(PatternName);
+}
+
+void AEchidnaBoss::UnmarkPatternTriggered(FName PatternName)
+{
+	TriggeredPatterns.Remove(PatternName);
 }

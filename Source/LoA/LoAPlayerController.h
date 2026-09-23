@@ -91,7 +91,7 @@ protected:
 	TWeakObjectPtr<AEchidnaBoss> TrackedBoss;
 
 	/** AEchidnaBoss::OnHPChanged 구독 콜백 — 위젯에 HP 비율과 줄 수를 넘긴다 */
-	void OnBossHPChanged(float NewHP, float NewMaxHP);
+	void OnBossHPChanged(double NewHP, double NewMaxHP);
 
 	/** 캐스팅/차지 진행바 위젯 클래스 — BP_LoAPlayerController에서 WBP_CastBar 할당 */
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
@@ -102,6 +102,26 @@ protected:
 
 	/** Tick에서 매 프레임 호출 — SkillManager를 폴링해 진행바를 갱신하거나 숨긴다 */
 	void UpdateCastBar();
+
+	// ── 화면 연기 (랜잡 패턴) ──
+	UPROPERTY(Transient)
+	TObjectPtr<class UScreenFogWidget> ScreenFogWidget;
+
+	float FogCurrentOpacity = 0.f;
+	float FogTargetOpacity = 0.f;
+	float FogFadeSpeed = 1.f;
+
+	// Tick에서 연기 불투명도를 목표값으로 보간 — UpdateCastBar와 같이 IsActionLocked 조기 return보다 앞에서 호출
+	void UpdateScreenFog(float DeltaSeconds);
+
+public:
+	/** 화면 전체 핑크 연기 켜기/끄기 — FadeTime초 동안 서서히. 위젯은 처음 켤 때 만들고 HUD 아래(ZOrder -1)에 깐다 */
+	UFUNCTION(BlueprintCallable, Category = "UI")
+	void SetScreenFog(bool bEnable, float FadeTime = 1.f);
+
+protected:
+	// 보스 HP 바 옆 광폭화 타이머 + 초상화 아래 정산 게이지 갱신 — UpdateCastBar와 같은 이유로 Tick의 IsActionLocked 조기 return보다 앞에서 호출
+	void UpdateEnrageTimer();
 
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<UHUD_ViewModel> HUDViewModel;

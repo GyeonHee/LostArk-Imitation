@@ -89,9 +89,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
 	float TrackingDuration = 3.0f;
 
-	// 추적 중 회전 속도 (도/초) — 낮을수록 천천히 따라옴. 대시 같은 순간이동에도 즉시 안 꺾이고 일정 속도로 쫓아옴
+	// 추적 중 회전 속도 (도/초) — 낮을수록 천천히 따라옴. 대시 같은 순간이동에도 즉시 안 꺾이고 일정 속도로 쫓아옴.
+	// 장판이 플레이어를 휩쓰는 속도 = 각속도 × 거리라 멀수록 빠르다 — 걷기(600cm/s)로 피하려면
+	// MaxRange(3000cm)에서도 ω < 600/3000 rad/s ≈ 11도/초 → 여유 두고 8
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
-	float TrackingRotationSpeed = 15.f;
+	float TrackingRotationSpeed = 8.f;
 
 	// 방향 고정 후 레이저를 계속 유지/판정하는 시간 (초)
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")

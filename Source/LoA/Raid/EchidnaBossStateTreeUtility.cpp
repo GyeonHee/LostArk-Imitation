@@ -6,6 +6,14 @@
 #include "EchidnaTetherActor.h"
 #include "EchidnaHeartActor.h"
 #include "EchidnaOrbActor.h"
+#include "EchidnaPoopMarkActor.h"
+#include "EchidnaPoopBeamActor.h"
+#include "EchidnaFlytrapZoneActor.h"
+#include "EchidnaLinkMirrorActor.h"
+#include "HexTile.h"
+#include "LoAPlayerController.h"
+#include "HexArena.h"
+#include "EngineUtils.h"
 #include "LoACharacter.h"
 #include "LoA.h"
 #include "AIController.h"
@@ -14,8 +22,38 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "GameFramework/DamageType.h"
 
 #define LOCTEXT_NAMESPACE "EchidnaBoss"
+
+namespace
+{
+	/** 큰 패턴(시간·정산) Task의 발동 표시 — Task의 PatternName과 **이 Task가 속한 State 이름** 둘 다 표시한다.
+	 *  StateTree 조건의 PatternName을 Task와 다르게 적는 실수(RenGrab·MirrorLink에서 반복)가 나도, 조건에 State 이름을
+	 *  적었다면 맞아떨어져 패턴이 무한 반복되지 않는다. 이미 표시된 이름으로 재진입하면 경고를 남긴다 */
+	void MarkBigPatternTriggered(FStateTreeExecutionContext& Context, AEchidnaBoss* Boss, FName PatternName, const TCHAR* LogTag)
+	{
+		// 지금 EnterState 중인 State — 조건에 흔히 State 이름을 그대로 적기 때문에 이것도 같이 표시한다
+		FName StateName = NAME_None;
+		if (const FCompactStateTreeState* State = Context.GetStateFromHandle(Context.GetCurrentlyProcessedState()))
+		{
+			StateName = State->Name;
+		}
+
+		if (Boss->IsPatternTriggered(PatternName) || (!StateName.IsNone() && Boss->IsPatternTriggered(StateName)))
+		{
+			UE_LOG(LogLoA, Warning, TEXT("[%s] 이미 발동한 패턴에 재진입 (PatternName '%s', State '%s') — StateTree 조건의 PatternName을 둘 중 하나로 맞출 것"),
+				LogTag, *PatternName.ToString(), *StateName.ToString());
+		}
+
+		Boss->MarkPatternTriggered(PatternName);
+		if (!StateName.IsNone())
+		{
+			Boss->MarkPatternTriggered(StateName);
+		}
+		Boss->SetActiveTimedPattern(PatternName);
+	}
+}
 
 bool FStateTreeCondition_BossLineThreshold::TestCondition(FStateTreeExecutionContext& Context) const
 {
@@ -51,6 +89,685 @@ EStateTreeRunStatus FStateTreeTask_MarkBossPatternTriggered::EnterState(FStateTr
 FText FStateTreeTask_MarkBossPatternTriggered::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
 {
 	return LOCTEXT("MarkBossPatternTriggeredDesc", "<b>Mark Boss Pattern Triggered</b>");
+}
+#endif // WITH_EDITOR
+
+bool FStateTreeCondition_BossSettlementGauge::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (!InstanceData.Boss)
+	{
+		return false;
+	}
+
+	// 시간 패턴·다른 정산 패턴 진행 중이면 대기 (Root On Tick 전이가 진행 중인 큰 패턴을 끊지 않게).
+	// 게이지가 한 번에 25·50을 둘 다 넘어도 25가 먼저 — "다음 차례" 지점만 통과
+	if (InstanceData.Boss->IsTimedPatternActive()
+		|| InstanceData.Boss->GetNextSettlementThreshold() != InstanceData.GaugePercent)
+	{
+		return false;
+	}
+
+	for (const FName& ActiveState : Context.GetActiveStateNames())
+	{
+		if (InstanceData.WaitWhileStatesActive.Contains(ActiveState))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+#if WITH_EDITOR
+FText FStateTreeCondition_BossSettlementGauge::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("BossSettlementGaugeDesc", "<b>Boss Settlement Gauge Reached</b>");
+}
+#endif // WITH_EDITOR
+
+EStateTreeRunStatus FStateTreeTask_ResetSettlementGauge::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (InstanceData.Boss)
+	{
+		// 게이지 0 + 사용한 발동 지점 초기화 (거울잇기 100%가 끝날 때 자동으로 하므로 보통은 필요 없음)
+		InstanceData.Boss->ResetSettlementGauge();
+		for (const FName& PatternName : InstanceData.PatternNamesToRearm)
+		{
+			InstanceData.Boss->UnmarkPatternTriggered(PatternName);
+		}
+	}
+
+	return EStateTreeRunStatus::Succeeded;
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_ResetSettlementGauge::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("ResetSettlementGaugeDesc", "<b>Reset Settlement Gauge</b>");
+}
+#endif // WITH_EDITOR
+
+bool FStateTreeCondition_BossEnrageTime::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (!InstanceData.Boss || InstanceData.Boss->GetHP() <= 0.0)
+	{
+		return false;
+	}
+
+	if (InstanceData.Boss->IsTimedPatternActive()
+		|| InstanceData.Boss->GetEnrageRemainingTime() > InstanceData.RemainingSeconds
+		|| InstanceData.Boss->IsPatternTriggered(InstanceData.PatternName))
+	{
+		return false;
+	}
+
+	// 짤패턴 진행 중이면 끝날 때까지 기다린다 (시간이 지났다는 사실은 그대로라 끝나는 즉시 통과)
+	for (const FName& ActiveState : Context.GetActiveStateNames())
+	{
+		if (InstanceData.WaitWhileStatesActive.Contains(ActiveState))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+#if WITH_EDITOR
+FText FStateTreeCondition_BossEnrageTime::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("BossEnrageTimeDesc", "<b>Boss Enrage Time Reached</b>");
+}
+#endif // WITH_EDITOR
+
+EStateTreeRunStatus FStateTreeTask_EchidnaPoopPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.Elapsed = 0.f;
+	InstanceData.bBeamSpawned = false;
+	InstanceData.Mark = nullptr;
+	InstanceData.Beam = nullptr;
+
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaPoop] EnterState 실패 — Boss 바인딩 확인"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// State가 중간에 끊겨 재진입해도 두 번 나오지 않도록 진입 즉시 표시 (별도 Mark Task를 나란히 두면 그 Task가
+	// 즉시 Succeeded를 반환해 State가 바로 끝나버릴 수 있어서 이 Task가 직접 한다)
+	// 정산 패턴(25%/75%) — 발동 지점을 소모. 이름 표시는 안 한다(조건이 %로만 판단)
+	InstanceData.ConsumedThreshold = Boss->ConsumeNextSettlementThreshold();
+	Boss->SetActiveTimedPattern(InstanceData.PatternName);
+
+	// 1) 보스는 그 자리에 정지
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+
+	// 2) 오염 장판 전부 활성화
+	AHexArena* Arena = nullptr;
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		Arena = *It;
+		break;
+	}
+	if (Arena)
+	{
+		Arena->SetAllPoopTilesActive(true);
+	}
+
+	// 3) 카메라 줌아웃 + 플레이어 발밑 게이지
+	ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(World, 0));
+	InstanceData.Player = Player;
+	if (Player)
+	{
+		Player->SetCameraZoomOverride(InstanceData.CameraArmLength);
+
+		UClass* MarkClass = InstanceData.MarkClass ? InstanceData.MarkClass.Get() : AEchidnaPoopMarkActor::StaticClass();
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = Boss;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		InstanceData.Mark = World->SpawnActor<AEchidnaPoopMarkActor>(MarkClass, Player->GetActorTransform(), SpawnParams);
+		if (InstanceData.Mark)
+		{
+			InstanceData.Mark->Activate(Player, Arena);
+		}
+	}
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaPoop] 패턴 시작 — Arena:%s Player:%s"), Arena ? TEXT("O") : TEXT("X"), Player ? TEXT("O") : TEXT("X"));
+	return EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaPoopPattern::SpawnBeam(FInstanceDataType& InstanceData) const
+{
+	InstanceData.bBeamSpawned = true;
+
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World) return;
+
+	// 캡슐 중심이 아니라 발밑에서 시작해야 장판이 바닥에 붙는다
+	FVector Origin = Boss->GetActorLocation();
+	Origin.Z -= Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+
+	FRotator Facing = Boss->GetActorRotation();
+	if (ALoACharacter* Player = InstanceData.Player.Get())
+	{
+		const FVector ToPlayer = (Player->GetActorLocation() - Boss->GetActorLocation()).GetSafeNormal2D();
+		if (!ToPlayer.IsNearlyZero())
+		{
+			Facing = FRotator(0.f, ToPlayer.Rotation().Yaw, 0.f);
+		}
+	}
+
+	UClass* BeamClass = InstanceData.BeamClass ? InstanceData.BeamClass.Get() : AEchidnaPoopBeamActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	InstanceData.Beam = World->SpawnActor<AEchidnaPoopBeamActor>(BeamClass, Origin, Facing, SpawnParams);
+	if (InstanceData.Beam)
+	{
+		InstanceData.Beam->Activate(InstanceData.Player.Get(), InstanceData.BeamDamage, InstanceData.CircleDamage,
+			Boss->GetController(), InstanceData.BeamLengthOverride, InstanceData.BeamHalfWidthOverride, InstanceData.CircleRadiusOverride);
+	}
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaPoopPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 패턴 내내 제자리
+	InstanceData.Boss->GetCharacterMovement()->StopMovementImmediately();
+
+	InstanceData.Elapsed += DeltaTime;
+	if (!InstanceData.bBeamSpawned && InstanceData.Elapsed >= InstanceData.BeamSpawnDelay)
+	{
+		SpawnBeam(InstanceData);
+	}
+
+	const bool bMarkDone = !IsValid(InstanceData.Mark) || InstanceData.Mark->IsFinished();
+	const bool bBeamDone = InstanceData.bBeamSpawned && (!IsValid(InstanceData.Beam) || InstanceData.Beam->IsFinished());
+	return (bMarkDone && bBeamDone) ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaPoopPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (ALoACharacter* Player = InstanceData.Player.Get())
+	{
+		Player->ClearCameraZoomOverride();
+	}
+	if (InstanceData.Boss)
+	{
+		InstanceData.Boss->ClearActiveTimedPattern();
+	}
+
+	// 패턴 동안만 활성 — 끝나면(중간에 끊겨도) 오염 장판은 다시 비활성(핑크)으로
+	if (UWorld* World = InstanceData.Boss ? InstanceData.Boss->GetWorld() : nullptr)
+	{
+		for (TActorIterator<AHexArena> It(World); It; ++It)
+		{
+			It->SetAllPoopTilesActive(false);
+		}
+	}
+
+	// 중간에 끊긴 경우에만 남은 것 정리 (정상 종료면 둘 다 스스로 소멸 예약된 상태)
+	if (IsValid(InstanceData.Mark) && !InstanceData.Mark->IsFinished())
+	{
+		InstanceData.Mark->Destroy();
+	}
+	if (IsValid(InstanceData.Beam) && !InstanceData.Beam->IsFinished())
+	{
+		InstanceData.Beam->Destroy();
+	}
+	InstanceData.Mark = nullptr;
+	InstanceData.Beam = nullptr;
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaPoopPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaPoopPatternDesc", "<b>Echidna Poop Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+EStateTreeRunStatus FStateTreeTask_EchidnaRandomGrabPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.Phase = EEchidnaRandomGrabPhase::WaitFog;
+	InstanceData.PhaseElapsed = 0.f;
+	InstanceData.RoundsStarted = 0;
+	InstanceData.Traps.Reset();
+	InstanceData.Arena = nullptr;
+
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRandomGrab] EnterState 실패 — Boss 바인딩 확인"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 재진입해도 두 번 나오지 않도록 진입 즉시 표시 (똥장판 패턴과 같은 이유로 Task가 직접)
+	MarkBigPatternTriggered(Context, Boss, InstanceData.PatternName, TEXT("EchidnaRandomGrab"));
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		InstanceData.Arena = *It;
+		break;
+	}
+	if (InstanceData.Arena)
+	{
+		InstanceData.Arena->SetAllPoopTilesActive(true);
+	}
+
+	InstanceData.Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(World, 0));
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaRandomGrab] 패턴 시작 — Arena:%s Player:%s"),
+		InstanceData.Arena ? TEXT("O") : TEXT("X"), InstanceData.Player.IsValid() ? TEXT("O") : TEXT("X"));
+	return EStateTreeRunStatus::Running;
+}
+
+bool FStateTreeTask_EchidnaRandomGrabPattern::SpawnTrapAt(FInstanceDataType& InstanceData, const FIntPoint& Coord) const
+{
+	AHexArena* Arena = InstanceData.Arena;
+	AHexTile* Tile = Arena ? Arena->GetTile(Coord) : nullptr;
+	if (!Tile) return false;
+
+	// 타일과 같은 회전 — 장판의 헥스 모양이 타일과 딱 겹친다. 높이는 타일 윗면(바운즈 꼭대기)
+	FVector Location = Tile->GetActorLocation();
+	Location.Z = Tile->TileMesh->Bounds.Origin.Z + Tile->TileMesh->Bounds.BoxExtent.Z;
+
+	UClass* TrapClass = InstanceData.FlytrapClass ? InstanceData.FlytrapClass.Get() : AEchidnaFlytrapZoneActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AEchidnaFlytrapZoneActor* Trap = Arena->GetWorld()->SpawnActor<AEchidnaFlytrapZoneActor>(
+		TrapClass, Location, Tile->GetActorRotation(), SpawnParams);
+	if (!Trap) return false;
+
+	Trap->Activate(Arena, Coord, Arena->TileSpacing * 0.5f, InstanceData.EatDamageRatio,
+		InstanceData.Boss ? InstanceData.Boss->GetController() : nullptr);
+
+	InstanceData.Traps.Add(Trap);
+	++InstanceData.RoundsStarted;
+	return true;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaRandomGrabPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (!InstanceData.Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.Boss->GetCharacterMovement()->StopMovementImmediately();
+	InstanceData.PhaseElapsed += DeltaTime;
+
+	ALoACharacter* Player = InstanceData.Player.Get();
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaRandomGrabPhase::WaitFog:
+		if (InstanceData.PhaseElapsed >= InstanceData.FogDelay)
+		{
+			if (Player)
+			{
+				if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(Player->GetController()))
+				{
+					PC->SetScreenFog(true, InstanceData.FogFadeTime);
+				}
+			}
+			InstanceData.Phase = EEchidnaRandomGrabPhase::FogIn;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		break;
+
+	case EEchidnaRandomGrabPhase::FogIn:
+		if (InstanceData.PhaseElapsed >= InstanceData.FirstTrapDelay)
+		{
+			InstanceData.Phase = EEchidnaRandomGrabPhase::Rounds;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		break;
+
+	case EEchidnaRandomGrabPhase::Rounds:
+	{
+		const bool bPlayerHeld = Player && Player->IsHeldByPattern();
+		const bool bCanSpawnMore = !bPlayerHeld
+			&& InstanceData.RoundsStarted < InstanceData.RoundCount
+			&& InstanceData.PhaseElapsed < InstanceData.MaxRoundsDuration;
+
+		// 깔린 장판이 전부 꽃까지 나왔는가 — 아니면 다음 장판을 깔지 않는다 (한 번에 하나씩)
+		const bool bAllShown = !InstanceData.Traps.ContainsByPredicate([](const TObjectPtr<AEchidnaFlytrapZoneActor>& Trap)
+		{
+			return IsValid(Trap) && !Trap->IsTrapShown();
+		});
+
+		// 앞 장판의 꽃이 다 나왔으면 지금 서 있는 타일에 다음 장판 — 같은 타일엔 중복 불가(이미 꽃이 있는 타일 등)
+		FIntPoint Coord;
+		if (bCanSpawnMore && bAllShown && Player && InstanceData.Arena && InstanceData.Arena->WorldToTileCoord(Player->GetActorLocation(), Coord))
+		{
+			const bool bAlreadyHasTrap = InstanceData.Traps.ContainsByPredicate([&Coord](const TObjectPtr<AEchidnaFlytrapZoneActor>& Trap)
+			{
+				return IsValid(Trap) && Trap->GetCoord() == Coord;
+			});
+			if (!bAlreadyHasTrap)
+			{
+				SpawnTrapAt(InstanceData, Coord);
+			}
+		}
+
+		// 더 깔 게 없고 깔린 것들이 전부 꽃까지 나왔으면 마무리 (방금 깐 장판은 아직 꽃 전이라 다음 틱 이후)
+		if (!bCanSpawnMore && bAllShown)
+		{
+			InstanceData.Phase = EEchidnaRandomGrabPhase::Ending;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		break;
+	}
+
+	case EEchidnaRandomGrabPhase::Ending:
+		if (InstanceData.PhaseElapsed >= InstanceData.EndDelay)
+		{
+			InstanceData.Phase = EEchidnaRandomGrabPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		break;
+
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	return EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaRandomGrabPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	if (InstanceData.Boss)
+	{
+		InstanceData.Boss->ClearActiveTimedPattern();
+	}
+
+	// 꽃은 패턴이 끝날 때 사라진다 (정상 종료든 중간에 끊겼든)
+	for (const TObjectPtr<AEchidnaFlytrapZoneActor>& Trap : InstanceData.Traps)
+	{
+		if (IsValid(Trap))
+		{
+			Trap->Dismiss();
+		}
+	}
+	InstanceData.Traps.Reset();
+
+	// 먹혀서 붙잡혀 있던 플레이어 해제 — 시간 제한이 없는 상태라 여기서 반드시 풀어야 한다
+	if (InstanceData.Boss)
+	{
+		for (TActorIterator<ALoACharacter> It(InstanceData.Boss->GetWorld()); It; ++It)
+		{
+			It->SetHeldByPattern(false);
+		}
+	}
+
+	// 연기 걷힘 + 오염 장판 비활성
+	if (ALoACharacter* Player = InstanceData.Player.Get())
+	{
+		if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(Player->GetController()))
+		{
+			PC->SetScreenFog(false, InstanceData.FogFadeTime);
+		}
+	}
+	if (InstanceData.Arena)
+	{
+		InstanceData.Arena->SetAllPoopTilesActive(false);
+	}
+	InstanceData.Arena = nullptr;
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaRandomGrabPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaRandomGrabPatternDesc", "<b>Echidna Random Grab Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+namespace
+{
+	void SetBossVanished(AEchidnaBoss* Boss, bool bVanished)
+	{
+		if (!Boss) return;
+		Boss->SetActorHiddenInGame(bVanished);
+		Boss->SetActorEnableCollision(!bVanished);
+	}
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaMirrorLinkPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.Phase = EEchidnaMirrorLinkPhase::Vanished;
+	InstanceData.PhaseElapsed = 0.f;
+	InstanceData.Mirror = nullptr;
+	InstanceData.Arena = nullptr;
+
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorLink] EnterState 실패 — Boss 바인딩 확인"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 정산 패턴(50%/100%) — 발동 지점을 소모. 100%였으면 끝날 때 게이지를 0으로 되돌린다
+	InstanceData.ConsumedThreshold = Boss->ConsumeNextSettlementThreshold();
+	Boss->SetActiveTimedPattern(InstanceData.PatternName);
+
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		InstanceData.Arena = *It;
+		break;
+	}
+	if (!InstanceData.Arena || InstanceData.Arena->MarkerTileCoords.Num() < 2)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorLink] 파란 테두리 타일 정보 없음 — 아레나/초기 배치 확인"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(World, 0));
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+	SetBossVanished(Boss, true);
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaMirrorLink] 패턴 시작 — 거울 (%d,%d), 보스 (%d,%d)"),
+		InstanceData.Arena->MarkerTileCoords[0].X, InstanceData.Arena->MarkerTileCoords[0].Y,
+		InstanceData.Arena->MarkerTileCoords[1].X, InstanceData.Arena->MarkerTileCoords[1].Y);
+	return EStateTreeRunStatus::Running;
+}
+
+bool FStateTreeTask_EchidnaMirrorLinkPattern::AppearBossAndMirror(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	AHexArena* Arena = InstanceData.Arena;
+	if (!Boss || !Arena) return false;
+
+	const FIntPoint MirrorCoord = Arena->MarkerTileCoords[0];
+	InstanceData.BossCoord = Arena->MarkerTileCoords[1];
+
+	FVector MirrorLocation, BossTileTop;
+	if (!Arena->GetTileTopLocation(MirrorCoord, MirrorLocation) || !Arena->GetTileTopLocation(InstanceData.BossCoord, BossTileTop))
+	{
+		return false;
+	}
+
+	// 보스 — 안쪽 파란 타일 위에(캡슐 중심 = 윗면 + 절반 높이), 거울 쪽을 바라보고 선다
+	InstanceData.BossStandLocation = BossTileTop + FVector(0.f, 0.f, Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	const FVector ToMirror = (MirrorLocation - BossTileTop).GetSafeNormal2D();
+	Boss->SetActorLocationAndRotation(InstanceData.BossStandLocation, FRotator(0.f, ToMirror.Rotation().Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+	SetBossVanished(Boss, false);
+
+	// 거울 — 외곽 파란 타일 위
+	UClass* MirrorClass = InstanceData.MirrorClass ? InstanceData.MirrorClass.Get() : AEchidnaLinkMirrorActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	InstanceData.Mirror = Boss->GetWorld()->SpawnActor<AEchidnaLinkMirrorActor>(MirrorClass, MirrorLocation, FRotator::ZeroRotator, SpawnParams);
+	if (!InstanceData.Mirror) return false;
+
+	InstanceData.Mirror->Activate(InstanceData.Player.Get(), Arena, Boss, InstanceData.BossCoord);
+	return true;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaMirrorLinkPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+	InstanceData.PhaseElapsed += DeltaTime;
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaMirrorLinkPhase::Vanished:
+		if (InstanceData.PhaseElapsed >= InstanceData.VanishDuration)
+		{
+			if (!AppearBossAndMirror(InstanceData))
+			{
+				UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorLink] 보스/거울 등장 실패"));
+				return EStateTreeRunStatus::Failed;
+			}
+			InstanceData.Phase = EEchidnaMirrorLinkPhase::Linking;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		break;
+
+	case EEchidnaMirrorLinkPhase::Linking:
+	{
+		// 패턴 내내 그 타일 위에 가만히
+		Boss->SetActorLocation(InstanceData.BossStandLocation);
+
+		if (!IsValid(InstanceData.Mirror))
+		{
+			return EStateTreeRunStatus::Failed;
+		}
+
+		const EEchidnaLinkResult Result = InstanceData.Mirror->GetResult();
+		if (Result == EEchidnaLinkResult::Success)
+		{
+			InstanceData.Phase = EEchidnaMirrorLinkPhase::Ending;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		else if (Result == EEchidnaLinkResult::Fail)
+		{
+			// 보스까지 못 이었다 — 맵 전체가 빨갛게 터지고 즉사급 데미지
+			if (InstanceData.Arena)
+			{
+				InstanceData.Arena->SetAllTilesDangerFlash(true);
+			}
+			for (TActorIterator<ALoACharacter> It(Boss->GetWorld()); It; ++It)
+			{
+				UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * InstanceData.FailDamageRatio, Boss->GetController(), Boss, UDamageType::StaticClass());
+			}
+			InstanceData.Phase = EEchidnaMirrorLinkPhase::Failing;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		break;
+	}
+
+	case EEchidnaMirrorLinkPhase::Failing:
+		if (InstanceData.PhaseElapsed >= InstanceData.FailFlashDuration)
+		{
+			if (InstanceData.Arena)
+			{
+				InstanceData.Arena->SetAllTilesDangerFlash(false);
+			}
+			InstanceData.Phase = EEchidnaMirrorLinkPhase::Ending;
+			InstanceData.PhaseElapsed = 0.f;
+		}
+		break;
+
+	case EEchidnaMirrorLinkPhase::Ending:
+		if (InstanceData.PhaseElapsed >= InstanceData.EndDelay)
+		{
+			InstanceData.Phase = EEchidnaMirrorLinkPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		break;
+
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	return EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaMirrorLinkPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+
+	if (Boss)
+	{
+		// 어떤 경우든 보스는 보이는 상태로 복구 (사라진 채 끊기면 영영 안 보임)
+		SetBossVanished(Boss, false);
+		Boss->ClearActiveTimedPattern();
+
+		// 풀정산(100%)이었으면 한 바퀴 끝 — 게이지 0 + 25/50/75/100 다시 사용 가능
+		if (InstanceData.ConsumedThreshold >= 100)
+		{
+			Boss->ResetSettlementGauge();
+		}
+
+		for (TActorIterator<ALoACharacter> It(Boss->GetWorld()); It; ++It)
+		{
+			It->SetHeldByPattern(false);
+		}
+	}
+
+	if (InstanceData.Arena)
+	{
+		InstanceData.Arena->ClearAllLinkHighlights();
+		InstanceData.Arena->SetAllTilesDangerFlash(false);
+	}
+
+	if (IsValid(InstanceData.Mirror))
+	{
+		InstanceData.Mirror->Destroy();
+	}
+	InstanceData.Mirror = nullptr;
+	InstanceData.Arena = nullptr;
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaMirrorLinkPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaMirrorLinkPatternDesc", "<b>Echidna Mirror Link Pattern</b>");
 }
 #endif // WITH_EDITOR
 
@@ -812,12 +1529,10 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDragFanPattern::Tick(FStateTreeExecuti
 			return EStateTreeRunStatus::Running;
 		}
 
-		// 줄기에 맞아 끌려온 대상이 아무도 없으면 장판을 터뜨리지 않고 바로 패턴 종료
+		// 줄기에 아무도 안 끌려왔어도 1번·2번 장판은 그대로 순서대로 터진다 (예전엔 여기서 패턴을 끝냈음)
 		if (!AnyTetherHit(InstanceData))
 		{
-			UE_LOG(LogLoA, Log, TEXT("[EchidnaDragFan] 줄기에 맞은 대상 없음 — 장판 생략하고 패턴 종료"));
-			InstanceData.Phase = EEchidnaDragFanPhase::Done;
-			return EStateTreeRunStatus::Succeeded;
+			UE_LOG(LogLoA, Log, TEXT("[EchidnaDragFan] 줄기에 맞은 대상 없음 — 장판은 그대로 진행"));
 		}
 
 		// 2단계 — 1번째 장판 (좁게, FirstFanAngle)
@@ -1215,8 +1930,10 @@ void FStateTreeTask_EchidnaHeartBurstPattern::FireRandomWave(FInstanceDataType& 
 
 		if (Heart)
 		{
+			// 전방향 하트발사는 매혹 스택 대신 오염 장판 게이지
+			Heart->SetSpawnPoopMarkOnHit(true);
 			Heart->Launch(Direction, BossController, InstanceData.HeartSpeed, InstanceData.HeartDamage,
-				InstanceData.HeartStunDuration, InstanceData.HeartCharmGaugeAmount);
+				InstanceData.HeartStunDuration, 0);
 		}
 		else
 		{

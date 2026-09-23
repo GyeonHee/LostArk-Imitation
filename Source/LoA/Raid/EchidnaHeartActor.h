@@ -7,6 +7,8 @@
 class UProceduralMeshComponent;
 class USphereComponent;
 class UMaterialInterface;
+class AEchidnaPoopMarkActor;
+class ALoACharacter;
 
 /**
  * 에키드나 "전방향 하트발사" 짤패턴에 쓰이는 하트 투사체 1개.
@@ -32,6 +34,14 @@ public:
 	// 지정한 방향으로 발사 시작 — 호출 전까지는 제자리에 가만히 있음(예고 마커로 사용 가능)
 	void Launch(const FVector& Direction, AController* InInstigator, float InSpeed, float InDamage,
 		float InStunDuration, int32 InCharmGaugeAmount);
+
+	/** 켜면 맞았을 때 매혹 스택 대신 오염 장판 게이지(AEchidnaPoopMarkActor — 5초 뒤 서 있는 타일이 비활성 오염 장판)를 붙인다.
+	 *  전방향 하트발사가 켜고, 백스탭 하트발사는 그대로 매혹 스택 */
+	void SetSpawnPoopMarkOnHit(bool bEnable) { bSpawnPoopMarkOnHit = bEnable; }
+
+	// 비우면 네이티브 AEchidnaPoopMarkActor
+	UPROPERTY(EditDefaultsOnly, Category = "Heart")
+	TSubclassOf<AEchidnaPoopMarkActor> PoopMarkClass;
 
 	UPROPERTY(VisibleAnywhere, Category = "Heart")
 	TObjectPtr<UProceduralMeshComponent> HeartMeshComp;
@@ -91,6 +101,9 @@ private:
 	float Damage = 10.f;
 	float StunDuration = 3.f;
 	int32 CharmGaugeAmount = 1;
+	bool bSpawnPoopMarkOnHit = false;
+
+	void SpawnPoopMark(ALoACharacter* Character);
 	float TraveledDistance = 0.f;
 	TWeakObjectPtr<AController> InstigatorController;
 

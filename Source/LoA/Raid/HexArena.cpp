@@ -2,6 +2,10 @@
 #include "Raid/HexTile.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "ProceduralMeshComponent.h"
+#include "GameFramework/Pawn.h"
+#include "LoACharacter.h"
+#include "EngineUtils.h"
+#include "TimerManager.h"
 
 // 6방향 이웃 정의 (Pointy-top Axial 기준)
 //   인덱스:  0     1     2      3     4      5
@@ -27,6 +31,17 @@ AHexArena::AHexArena()
 	WallMeshes->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	WallMeshes->SetCollisionProfileName(TEXT("BlockAll"));
 	WallMeshes->bUseComplexAsSimpleCollision = true;
+
+	BarrierMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("BarrierMesh"));
+	BarrierMesh->SetupAttachment(RootComponent);
+	BarrierMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	BarrierMesh->SetCollisionObjectType(ECC_WorldStatic);
+	BarrierMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	BarrierMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	BarrierMesh->bUseComplexAsSimpleCollision = true;
+	BarrierMesh->SetVisibility(false);
+	BarrierMesh->SetHiddenInGame(true);
+	BarrierMesh->SetCastShadow(false);
 }
 
 void AHexArena::OnConstruction(const FTransform& Transform)
@@ -45,6 +60,46 @@ void AHexArena::BeginPlay()
 	HexMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	SpawnGameplayTiles();
+
+	// 한 틱 미뤄서 — 플레이어 폰이 아직 스폰 전일 수 있고, 폰이 서 있는 타일은 오염에서 빼야 하므로
+	if (bSetupInitialLayoutOnBeginPlay)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(this, &AHexArena::SetupInitialLayout);
+	}
+
+	// 큰 꽃 오라 — 꽃이 없으면 한 바퀴 훑고 끝나는 가벼운 루프라 항상 돌려둔다
+	if (FlowerCharmInterval > 0.f)
+	{
+		GetWorldTimerManager().SetTimer(FlowerAuraTimerHandle, this, &AHexArena::TickFlowerAura, FlowerCharmInterval, true);
+	}
+}
+
+void AHexArena::TickFlowerAura()
+{
+	TArray<FIntPoint> Flowers;
+	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+	{
+		if (Pair.Value && Pair.Value->GetTileType() == EHexTileType::Flower)
+		{
+			Flowers.Add(Pair.Key);
+		}
+	}
+	if (Flowers.Num() == 0) return;
+
+	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)
+	{
+		FIntPoint Coord;
+		if (!WorldToTileCoord(It->GetActorLocation(), Coord)) continue;
+
+		for (const FIntPoint& Flower : Flowers)
+		{
+			if (GetHexDistance(Coord, Flower) <= FlowerAuraRange)
+			{
+				It->AddCharmGauge(FlowerCharmAmount);
+				break;	// 꽃이 여러 개여도 1초에 한 번만
+			}
+		}
+	}
 }
 
 void AHexArena::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -158,6 +213,216 @@ AHexTile* AHexArena::GetTile(const FIntPoint& Coord) const
 		return Found->Get();
 	}
 	return nullptr;
+}
+
+bool AHexArena::WorldToTileCoord(const FVector& WorldLocation, FIntPoint& OutCoord) const
+{
+	// ComputeTileLocalTransform의 역변환 — X = D*(q + r/2), Y = D*√3/2*r
+	const FVector Local = GetActorTransform().InverseTransformPosition(WorldLocation);
+	const float D = TileSpacing + HexGap;
+	if (D <= 0.f) return false;
+
+	const float Rf = Local.Y / (D * FMath::Sqrt(3.f) * 0.5f);
+	const float Qf = Local.X / D - Rf * 0.5f;
+
+	// 큐브 좌표 반올림 — 셋 중 오차가 가장 큰 축을 나머지 둘로 다시 맞춘다
+	const float Sf = -Qf - Rf;
+	int32 Q = FMath::RoundToInt(Qf);
+	int32 Rr = FMath::RoundToInt(Rf);
+	const int32 S = FMath::RoundToInt(Sf);
+	const float DQ = FMath::Abs(Q - Qf);
+	const float DR = FMath::Abs(Rr - Rf);
+	const float DS = FMath::Abs(S - Sf);
+	if (DQ > DR && DQ > DS)
+	{
+		Q = -Rr - S;
+	}
+	else if (DR > DS)
+	{
+		Rr = -Q - S;
+	}
+
+	if (!IsValidTile(Q, Rr, SideCount - 1)) return false;
+
+	OutCoord = FIntPoint(Q, Rr);
+	return true;
+}
+
+TArray<FIntPoint> AHexArena::GetOuterRingCoords() const
+{
+	TArray<FIntPoint> Ring;
+	const int32 R = SideCount - 1;
+	if (R <= 0)
+	{
+		Ring.Add(FIntPoint(0, 0));
+		return Ring;
+	}
+
+	// 표준 헥스 링 순회 — 한 모서리 좌표에서 시작해 6방향으로 R칸씩 걷는다
+	FIntPoint Cur(GDQ[4] * R, GDR[4] * R);
+	for (int32 Side = 0; Side < 6; ++Side)
+	{
+		for (int32 Step = 0; Step < R; ++Step)
+		{
+			Ring.Add(Cur);
+			Cur += FIntPoint(GDQ[Side], GDR[Side]);
+		}
+	}
+	return Ring;
+}
+
+int32 AHexArena::GetHexDistance(const FIntPoint& A, const FIntPoint& B)
+{
+	const int32 DQ = A.X - B.X;
+	const int32 DR = A.Y - B.Y;
+	return (FMath::Abs(DQ) + FMath::Abs(DR) + FMath::Abs(DQ + DR)) / 2;
+}
+
+bool AHexArena::GetTileTopLocation(const FIntPoint& Coord, FVector& OutLocation) const
+{
+	const AHexTile* Tile = GetTile(Coord);
+	if (!Tile || !Tile->TileMesh) return false;
+
+	OutLocation = Tile->GetActorLocation();
+	OutLocation.Z = Tile->TileMesh->Bounds.Origin.Z + Tile->TileMesh->Bounds.BoxExtent.Z;
+	return true;
+}
+
+void AHexArena::SetAllTilesDangerFlash(bool bFlash)
+{
+	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+	{
+		if (AHexTile* Tile = Pair.Value.Get()) Tile->SetDangerFlash(bFlash);
+	}
+}
+
+void AHexArena::ClearAllLinkHighlights()
+{
+	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+	{
+		if (AHexTile* Tile = Pair.Value.Get()) Tile->SetLinkHighlighted(false);
+	}
+}
+
+void AHexArena::SetAllPoopTilesActive(bool bActive)
+{
+	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+	{
+		AHexTile* Tile = Pair.Value.Get();
+		if (Tile && Tile->GetTileType() == EHexTileType::PoopZone)
+		{
+			Tile->SetPoopActive(bActive);
+		}
+	}
+}
+
+void AHexArena::SetupInitialLayout()
+{
+	if (TileMap.Num() == 0) return;
+
+	const int32 R = SideCount - 1;
+
+	// 이전 배치 정리 (BP에서 다시 호출하는 경우 대비)
+	for (const FIntPoint& Old : MarkerTileCoords)
+	{
+		if (AHexTile* Tile = GetTile(Old)) Tile->SetHighlighted(false);
+	}
+	MarkerTileCoords.Reset();
+
+	// ── 1) 파란 테두리 타일 2개 — 외곽 1칸 + 거기서 MarkerTileDistance만큼 떨어진 안쪽(외곽 아님) 1칸.
+	// SideCount=4 기준 어느 외곽 타일에서 출발해도 조건을 만족하는 안쪽 타일이 3~4개 있음(검증함)
+	const TArray<FIntPoint> Ring = GetOuterRingCoords();
+	if (Ring.Num() > 0)
+	{
+		const FIntPoint Outer = Ring[FMath::RandRange(0, Ring.Num() - 1)];
+		MarkerTileCoords.Add(Outer);
+
+		TArray<FIntPoint> InnerCandidates;
+		for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+		{
+			const bool bIsInner = GetHexDistance(Pair.Key, FIntPoint(0, 0)) < R;
+			if (bIsInner && GetHexDistance(Pair.Key, Outer) == MarkerTileDistance)
+			{
+				InnerCandidates.Add(Pair.Key);
+			}
+		}
+		if (InnerCandidates.Num() > 0)
+		{
+			MarkerTileCoords.Add(InnerCandidates[FMath::RandRange(0, InnerCandidates.Num() - 1)]);
+		}
+	}
+	for (const FIntPoint& C : MarkerTileCoords)
+	{
+		if (AHexTile* Tile = GetTile(C)) Tile->SetHighlighted(true);
+	}
+
+	// ── 2) 오염 장판 후보 — 폰(플레이어·보스)이 서 있는 타일만 제외. 파란 테두리 타일도 오염될 수 있다
+	TSet<FIntPoint> Excluded;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<APawn> It(World); It; ++It)
+		{
+			FIntPoint PawnCoord;
+			if (WorldToTileCoord(It->GetActorLocation(), PawnCoord))
+			{
+				Excluded.Add(PawnCoord);
+			}
+		}
+	}
+
+	TArray<FIntPoint> Candidates;
+	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+	{
+		if (!Excluded.Contains(Pair.Key)) Candidates.Add(Pair.Key);
+	}
+	for (int32 i = Candidates.Num() - 1; i > 0; --i)
+	{
+		Candidates.Swap(i, FMath::RandRange(0, i));
+	}
+
+	// 이 좌표까지 오염시키면 어떤 Normal 타일이 오염에 완전히 둘러싸여 시작부터 꽃이 피는지
+	TSet<FIntPoint> Poop;
+	auto WouldBloom = [&](const FIntPoint& Candidate)
+	{
+		for (int32 d = 0; d < 6; ++d)
+		{
+			const FIntPoint N(Candidate.X + GDQ[d], Candidate.Y + GDR[d]);
+			if (!IsValidTile(N.X, N.Y, R) || Poop.Contains(N)) continue;
+
+			bool bSurrounded = true;
+			for (int32 dd = 0; dd < 6; ++dd)
+			{
+				const FIntPoint S(N.X + GDQ[dd], N.Y + GDR[dd]);
+				if (!IsValidTile(S.X, S.Y, R)) continue;
+				if (S != Candidate && !Poop.Contains(S))
+				{
+					bSurrounded = false;
+					break;
+				}
+			}
+			if (bSurrounded) return true;
+		}
+		return false;
+	};
+
+	for (const FIntPoint& C : Candidates)
+	{
+		if (Poop.Num() >= InitialPoopTileCount) break;
+		if (WouldBloom(C)) continue;
+		Poop.Add(C);
+	}
+
+	// 비활성 상태로 깐다 (SetTileType(PoopZone)은 활성 플래그를 건드리지 않고, 새 오염은 기본 비활성)
+	for (const FIntPoint& C : Poop)
+	{
+		if (AHexTile* Tile = GetTile(C))
+		{
+			Tile->SetTileType(EHexTileType::PoopZone);
+			Tile->SetPoopActive(false);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HexArena] 초기 배치 — 오염 %d칸, 파란 테두리 %d칸"), Poop.Num(), MarkerTileCoords.Num());
 }
 
 void AHexArena::NotifyTileTypeChanged(const FIntPoint& ChangedCoord)
@@ -391,6 +656,31 @@ void AHexArena::RebuildWalls(int32 R, float D)
 	if (WallMaterial)
 	{
 		WallMeshes->SetMaterial(0, WallMaterial);
+	}
+
+	// ── 보이지 않는 충돌벽 (BarrierMesh) ──
+	// 보스 백스텝·넉다운 LaunchCharacter로 떠오른 캐릭터가 벽 윗면에 착지해 못 내려오던 문제 — 벽 안쪽 면을
+	// 바닥부터 벽 위 InvisibleBarrierHeight까지 세운 Pawn 전용 충돌면. 숨겨도 충돌은 유지된다
+	BarrierMesh->ClearAllMeshSections();
+	if (InvisibleBarrierHeight > 0.f)
+	{
+		TArray<FVector> BVerts;
+		TArray<int32> BTris;
+		TArray<FVector> BNormals;
+		TArray<FVector2D> BUVs;
+		TArray<FColor> BColors;
+		TArray<FProcMeshTangent> BTangents;
+
+		const FVector Top(0.f, 0.f, WallHeight + InvisibleBarrierHeight);
+		for (const FWeldedEdge& WE : WeldedEdges)
+		{
+			const FVector InnerA(OffsetPoint(WE.VA, WallOffset), 0.f);
+			const FVector InnerB(OffsetPoint(WE.VB, WallOffset), 0.f);
+			const FVector OuterNormal(WE.Normal.X, WE.Normal.Y, 0.f);
+			AddQuad(BVerts, BTris, BNormals, BUVs, BColors, BTangents, InnerA, InnerB, InnerB + Top, InnerA + Top, -OuterNormal);
+		}
+
+		BarrierMesh->CreateMeshSection(0, BVerts, BTris, BNormals, BUVs, BColors, BTangents, true);
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[HexArena] RebuildWalls: RawEdges=%d WeldedVerts=%d Verts=%d Tris=%d WallHeight=%.1f WallThickness=%.1f HasMaterial=%d"),

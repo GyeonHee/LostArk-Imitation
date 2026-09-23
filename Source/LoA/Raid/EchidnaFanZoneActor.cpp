@@ -1,4 +1,5 @@
 #include "Raid/EchidnaFanZoneActor.h"
+#include "Raid/EchidnaBoss.h"
 #include "ProceduralMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -66,6 +67,10 @@ AEchidnaFanZoneActor::AEchidnaFanZoneActor()
 void AEchidnaFanZoneActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
+	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
+	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
 }
 
 void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
@@ -86,7 +91,7 @@ void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
 	if (TelegraphDuration > 0.f)
 	{
 		GetWorldTimerManager().SetTimer(
-			TelegraphTimerHandle, this, &AEchidnaFanZoneActor::BeginRingExpansion, TelegraphDuration, false);
+			TelegraphTimerHandle, this, &AEchidnaFanZoneActor::BeginRingExpansion, TelegraphDuration / CustomTimeDilation, false);
 	}
 	else
 	{
@@ -105,7 +110,7 @@ void AEchidnaFanZoneActor::BeginRingExpansion()
 	if (!bExploded && RingCount > 1)
 	{
 		GetWorldTimerManager().SetTimer(
-			RingTimerHandle, this, &AEchidnaFanZoneActor::RevealNextRing, RingInterval, true);
+			RingTimerHandle, this, &AEchidnaFanZoneActor::RevealNextRing, RingInterval / CustomTimeDilation, true);
 	}
 }
 
