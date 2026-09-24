@@ -28,7 +28,7 @@ namespace
 		AddTrapTri(Verts, Tris, A, C, D);
 	}
 
-	void CommitSection(UProceduralMeshComponent* Mesh, int32 Section, const TArray<FVector>& Verts, const TArray<int32>& Tris)
+	void CommitFlytrapSection(UProceduralMeshComponent* Mesh, int32 Section, const TArray<FVector>& Verts, const TArray<int32>& Tris)
 	{
 		TArray<FVector> Normals;
 		Normals.Init(FVector::UpVector, Verts.Num());
@@ -250,7 +250,7 @@ void AEchidnaFlytrapZoneActor::BuildHex(int32 Section, float Scale)
 			FVector(FMath::Cos(A1) * CornerRadius, FMath::Sin(A1) * CornerRadius, Z));
 	}
 
-	CommitSection(ZoneMesh, Section, Verts, Tris);
+	CommitFlytrapSection(ZoneMesh, Section, Verts, Tris);
 	const int32 MIDIndex = Section == 0 ? MID_ZoneBackground : MID_ZoneFill;
 	if (MIDs.IsValidIndex(MIDIndex))
 	{
@@ -286,7 +286,7 @@ void AEchidnaFlytrapZoneActor::BuildLobe(UProceduralMeshComponent* Lobe)
 			AddTrapQuad(Verts, Tris, LobePoint(Xi, Yi), LobePoint(Xi + 1, Yi), LobePoint(Xi + 1, Yi + 1), LobePoint(Xi, Yi + 1));
 		}
 	}
-	CommitSection(Lobe, 0, Verts, Tris);
+	CommitFlytrapSection(Lobe, 0, Verts, Tris);
 
 	// 가시 — 반원 가장자리를 따라 바깥으로 뻗고 안쪽(+Z)으로 살짝 휨
 	TArray<FVector> TVerts;
@@ -303,7 +303,7 @@ void AEchidnaFlytrapZoneActor::BuildLobe(UProceduralMeshComponent* Lobe)
 		const FVector Tip = Dir * (R + ToothLen) + FVector(0.f, 0.f, ToothLen * 0.4f);
 		AddTrapTri(TVerts, TTris, BaseL, BaseR, Tip);
 	}
-	CommitSection(Lobe, 1, TVerts, TTris);
+	CommitFlytrapSection(Lobe, 1, TVerts, TTris);
 
 	if (MIDs.IsValidIndex(MID_Tooth))
 	{

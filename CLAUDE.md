@@ -146,6 +146,11 @@
   - 페이드는 `WidgetComponent`가 아니라 **안에 든 `UserWidget`의 `SetRenderOpacity()`**를 건드려야 Screen 스페이스에서도 먹는다
   - **버그였던 것 (가끔 데미지 0이 뜸)**: `AEchidnaBoss::TakeDamage`가 `Super::TakeDamage`의 **반환값**을 `ReceiveDamage`에 넘기고 있었다. `AActor::InternalTakeRadialDamage`는 `ComponentHits`의 가장 가까운 충돌 지점까지의 거리로 배율을 구하는데, 오버랩은 잡혔어도 그 지점 계산이 실패하면 거리가 `UE_MAX_FLT`로 남아 배율이 0이 되고 `ApplyRadialDamage`는 `MinimumDamage=0`이라 결과가 통째로 0이 된다(`bDoFullDamage=true`는 감쇠 곡선만 없앨 뿐 이 경로를 막지 못함). **숫자만 0인 게 아니라 HP도 실제로 안 깎이고 있었다.** `ALoACharacter::TakeDamage`처럼 들어온 원본 `DamageAmount`를 그대로 쓰도록 통일해서 해결
   - **데미지 계열 액터를 새로 만들 때 규칙**: 이 프로젝트는 반경 감쇠를 쓰지 않으므로(`ApplyRadialDamage`의 `bDoFullDamage`가 전부 `true`) `TakeDamage` 오버라이드에서는 **`Super`의 반환값이 아니라 인자로 들어온 `DamageAmount`를 적용할 것**
+- `UMinimapWidget` (`UI/MinimapWidget.h/.cpp`, 2026-09-24) — 화면 우상단 미니맵. **WBP 없이 C++ 클래스로 바로 생성**(`ALoAPlayerController::BeginPlay`, 레벨에 `AHexArena`가 있을 때만) → 에디터 할당 불필요
+  - 그림은 전부 `NativePaint`에서 Slate 커스텀 버텍스(`FSlateDrawElement::MakeCustomVerts` + `WhiteBrush` 리소스 핸들)로 직접 그림: 배경 박스 → 아레나 타일 육각형(전부 같은 색 — 오염 장판 등 타일 상태는 일부러 표시 안 함) → 보스 빨간 마름모 → 플레이어 초록 화살표(바라보는 방향)
+  - 방향은 **카메라 Yaw 기준**(화면 위 = 미니맵 위). 보스가 숨김(`IsHidden`) 상태면 보스 아이콘도 숨김 — 그네·거울잇기에서 사라졌다 나타나는 위치가 바로 보임
+  - `AddToViewport(5)` — 연기(-1)·HUD(0)보다 위, 스킬트리(10)보다 아래. 크기/여백/색은 `UMinimapWidget` 기본값(`MapSize` 220 등)
+  - `UUserWidget`에 이미 `Padding` 멤버가 있어서 같은 이름 UPROPERTY는 UHT 에러(shadowing) — 그래서 `MapPadding`
 - **HUD 위젯은 전부 루트 Visibility를 `HitTestInvisible`로 둘 것** — 클릭 이동 게임이라 바가 마우스 입력을 먹으면 그 영역을 클릭해도 캐릭터가 안 움직인다
 - ⚠️ **`BP_LoAPlayerController`의 위젯 클래스 프로퍼티는 반드시 에디터 Details 패널에서 직접 할당할 것.**
   MCP(`ObjectTools.set_properties`)로 CDO(`Default__BP_LoAPlayerController_C`)에 써서 저장하면 **에디터 조회로는 값이 보이고 `save_assets`도 true를 반환하는데, PIE 런타임에서는 null이다.** Live Coding 리인스턴싱을 거치면서 날아가는 것으로 보임.
@@ -306,6 +311,7 @@
   - 별도 넉백 시스템(`KnockbackTickInterval`/`KnockbackStrength` 등)은 **제거됨** — 대신 데미지 틱마다 `ALoACharacter::ApplyKnockdown()` 호출로 통합 (아래 "넉다운 시스템" 참조)
   - `TrackingRotationSpeed` 기본값 60 → 100 → 80 → 50 → 15 → **8**도/초 (C++ 기본값 + `BP_EchidnaMirror` 둘 다). 걸어서 피할 수 있으려면 각속도×MaxRange(3000) < 걷기 600cm/s → 약 11도/초 이하
 - 완료 후 `LifeAfterBeam` 뒤 소멸
+- **8거울의 개인 유도레이저**(`FStateTreeTask_EchidnaEightMirrorPattern`): 패턴 시작 **`GuidedSpawnDelay`(2초) 뒤 보스 위치**에서 스폰돼 플레이어를 쫓아감 (2026-09-24 — 예전엔 시작 즉시 보스 오른쪽 500cm에 스폰돼서 그 자리 플레이어가 피할 틈 없이 맞았음. 이때 `GuidedHoverHeight` 필드를 삭제함)
 
 ### 비주얼 — 별도 에셋 없이도 즉시 보이게
 - `MirrorMeshComp`(엔진 Sphere) / `ZoneMeshComp`(엔진 Plane) — 생성자에서 `/Engine/BasicShapes/*` + `BasicShapeMaterial`을 기본으로 박아둠 (VFX 미할당이어도 스폰만 되면 무조건 보임)
@@ -658,6 +664,27 @@
 - RandomGrab에 On State Completed → Patrol
 - Enter Condition은 넣지 않는다(똥장판 패턴에서 두 곳 값이 어긋나 안 나왔던 전례 — Root Transition 하나로 충분)
 
+## 에키드나 시간 패턴 — 광폭화 3분 40초 "그네" (`EchidnaSwingZoneActor`, `EchidnaSwingChainActor`, `EchidnaButterflyActor`, `EchidnaBossStateTreeUtility`) — 2026-09-24
+
+### 흐름 (`FStateTreeTask_EchidnaSwingPattern`)
+1. 진입: 발동 표시(`MarkBigPatternTriggered`, PatternName `SwingPattern`), 보스 **사라짐** → `VanishDuration`(1초) 뒤 **외곽 링 랜덤 타일**에 아레나 중심을 보고 등장, 패턴 내내 그 자리 고정
+2. 등장 `ZoneDelay`(3초) 뒤 보스 발밑에 **그네 장판**(`AEchidnaSwingZoneActor`) — 보스 중심 `SafeRadius`(900cm) 원 안만 안전, 바깥은 거리 제한 없이 전부 **최대 HP × `ZoneDamageRatio`(10) 즉사급**. `TelegraphDuration`(3초) 동안 안전 원 경계에서 바깥으로 차오르다 폭발
+3. 폭발 직후 동시에:
+   - **화면 핑크 연기**(랜잡과 같은 `SetScreenFog`) + **비활성 오염 장판 전부 활성화**(`SetAllPoopTilesActive(true)` → 빨강, 밟으면 매혹·데미지). `ExitState`에서 다시 비활성
+   - **보스↔플레이어 사슬**(`AEchidnaSwingChainActor`, 엔진 Cylinder를 두 끝점 사이로 매 틱 늘림) — 보스 **반대편 타일 = 아레나 중심 대칭 `(q,r)→(-q,-r)`**에 노란 테두리(`SetLinkHighlighted`). `ChainDuration`(5초) 안에 그 타일을 밟으면 끊김(파훼), 못 끊으면 `AddCharmGauge(MaxCharmGauge)`로 **매혹 3스택과 같은 매혹**. 남은 시간이 줄수록 사슬이 빨개짐
+   - **나비** `ButterflyCount`(8)마리(`AEchidnaButterflyActor`) — 맵 안쪽(외곽 링 제외) 타일, 플레이어 주변 `ButterflySafeDistance`(1칸) 제외하고 스폰. `Speed`(140cm/s)로 랜덤 비행, `WanderInterval`마다 ±`WanderAngle` 방향 전환, 아레나 밖으로 나가려 하면 중심 쪽으로 튼다. 닿으면 **`ButterflyStunDuration`(10초) 기절** 후 나비 소멸(이미 기절 중이면 통과 — 기절이 끝없이 갱신되지 않게)
+4. 사슬 결과가 나면 `EndDelay`(2초) 뒤 Succeeded. `ExitState`(끊겨도): 보스 보이게, 연기 걷힘, 사슬(EndPlay에서 노란 테두리도 끔)·장판·나비 제거, 시간 패턴 잠금 해제
+- 나비 BP: `/Game/LostArk/Raid/Echidna/Pattern/BP_EchidnaButterfly` (2026-09-24 생성) — BP 값을 바꿨으면 Task의 `ButterflyClass`에 할당해야 반영됨
+- 세 액터 다 비워두면 네이티브 클래스로 스폰, 광폭화 규칙(BeginPlay `CustomTimeDilation` + Tick 기반) 준수
+- 비주얼은 전부 에셋 없이 `M_MirrorLaser` 색 주입(장판 PMC 고리, 사슬 Cylinder, 나비 PMC 날개 — 날개 폭 Y 스케일을 흔들어 날갯짓)
+- 파훼 성공 보상(무력화 등)은 아직 없음 — 결과만 로그(`[SwingChain] 사슬 끊음 — 파훼`)
+
+### StateTree 배치 (에디터 수동) — 랜잡과 동일
+- Root 자식으로 State `Swing`, Task `Echidna Swing Pattern` 하나(Boss/AIController 바인딩)
+- **Root에 On Tick Transition → Swing**, Condition `Boss Enrage Time Reached`(RemainingSeconds **220** = 3분 40초, PatternName `SwingPattern` 또는 State 이름 `Swing`)
+- Swing에 On State Completed → Patrol. Enter Condition은 넣지 말 것
+- 테스트할 땐 RemainingSeconds를 크게(예: 530) 하면 레이드 시작 10초 뒤 바로 나옴
+
 ## 에키드나 정산 패턴 — 반정산(50%)·풀정산(100%) "거울잇기" (둘 다 같은 패턴, 100% 끝나면 게이지 0) (`EchidnaLinkMirrorActor`, `EchidnaBossStateTreeUtility`) — 2026-09-24
 
 ### 흐름 (`FStateTreeTask_EchidnaMirrorLinkPattern`)
@@ -762,7 +789,7 @@
 ### 스킬 계수/쿨타임 (`DT_Skills`) — 쿨타임은 실제 로아 소서리스 10레벨 값 그대로
 | 스킬 | 계수 | 데미지 | 쿨타임 |
 |---|---|---|---|
-| 기본공격 | 0.35 | 2,768,920 | 0.8s |
+| 기본공격 | 0.1 | 791,120 | 0.65s |
 | 블레이즈 | 2.0 | 15,822,400 | 10s |
 | 돌풍 | 4.0 | 31,644,800 | 14s |
 | 인페르노 | 6.0 | 47,467,200 | 14s |
@@ -771,6 +798,8 @@
 | 익스플로전 | 9.0 | 71,200,800 | 28s |
 | 천벌 | 14.0 | 110,756,800 | 28s |
 | 종말의 날 | 25.0 | 197,780,000 | 30s |
+
+- **기본공격 데미지 경로**: `BP_SorceressBasicAttack`(SkillInstant) → `BP_Sorceress.SpawnBasicAttack` → 발사체 `ABP_BasicAttack`이 BeginPlay에서 `DamageAmount = AttackPower × SkillManager.GetSlotSkillData(8).DamageCoefficient`로 계산. **2026-09-24 이전엔 계수를 안 곱하고 `AttackPower` 그대로(= 계수 1.0) 넣고 있어서 DT 계수를 바꿔도 데미지가 안 바뀌었음** — 다른 스킬처럼 C++ `Execute`가 아니라 BP 발사체가 데미지를 정하는 구조라 놓치기 쉬움
 
 예상 킬타임: 이론 DPS 약 2,670만 → 완벽 플레이 **3분**, 패턴 회피 포함 실전 **약 4분**
 
@@ -857,7 +886,7 @@
 - [x] 광폭화 8분 20초 "똥장판" 패턴 C++ 구현 (위 섹션) — **`ST_Echidna`에 `PoopPattern` State 배치는 에디터에서 수동으로 해야 함**
 - [x] 광폭화 7분 40초 "랜잡" 패턴 C++ 구현 (위 섹션) — **`ST_Echidna`에 `RandomGrab` State + Root On Tick Transition 배치는 에디터에서 수동**
 - [x] 정산 패턴 전부 — 25/75 똥장판, 50/100 거울잇기 (발동 지점 숫자 추적 방식)
-- [ ] 시간 패턴 "그네" (광폭화 3분 40초) — 유저가 설명 주기로 함
+- [x] 시간 패턴 "그네" (광폭화 3분 40초) C++ 구현 (위 섹션) — **`ST_Echidna`에 `Swing` State + Root On Tick Transition 배치는 에디터에서 수동**
 - [ ] Border_GetUp UI 최종 위치/스타일 다듬기
 - [x] DT_Skills `InstantGetUp` 행 — Cooldown 15초 + Icon 채워짐 확인 완료 (2026-09-22)
 - [x] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 완료 (`RetreatFan` State)

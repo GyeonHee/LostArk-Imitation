@@ -16,6 +16,9 @@ class AEchidnaPoopMarkActor;
 class AEchidnaPoopBeamActor;
 class AEchidnaFlytrapZoneActor;
 class AEchidnaLinkMirrorActor;
+class AEchidnaSwingZoneActor;
+class AEchidnaSwingChainActor;
+class AEchidnaButterflyActor;
 class AHexArena;
 class AAIController;
 class ALoACharacter;
@@ -525,6 +528,146 @@ private:
 	bool AppearBossAndMirror(FInstanceDataType& InstanceData) const;
 };
 
+UENUM()
+enum class EEchidnaSwingPhase : uint8
+{
+	Vanished,	// 보스 사라짐
+	Appeared,	// 외곽 랜덤 타일에 등장 — ZoneDelay 뒤 장판
+	Zone,		// 안전 원 장판 예고 → 폭발 대기
+	Chain,		// 폭발 직후: 연기 + 사슬 + 나비 — 사슬 결과 대기
+	Ending,
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaSwingPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaSwingPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 진입 시 스스로 발동 표시 — Boss Enrage Time Reached 조건의 PatternName(또는 State 이름)과 같아야 한 번만 나온다
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	FName PatternName = TEXT("SwingPattern");
+
+	// 비워두면 네이티브 클래스로 스폰
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaSwingZoneActor> ZoneClass;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaSwingChainActor> ChainClass;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaButterflyActor> ButterflyClass;
+
+	// 보스가 사라져 있는 시간 (초) — 이후 외곽 랜덤 타일에 등장
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float VanishDuration = 1.f;
+
+	// 외곽에 등장한 뒤 장판이 나오기까지 (초). 장판이 터지는 시간은 Zone 클래스의 TelegraphDuration(3초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float ZoneDelay = 3.f;
+
+	// 장판 데미지 = 최대 HP × 이 배율 (즉사급)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float ZoneDamageRatio = 10.f;
+
+	// 안전 원 반지름 — 음수면 Zone 클래스(BP) 값 사용
+	UPROPERTY(EditAnywhere, Category = "Pattern|Override")
+	float SafeRadiusOverride = -1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FogFadeTime = 1.f;
+
+	// 나비 수 / 기절 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Butterfly")
+	int32 ButterflyCount = 8;
+
+	UPROPERTY(EditAnywhere, Category = "Butterfly")
+	float ButterflyStunDuration = 10.f;
+
+	// 나비 높이 — 타일 윗면 기준 (플레이어 캡슐 중심 높이쯤이어야 닿는다)
+	UPROPERTY(EditAnywhere, Category = "Butterfly")
+	float ButterflyHeight = 90.f;
+
+	// 스폰 시 플레이어와 이 헥스 거리 이하인 타일엔 나비를 두지 않는다 — 나오자마자 맞지 않게
+	UPROPERTY(EditAnywhere, Category = "Butterfly")
+	int32 ButterflySafeDistance = 1;
+
+	// 사슬 결과가 난 뒤 패턴 종료(연기 걷힘·나비 사라짐)까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float EndDelay = 2.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaSwingZoneActor> Zone;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaSwingChainActor> Chain;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaButterflyActor>> Butterflies;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AHexArena> Arena;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<ALoACharacter> Player;
+
+	UPROPERTY()
+	EEchidnaSwingPhase Phase = EEchidnaSwingPhase::Vanished;
+
+	UPROPERTY()
+	float PhaseElapsed = 0.f;
+
+	UPROPERTY()
+	FIntPoint BossCoord = FIntPoint::ZeroValue;
+
+	UPROPERTY()
+	FVector BossStandLocation = FVector::ZeroVector;
+};
+
+/**
+ * 광폭화 3분 40초 "그네" 패턴.
+ *  1) 보스가 사라졌다가(VanishDuration) 맵 최외곽 랜덤 타일에 아레나 중심을 보고 등장 — 패턴 내내 그 자리에 고정
+ *  2) ZoneDelay(3초) 뒤 보스 발밑 기준 장판(AEchidnaSwingZoneActor): 안전 원 안만 안전, 바깥 맵 전체 즉사급 —
+ *     TelegraphDuration(3초) 뒤 폭발
+ *  3) 폭발 직후 화면 핑크 연기 + 보스↔플레이어 사슬(AEchidnaSwingChainActor) + 맵 안쪽 나비(AEchidnaButterflyActor)
+ *     - 사슬: 보스 반대편 타일((q,r) → (-q,-r), 노란 테두리)을 5초 안에 밟으면 끊김(파훼), 못 끊으면 매혹(최대 스택)
+ *     - 나비: 천천히 랜덤 비행, 닿으면 10초 기절
+ *  4) 사슬 결과가 나면 EndDelay 뒤 Succeeded — ExitState에서 연기 걷힘, 나비·사슬·장판 제거, 보스 보이게 복구
+ */
+USTRUCT(meta = (DisplayName = "Echidna Swing Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaSwingPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaSwingPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	// 외곽 랜덤 타일에 보스 등장 — 실패하면 false
+	bool AppearAtRandomEdge(FInstanceDataType& InstanceData) const;
+	void SpawnZone(FInstanceDataType& InstanceData) const;
+	// 연기 + 사슬 + 나비
+	void StartChainPhase(FInstanceDataType& InstanceData) const;
+	void SpawnButterflies(FInstanceDataType& InstanceData) const;
+};
+
 /**
  * FStateTreeTask_WaitRandomDuration의 Instance Data
  */
@@ -645,11 +788,10 @@ struct FStateTreeEchidnaEightMirrorPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Guided")
 	float GuidedDamage = 5000.f;
 
-	// 유도 거울이 처음 스폰될 때 보스 오른쪽으로 얼마나 떨어진 지점인지 (cm) — 스폰 직후부터 플레이어를 쫓아다님.
-	// (필드 이름은 GuidedHoverHeight로 남아있지만 용도가 "스폰 오프셋"으로 바뀜 — StateTree 인스턴스 데이터
-	// 구조체 레이아웃을 또 바꾸면 이미 배치된 ST_Echidna 태스크가 Live Coding에서 크래시 나서 필드 재사용함)
-	UPROPERTY(EditAnywhere, Category = "Guided", meta = (DisplayName = "Guided Spawn Offset"))
-	float GuidedHoverHeight = 500.f;
+	// 패턴 시작 후 유도 거울이 나오기까지의 대기 시간(초). 보스 위치에서 스폰된 뒤 플레이어를 쫓아간다.
+	// 예전엔 패턴 시작 즉시 보스 옆에 스폰돼서, 그 자리에 서 있던 플레이어가 피할 틈 없이 맞았음
+	UPROPERTY(EditAnywhere, Category = "Guided")
+	float GuidedSpawnDelay = 2.f;
 
 	UPROPERTY(Transient)
 	EEchidnaEightMirrorPhase Phase = EEchidnaEightMirrorPhase::PlusWave;
@@ -661,9 +803,16 @@ struct FStateTreeEchidnaEightMirrorPatternInstanceData
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AEchidnaMirrorActor>> CrossMirrors;
 
-	// 패턴 시작 시 1회만 스폰되어 패턴이 끝날 때까지 독립적으로 반복 추적+발사하는 유도 거울
+	// GuidedSpawnDelay 뒤 1회만 스폰되어 패턴이 끝날 때까지 독립적으로 반복 추적+발사하는 유도 거울
 	UPROPERTY(Transient)
 	TObjectPtr<AEchidnaMirrorActor> GuidedMirror;
+
+	// 패턴 시작 후 경과 시간 — GuidedSpawnDelay 판정용
+	UPROPERTY(Transient)
+	float Elapsed = 0.f;
+
+	UPROPERTY(Transient)
+	bool bGuidedSpawned = false;
 
 	// 패턴 시작(EnterState) 시점에 한 번만 고정하는 기준 방향 — "+"(0/90/180/270)/"X"(45/135/225/315) 스포크 각도의 기준선
 	UPROPERTY(Transient)
@@ -675,7 +824,7 @@ struct FStateTreeEchidnaEightMirrorPatternInstanceData
  * 총 8개의 고정 스포크 거울을 한꺼번에 스폰한다(전부 화면에 존재) — 단, 실제 판정(장판)은 "+" 4개가 먼저
  * 발동(Activate)하고, 그게 끝나면 미리 스폰해둔 "X" 4개가 그제서야 Activate되어 순차적으로 나간다
  * (플레이어를 쫓지 않고 스폰 방향 고정 — AEchidnaMirrorActor::bLockDirectionOnSpawn).
- * 이와 별개로 패턴 시작 시 "개인 유도레이저" 거울 1개를 보스 오른쪽(GuidedHoverHeight만큼 떨어진 지점, 높이는
+ * 이와 별개로 패턴 시작 GuidedSpawnDelay초 뒤 "개인 유도레이저" 거울 1개를 보스 위치(높이는
  * 보스 캡슐 중심 Z 그대로 = 보스 키의 절반)에 추가로 스폰한다 — 스폰 직후부터 플레이어 위치를 계속
  * 따라다니며(AEchidnaMirrorActor::bSkyGuidedMode) 위에서 아래로 비스듬히 레이저를 반복 발사하다가,
  * 8거울 두 파동이 모두 끝나면 StopRepeating()으로 멈춰 마지막 한 발만 더 쏘고 소멸한다.

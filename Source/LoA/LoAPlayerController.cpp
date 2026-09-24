@@ -2,6 +2,8 @@
 
 #include "LoAPlayerController.h"
 #include "UI/ScreenFogWidget.h"
+#include "UI/MinimapWidget.h"
+#include "Raid/HexArena.h"
 #include "GameFramework/Pawn.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "NiagaraSystem.h"
@@ -143,6 +145,18 @@ void ALoAPlayerController::BeginPlay()
 		// 이 분기가 찍히면 클래스가 아예 안 물린 것 — 로그가 통째로 없어서 원인을 못 가리던 문제를 막는다
 		UE_LOG(LogTemp, Warning, TEXT("[BossHP] 생성 건너뜀 — BossHPWidgetClass:%s, IsLocal:%d"),
 			BossHPWidgetClass ? TEXT("설정됨") : TEXT("미설정"), IsLocalController());
+	}
+
+	// 미니맵 — 아레나가 있는 레벨에서만. WBP 없이 C++ 클래스로 바로 생성해서 에디터 할당이 필요 없다
+	// (위젯 클래스 CDO 할당이 PIE에서 날아가던 문제와 무관). 연기(ZOrder -1)보다 위라 그네·랜잡 중에도 보인다
+	if (IsLocalController() && UGameplayStatics::GetActorOfClass(this, AHexArena::StaticClass()))
+	{
+		MinimapWidget = CreateWidget<UMinimapWidget>(this, UMinimapWidget::StaticClass());
+		if (MinimapWidget)
+		{
+			MinimapWidget->AddToViewport(5);
+			UE_LOG(LogTemp, Log, TEXT("[Minimap] 위젯 생성 완료"));
+		}
 	}
 
 	// 캐스팅/차지 진행바 — 만들어두고 숨겨놨다가 Tick이 진행 중일 때만 띄운다
@@ -633,6 +647,7 @@ void ALoAPlayerController::OnInputStarted()
 	bHoldMoving = false;
 	bDashSuppressed = false;
 	bWasAutoMovingBeforeDash = false;
+	bMoveHaltedByAttack = false;  // 새 이동 클릭 — 기본공격으로 멈췄던 것 해제
 
 	if (APawn* ControlledPawn = GetPawn())
 	{
@@ -653,6 +668,9 @@ void ALoAPlayerController::OnSetDestinationTriggered()
 		return;
 	}
 
+	// 기본공격으로 멈췄으면 버튼을 계속 누르고 있어도 새 클릭 전까진 걷지 않는다
+	if (bMoveHaltedByAttack) return;
+
 	bAutoMoving = false;
 	bHoldMoving = true;
 
@@ -665,6 +683,13 @@ void ALoAPlayerController::OnSetDestinationTriggered()
 void ALoAPlayerController::OnSetDestinationReleased()
 {
 	bHoldMoving = false;
+
+	// 짧게 눌렀다 떼도 기본공격으로 멈춘 뒤라면 자동이동을 시작하지 않는다
+	if (bMoveHaltedByAttack)
+	{
+		FollowTime = 0.f;
+		return;
+	}
 
 	if (FollowTime <= ShortPressThreshold)
 	{
@@ -769,6 +794,16 @@ void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
+	}
+
+	// 기본공격: 누르는 즉시 멈추고, 다음 이동 클릭 전까지 그 자리에 서 있는다.
+	// 공격이 큐에 들어가거나 쿨타임이라 바로 안 나가도 멈추는 건 즉시 — HandleKeyDown보다 먼저 해야
+	// 사거리 밖 공격의 ForceMoveTo가 덮어쓰이지 않는다.
+	if (SlotIndex == USkillManagerComponent::BasicAttackSlotIndex)
+	{
+		CancelAutoMove();
+		bWasAutoMovingBeforeDash = false;  // 대시 직후라도 대시 끝나고 이동이 되살아나지 않게
+		bMoveHaltedByAttack = true;
 	}
 
 	if (USkillManagerComponent* SM = GetSkillManager())
