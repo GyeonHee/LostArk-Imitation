@@ -30,6 +30,9 @@ public:
 	/** 스폰 직후 1회 호출 — 숫자를 채우고 겹침 순서를 정한다. SortPriority가 클수록 앞에 그려진다 */
 	void Activate(float Damage, int32 SortPriority);
 
+	/** 숫자 대신 글자로 띄우기 — 떠오르기·페이드·소멸은 숫자와 똑같다 */
+	void ActivateLabel(const FText& Label, FLinearColor Color, float FontSizeScale, int32 SortPriority);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "DamageNumber")
 	TObjectPtr<UWidgetComponent> DamageWidgetComponent;
 

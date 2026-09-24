@@ -91,6 +91,7 @@ void ALoACharacter::BeginPlay()
 	if (CameraBoom)
 	{
 		DefaultCameraArmLength = CameraBoom->TargetArmLength;
+		DefaultCameraRotation = CameraBoom->GetRelativeRotation();
 	}
 
 	GetCharacterMovement()->MaxAcceleration = 99999.0f;
@@ -129,6 +130,14 @@ void ALoACharacter::Tick(float DeltaSeconds)
 		{
 			CameraBoom->TargetArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, TargetArm, DeltaSeconds, CameraZoomInterpSpeed);
 		}
+
+		// SpringArm은 절대 회전이라 RelativeRotation이 곧 월드 회전
+		const FRotator TargetRot = bCameraRotationOverride ? CameraRotationOverride : DefaultCameraRotation;
+		const FRotator CurrentRot = CameraBoom->GetRelativeRotation();
+		if (!CurrentRot.Equals(TargetRot, 0.05f))
+		{
+			CameraBoom->SetRelativeRotation(FMath::RInterpTo(CurrentRot, TargetRot, DeltaSeconds, CameraZoomInterpSpeed));
+		}
 	}
 }
 
@@ -140,6 +149,35 @@ void ALoACharacter::SetCameraZoomOverride(float ArmLength)
 void ALoACharacter::ClearCameraZoomOverride()
 {
 	CameraArmOverride = -1.f;
+}
+
+bool ALoACharacter::TryConsumeTickDamage(FName Source, float Interval)
+{
+	const UWorld* World = GetWorld();
+	if (!World) return true;
+
+	const double Now = World->GetTimeSeconds();
+	if (const double* Last = LastTickDamageTimes.Find(Source))
+	{
+		// 같은 장판이 자기 다음 틱을 프레임 오차로 놓치지 않도록 90%만 요구
+		if (Now - *Last < Interval * 0.9)
+		{
+			return false;
+		}
+	}
+	LastTickDamageTimes.Add(Source, Now);
+	return true;
+}
+
+void ALoACharacter::SetCameraRotationOverride(FRotator Rotation)
+{
+	bCameraRotationOverride = true;
+	CameraRotationOverride = FRotator(Rotation.Pitch, Rotation.Yaw, 0.f);
+}
+
+void ALoACharacter::ClearCameraRotationOverride()
+{
+	bCameraRotationOverride = false;
 }
 
 void ALoACharacter::ExecuteDash_Implementation(const FVector& TargetLocation)

@@ -4,6 +4,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/OverlapResult.h"
+#include "Raid/CounterableInterface.h"
 
 AGustTornadoActor::AGustTornadoActor()
 {
@@ -18,9 +19,10 @@ void AGustTornadoActor::BeginPlay()
     Super::BeginPlay();
 }
 
-void AGustTornadoActor::Activate(float InDamage, AController* InInstigator)
+void AGustTornadoActor::Activate(float InDamage, AController* InInstigator, bool bInCanCounter)
 {
     Damage               = InDamage;
+    bCanCounter          = bInCanCounter;
     InstigatorController = InInstigator;
 
     UWorld* World = GetWorld();
@@ -73,12 +75,32 @@ void AGustTornadoActor::ApplyDamage()
         FVector(BoxHalfLength, BoxHalfWidth, BoxHalfHeight),
         GetActorQuat(), FColor::Green, false, LifeAfterDone);
 
+    // 카운터 판정은 데미지보다 먼저, 그리고 액터가 아니라 **컴포넌트 단위** — 거울 벽은 한 액터에 거울 7개가 있고
+    // 그중 파란 거울 하나만 카운터 대상이라 어느 컴포넌트를 맞았는지가 중요하다.
+    // 정면 판정은 토네이도 위치가 아니라 "시전자(플레이어) 위치" 기준 (로아의 헤드어택과 동일)
+    if (bCanCounter && InstigatorPawn)
+    {
+        TSet<AActor*> CounteredActors;
+        for (const FOverlapResult& Hit : Overlaps)
+        {
+            AActor* HitActor = Hit.GetActor();
+            ICounterable* Counterable = Cast<ICounterable>(HitActor);
+            if (!Counterable || CounteredActors.Contains(HitActor)) continue;
+
+            if (Counterable->TryCounterHit(InstigatorPawn, Hit.GetComponent()))
+            {
+                CounteredActors.Add(HitActor);
+            }
+        }
+    }
+
     TSet<AActor*> DamagedActors;
     for (const FOverlapResult& Hit : Overlaps)
     {
         AActor* HitActor = Hit.GetActor();
         if (!HitActor || DamagedActors.Contains(HitActor)) continue;
         DamagedActors.Add(HitActor);
+
         UGameplayStatics::ApplyDamage(
             HitActor, Damage, InstigatorController.Get(),
             this, UDamageType::StaticClass());

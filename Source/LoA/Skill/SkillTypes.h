@@ -67,6 +67,10 @@ struct FSkillData : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadOnly)
     float DamageCoefficient = 1.0f;
 
+    // [카운터 가능] — 보스가 청백색으로 빛날 때(카운터 창) 정면에서 맞히면 카운터(그로기). 현재 돌풍만 true
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    bool bCanCounter = false;
+
     // 스킬트리 관련
     UPROPERTY(EditAnywhere, BlueprintReadOnly)
     FText SkillTypeLabel;  // "일반", "지점", "홀딩" 등 UI 표시용

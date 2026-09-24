@@ -90,6 +90,18 @@ public:
     UFUNCTION(BlueprintCallable, Category="Skills")
     void TriggerCooldown(int32 SlotIndex) { StartCooldown(SlotIndex); }
 
+    /** [카운터 가능] 스킬(FSkillData::bCanCounter)의 쿨타임을 Seconds로 바꾼다 — 거울 카운터 패턴 동안만.
+     *  이미 더 길게 남은 쿨타임도 Seconds로 줄인다 */
+    void SetCounterSkillCooldownOverride(float Seconds);
+
+    // 원래 DT 쿨타임으로 복구 (이미 돌고 있는 쿨타임은 그대로 둔다)
+    void ClearCounterSkillCooldownOverride();
+
+    /** 카운터 성공 — [카운터 가능] 스킬 쿨타임을 즉시 0으로.
+     *  돌풍은 Execute 안에서 토네이도가 바로 판정해 카운터가 StartCooldown보다 먼저 일어나므로,
+     *  같은 프레임에 뒤따라 오는 StartCooldown도 건너뛴다 */
+    void ResetCounterSkillCooldowns();
+
     // 스킬 후딜레이 — Instant/Cast/Charge 완료 후 다음 스킬 입력을 받는 창 (초)
     UPROPERTY(EditAnywhere, Category="Skills")
     float SkillPostDelay = 0.3f;
@@ -150,6 +162,14 @@ private:
     // 쿨타임 종료 시각 (WorldTime 기준)
     TArray<float> CooldownEndTimes;
     TArray<float> CooldownDurations;
+
+    // [카운터 가능] 스킬 쿨타임 오버라이드 (음수 = 없음)
+    float CounterCooldownOverride = -1.f;
+
+    // ResetCounterSkillCooldowns가 불린 프레임 — 이 프레임의 카운터 스킬 StartCooldown은 무시
+    uint64 CounterResetFrame = 0;
+
+    bool IsCounterSlot(int32 SlotIndex) const;
 
     // 사거리 자동이동 대기 중인 슬롯 인덱스 (-1 = 없음)
     int32 PendingRangeMoveSlot = -1;

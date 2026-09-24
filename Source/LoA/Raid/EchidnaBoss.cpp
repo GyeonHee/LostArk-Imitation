@@ -5,6 +5,11 @@
 #include "GameFramework/Controller.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "UObject/ConstructorHelpers.h"
+#include "Engine/Engine.h"
+#include "LoA.h"
 
 AEchidnaBoss::AEchidnaBoss()
 {
@@ -20,9 +25,17 @@ AEchidnaBoss::AEchidnaBoss()
 	DirectionIndicator = CreateDefaultSubobject<UBossDirectionIndicatorComponent>(TEXT("DirectionIndicator"));
 	DirectionIndicator->SetupAttachment(RootComponent);
 
-	// 285줄 기준 210줄에서 거울 카운터.
+	// 285줄 기준 217줄에서 거울 카운터.
 	// TotalLines와 같은 값을 넣으면 풀피에서 곧바로 발동해버리므로 반드시 그보다 작아야 한다
-	BigPatternThresholds.Add(FBossPatternThreshold{ 210, TEXT("MirrorCounter") });
+	BigPatternThresholds.Add(FBossPatternThreshold{ 217, TEXT("MirrorCounter") });
+
+	// 카운터 발광 — 다른 패턴 액터들과 같은 M_MirrorLaser("Base Color") 컨벤션
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GlowMat(
+		TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser"));
+	if (GlowMat.Succeeded())
+	{
+		CounterGlowMaterial = GlowMat.Object;
+	}
 }
 
 void AEchidnaBoss::BeginPlay()
@@ -281,4 +294,113 @@ void AEchidnaBoss::MarkPatternTriggered(FName PatternName)
 void AEchidnaBoss::UnmarkPatternTriggered(FName PatternName)
 {
 	TriggeredPatterns.Remove(PatternName);
+}
+
+// ── 카운터 ──────────────────────────────────────────────
+
+void AEchidnaBoss::OpenCounterWindow()
+{
+	if (bCounterWindowOpen || HP <= 0.0) return;
+	bCounterWindowOpen = true;
+
+	// 몸 전체 청백색 — 메시 머티리얼을 건드리지 않고 오버레이로 한 겹 덧씌운다(닫을 때 그냥 떼면 원래대로)
+	if (USkeletalMeshComponent* BossMesh = GetMesh())
+	{
+		if (!CounterGlowMID && CounterGlowMaterial)
+		{
+			CounterGlowMID = UMaterialInstanceDynamic::Create(CounterGlowMaterial, this);
+		}
+		if (CounterGlowMID)
+		{
+			CounterGlowMID->SetVectorParameterValue(CounterGlowColorParameterName, CounterGlowColor);
+			BossMesh->SetOverlayMaterial(CounterGlowMID);
+		}
+	}
+
+	UE_LOG(LogLoA, Log, TEXT("[Counter] 카운터 창 열림"));
+	OnCounterWindowVisualChanged(true);
+}
+
+void AEchidnaBoss::CloseCounterWindow()
+{
+	if (!bCounterWindowOpen) return;
+	bCounterWindowOpen = false;
+
+	if (USkeletalMeshComponent* BossMesh = GetMesh())
+	{
+		BossMesh->SetOverlayMaterial(nullptr);
+	}
+
+	OnCounterWindowVisualChanged(false);
+}
+
+bool AEchidnaBoss::IsHeadAttackPosition(const FVector& AttackerLocation) const
+{
+	FVector ToAttacker = AttackerLocation - GetActorLocation();
+	ToAttacker.Z = 0.f;
+	if (!ToAttacker.Normalize()) return true; // 완전히 겹쳐 있으면 방향을 알 수 없으니 정면으로 친다
+
+	FVector Forward = GetActorForwardVector();
+	Forward.Z = 0.f;
+	Forward.Normalize();
+
+	const float AngleDeg = static_cast<float>(FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Forward, ToAttacker), -1.0, 1.0))));
+	return AngleDeg <= HeadAttackHalfAngle;
+}
+
+bool AEchidnaBoss::TryCounter(AActor* Attacker)
+{
+	if (!bCounterWindowOpen || !IsValid(Attacker)) return false;
+
+	if (!IsHeadAttackPosition(Attacker->GetActorLocation()))
+	{
+		UE_LOG(LogLoA, Log, TEXT("[Counter] 실패 — 정면(헤드어택) 위치가 아님"));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Silver, TEXT("[카운터] 정면이 아님"));
+		}
+		return false;
+	}
+
+	CloseCounterWindow();
+
+	bGroggy = true;
+	GetWorldTimerManager().SetTimer(GroggyTimerHandle, this, &AEchidnaBoss::EndGroggy, FMath::Max(0.01f, CounterGroggyDuration), false);
+
+	UE_LOG(LogLoA, Warning, TEXT("[Counter] 카운터 성공 — 그로기 %.1f초"), CounterGroggyDuration);
+	SpawnCounterText(GetActorLocation() + FVector(0.f, 0.f, CounterTextHeight));
+
+	OnGroggyVisualChanged(true);
+	OnCountered.Broadcast(Attacker);
+	return true;
+}
+
+void AEchidnaBoss::EndGroggy()
+{
+	if (!bGroggy) return;
+	bGroggy = false;
+	OnGroggyVisualChanged(false);
+}
+
+void AEchidnaBoss::SpawnCounterText(const FVector& Location)
+{
+	if (!DamageNumberClass)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[Counter] DamageNumberClass 미설정 — Counter! 글자 생략"));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	if (ADamageNumberActor* Label = World->SpawnActor<ADamageNumberActor>(
+		DamageNumberClass, Location, FRotator::ZeroRotator, SpawnParams))
+	{
+		// 같은 타격의 데미지 숫자가 바로 뒤에 스폰되며 카운터를 올리므로, 큰 값을 더해 항상 숫자들보다 앞에 그린다
+		Label->ActivateLabel(CounterText, CounterTextColor, CounterTextScale, ++DamageNumberCounter + 1000000);
+	}
 }

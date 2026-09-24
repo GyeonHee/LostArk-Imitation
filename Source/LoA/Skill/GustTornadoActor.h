@@ -19,7 +19,8 @@ class LOA_API AGustTornadoActor : public AActor
 public:
     AGustTornadoActor();
 
-    void Activate(float InDamage, AController* InInstigator);
+    // bInCanCounter — 스킬 데이터의 [카운터 가능] 여부. 켜져 있으면 맞은 보스에게 카운터 판정(AEchidnaBoss::TryCounter)
+    void Activate(float InDamage, AController* InInstigator, bool bInCanCounter = false);
 
     // 토네이도 VFX
     UPROPERTY(EditDefaultsOnly, Category="VFX")
@@ -45,6 +46,7 @@ protected:
 
 private:
     float Damage = 0.f;
+    bool bCanCounter = false;
     TWeakObjectPtr<AController> InstigatorController;
 
     UPROPERTY()

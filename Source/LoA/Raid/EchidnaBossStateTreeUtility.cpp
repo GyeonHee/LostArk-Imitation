@@ -13,6 +13,7 @@
 #include "EchidnaSwingZoneActor.h"
 #include "EchidnaSwingChainActor.h"
 #include "EchidnaButterflyActor.h"
+#include "EchidnaMirrorWallActor.h"
 #include "HexTile.h"
 #include "LoAPlayerController.h"
 #include "HexArena.h"
@@ -62,6 +63,12 @@ bool FStateTreeCondition_BossLineThreshold::TestCondition(FStateTreeExecutionCon
 {
 	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	if (!InstanceData.Boss)
+	{
+		return false;
+	}
+
+	// 다른 큰 패턴(시간·정산·거울 카운터) 진행 중이면 대기 — Root On Tick 전이가 진행 중인 큰 패턴을 끊지 않게
+	if (InstanceData.Boss->IsTimedPatternActive())
 	{
 		return false;
 	}
@@ -3200,6 +3207,302 @@ void FStateTreeTask_EchidnaPatrol::ExitState(FStateTreeExecutionContext& Context
 FText FStateTreeTask_EchidnaPatrol::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
 {
 	return LOCTEXT("EchidnaPatrolDesc", "<b>Echidna Patrol</b>");
+}
+#endif // WITH_EDITOR
+
+// ── 카운터 패턴 ──────────────────────────────────────────────
+
+EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaCounter] EnterState 실패 — Boss NULL"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.Phase = EEchidnaCounterPhase::Window;
+	InstanceData.Elapsed = 0.f;
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	// 플레이어를 바라보고 고정
+	InstanceData.LockedYaw = Boss->GetActorRotation().Yaw;
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			InstanceData.LockedYaw = ToPlayer.Rotation().Yaw;
+		}
+	}
+	Boss->SetActorRotation(FRotator(0.f, InstanceData.LockedYaw, 0.f));
+
+	Boss->OpenCounterWindow();
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss) return EStateTreeRunStatus::Failed;
+
+	// 창·그로기 내내 제자리 + 정면 고정
+	if (UCharacterMovementComponent* Move = Boss->GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+	}
+	Boss->SetActorRotation(FRotator(0.f, InstanceData.LockedYaw, 0.f));
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaCounterPhase::Window:
+		// 카운터 성공은 스킬 쪽(TryCounter)에서 일어나므로 여기선 그 결과(그로기)만 본다
+		if (Boss->IsGroggy())
+		{
+			InstanceData.Phase = EEchidnaCounterPhase::Groggy;
+			return EStateTreeRunStatus::Running;
+		}
+
+		InstanceData.Elapsed += DeltaTime;
+		if (InstanceData.Elapsed >= InstanceData.CounterWindowDuration)
+		{
+			Boss->CloseCounterWindow();
+			UE_LOG(LogLoA, Log, TEXT("[EchidnaCounter] 카운터 실패 — 창 종료"));
+			InstanceData.Phase = EEchidnaCounterPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return EStateTreeRunStatus::Running;
+
+	case EEchidnaCounterPhase::Groggy:
+		if (!Boss->IsGroggy())
+		{
+			InstanceData.Phase = EEchidnaCounterPhase::Done;
+			return EStateTreeRunStatus::Succeeded;
+		}
+		return EStateTreeRunStatus::Running;
+
+	default:
+		return EStateTreeRunStatus::Succeeded;
+	}
+}
+
+void FStateTreeTask_EchidnaCounterPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	// 중간에 끊겨도 발광이 남지 않게
+	if (InstanceData.Boss)
+	{
+		InstanceData.Boss->CloseCounterWindow();
+	}
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaCounterPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaCounterPatternDesc", "<b>Echidna Counter Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+// ── 거울 카운터 (217줄) ──────────────────────────────────────────────
+
+EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.Walls.Reset();
+	InstanceData.Elapsed = 0.f;
+	InstanceData.EndElapsed = 0.f;
+	InstanceData.Arena = nullptr;
+
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorCounter] EnterState 실패 — Boss 바인딩 확인"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		InstanceData.Arena = *It;
+		break;
+	}
+	if (!InstanceData.Arena)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorCounter] 아레나 없음"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 발동 표시 + 큰 패턴 잠금(정산 게이지 정지, 다른 큰 패턴이 끼어들지 않음)
+	MarkBigPatternTriggered(Context, Boss, InstanceData.PatternName, TEXT("EchidnaMirrorCounter"));
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+	SetBossVanished(Boss, true);
+
+	// 거울이 나올 변 — 한 패턴 내내 고정. 아레나 외곽은 큰 육각형이고 꼭짓점이 축 방향 타일(Yaw 0/60/...)에 있으므로
+	// 변의 바깥 법선은 Yaw 30+60k. 줄은 그 변과 평행하게 서서 반대편 변까지 간다
+	InstanceData.SideIndex = InstanceData.SpawnSide >= 0 ? InstanceData.SpawnSide % 6 : FMath::RandRange(0, 5);
+	InstanceData.OutwardYaw = static_cast<float>(InstanceData.Arena->GetActorRotation().Yaw) + 30.f + 60.f * InstanceData.SideIndex;
+
+	// 시점 전환은 여기서 한 번만 — 줄이 오는 변을 바라보는 비스듬한 구도(플레이어 뒤에서 거울 줄을 마주봄). 복구는 ExitState
+	if (ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(World, 0)))
+	{
+		Player->SetCameraZoomOverride(InstanceData.CameraArmLength);
+		Player->SetCameraRotationOverride(FRotator(InstanceData.CameraPitch, InstanceData.OutwardYaw, 0.f));
+
+		if (Player->SkillManager)
+		{
+			Player->SkillManager->SetCounterSkillCooldownOverride(InstanceData.CounterSkillCooldown);
+		}
+	}
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaMirrorCounter] 패턴 시작 — %d웨이브, 변 %d"), InstanceData.WaveCount, InstanceData.SideIndex);
+	return EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnWave(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	AHexArena* Arena = InstanceData.Arena;
+	if (!Boss || !Arena) return;
+
+	FVector Center;
+	if (!Arena->GetTileTopLocation(FIntPoint(0, 0), Center))
+	{
+		Center = Arena->GetActorLocation();
+	}
+
+	// 모든 웨이브가 EnterState에서 정한 같은 변에서 나온다
+	const FVector Outward = FRotator(0.f, InstanceData.OutwardYaw, 0.f).Vector();
+	const FVector TravelDir = -Outward;
+
+	// 중심 → 외곽선 거리 = 외곽 타일 줄 중심까지(R*D*√3/2) + 타일 내접원 반지름(TileSpacing/2)
+	const float D = Arena->TileSpacing + Arena->HexGap;
+	const float EdgeDistance = (Arena->SideCount - 1) * D * 0.8660254f + Arena->TileSpacing * 0.5f;
+	const float StartDistance = EdgeDistance + InstanceData.OutsideMargin;
+
+	const FVector StartLocation = Center + Outward * StartDistance;
+
+	UClass* WallClass = InstanceData.MirrorWallClass ? InstanceData.MirrorWallClass.Get() : AEchidnaMirrorWallActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AEchidnaMirrorWallActor* Wall = Boss->GetWorld()->SpawnActor<AEchidnaMirrorWallActor>(
+		WallClass, StartLocation, TravelDir.Rotation(), SpawnParams);
+	if (!Wall)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorCounter] 거울 줄 스폰 실패"));
+		return;
+	}
+
+	// 줄 폭 = 출발 변의 길이. 변은 타일 SideCount칸이 이웃 방향으로 붙어 있어 길이 = SideCount × D(중심 간 거리).
+	// 줄은 변과 평행하게 중심선을 따라 전진하고, 육각형은 가운데로 갈수록 넓어지므로 변 길이에 맞추면 끝까지 맵 안에 있다
+	const float RowWidth = FMath::Max(D, Arena->SideCount * D - 2.f * InstanceData.RowEdgeInset);
+
+	// 불길은 아레나 외곽선부터 — 맵 밖 구간(OutsideMargin)엔 깔지 않는다
+	Wall->Activate(Boss, StartDistance * 2.f, InstanceData.OutsideMargin, Boss->GetController(), RowWidth);
+	InstanceData.Walls.Add(Wall);
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaMirrorCounter] %d번째 줄"), InstanceData.Walls.Num());
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss) return EStateTreeRunStatus::Failed;
+
+	Boss->GetCharacterMovement()->StopMovementImmediately();
+
+	InstanceData.Elapsed += DeltaTime;
+
+	// 다음 줄 — 정해진 시간마다 (앞 줄을 일찍 카운터쳤어도 당기지 않는다)
+	const int32 Spawned = InstanceData.Walls.Num();
+	if (Spawned < InstanceData.WaveCount
+		&& InstanceData.Elapsed >= InstanceData.FirstWaveDelay + InstanceData.WaveInterval * Spawned)
+	{
+		SpawnWave(InstanceData);
+	}
+
+	if (InstanceData.Walls.Num() < InstanceData.WaveCount)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 전부 나왔으면 마지막 불길까지 꺼질 때까지 대기 (스스로 소멸한 줄은 끝난 것으로 본다)
+	for (const TObjectPtr<AEchidnaMirrorWallActor>& Wall : InstanceData.Walls)
+	{
+		if (IsValid(Wall) && !Wall->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+	}
+
+	InstanceData.EndElapsed += DeltaTime;
+	return InstanceData.EndElapsed >= InstanceData.EndDelay ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaMirrorCounterPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+
+	// 줄은 스스로 소멸하지 않으므로 여기서 결과를 센 뒤 파괴 (중간에 끊겨도 남은 줄·불길 정리)
+	int32 Countered = 0;
+	for (const TObjectPtr<AEchidnaMirrorWallActor>& Wall : InstanceData.Walls)
+	{
+		if (IsValid(Wall))
+		{
+			if (Wall->IsCountered()) ++Countered;
+			Wall->Destroy();
+		}
+	}
+	InstanceData.Walls.Reset();
+
+	if (Boss)
+	{
+		SetBossVanished(Boss, false);
+		Boss->ClearActiveTimedPattern();
+
+		if (ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0)))
+		{
+			Player->ClearCameraZoomOverride();
+			Player->ClearCameraRotationOverride();
+
+			if (Player->SkillManager)
+			{
+				Player->SkillManager->ClearCounterSkillCooldownOverride();
+			}
+		}
+	}
+
+	const int32 Total = InstanceData.WaveCount;
+	if (Countered >= Total)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorCounter] 파훼 성공 — 카운터 %d / %d"), Countered, Total);
+	}
+	else
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorCounter] 파훼 실패 — 카운터 %d / %d"), Countered, Total);
+	}
+	InstanceData.Arena = nullptr;
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaMirrorCounterPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaMirrorCounterPatternDesc", "<b>Echidna Mirror Counter Pattern</b>");
 }
 #endif // WITH_EDITOR
 

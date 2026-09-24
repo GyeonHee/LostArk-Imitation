@@ -40,6 +40,18 @@ void ADamageNumberActor::Activate(float Damage, int32 SortPriority)
 	}
 }
 
+void ADamageNumberActor::ActivateLabel(const FText& Label, FLinearColor Color, float FontSizeScale, int32 SortPriority)
+{
+	if (!DamageWidgetComponent) return;
+
+	DamageWidgetComponent->SetTranslucentSortPriority(SortPriority);
+
+	if (UDamageNumberWidget* Widget = Cast<UDamageNumberWidget>(DamageWidgetComponent->GetUserWidgetObject()))
+	{
+		Widget->SetLabel(Label, Color, FontSizeScale);
+	}
+}
+
 void ADamageNumberActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);

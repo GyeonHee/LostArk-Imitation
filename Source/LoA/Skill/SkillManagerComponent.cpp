@@ -345,11 +345,67 @@ void USkillManagerComponent::StartCooldown(int32 SlotIndex)
 {
     UWorld* World = GetWorld();
     if (!World || !CooldownEndTimes.IsValidIndex(SlotIndex)) return;
+
+    const bool bCounterSlot = IsCounterSlot(SlotIndex);
+
+    // 방금 이 스킬로 카운터에 성공했으면 쿨타임 없이 바로 다시 쓸 수 있게
+    if (bCounterSlot && CounterResetFrame == GFrameCounter)
+    {
+        CooldownEndTimes[SlotIndex] = 0.0f;
+        return;
+    }
+
     if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])
     {
         CooldownDurations[SlotIndex] = SlotInstances[SlotIndex]->SkillData.Cooldown;
     }
+    if (bCounterSlot && CounterCooldownOverride >= 0.f)
+    {
+        CooldownDurations[SlotIndex] = CounterCooldownOverride;
+    }
     CooldownEndTimes[SlotIndex] = World->GetTimeSeconds() + CooldownDurations[SlotIndex];
+}
+
+bool USkillManagerComponent::IsCounterSlot(int32 SlotIndex) const
+{
+    return SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex] && SlotInstances[SlotIndex]->SkillData.bCanCounter;
+}
+
+void USkillManagerComponent::SetCounterSkillCooldownOverride(float Seconds)
+{
+    CounterCooldownOverride = FMath::Max(0.f, Seconds);
+
+    // 패턴 시작 시점에 원래 쿨타임(돌풍 14초)이 길게 남아 있으면 오버라이드 값으로 줄여준다
+    UWorld* World = GetWorld();
+    if (!World) return;
+    for (int32 i = 0; i < SlotInstances.Num(); ++i)
+    {
+        if (!IsCounterSlot(i) || !CooldownEndTimes.IsValidIndex(i)) continue;
+
+        const float MaxEnd = World->GetTimeSeconds() + CounterCooldownOverride;
+        if (CooldownEndTimes[i] > MaxEnd)
+        {
+            CooldownEndTimes[i] = MaxEnd;
+            CooldownDurations[i] = CounterCooldownOverride;
+        }
+    }
+}
+
+void USkillManagerComponent::ClearCounterSkillCooldownOverride()
+{
+    CounterCooldownOverride = -1.f;
+}
+
+void USkillManagerComponent::ResetCounterSkillCooldowns()
+{
+    CounterResetFrame = GFrameCounter;
+    for (int32 i = 0; i < SlotInstances.Num(); ++i)
+    {
+        if (IsCounterSlot(i) && CooldownEndTimes.IsValidIndex(i))
+        {
+            CooldownEndTimes[i] = 0.0f;
+        }
+    }
 }
 
 float USkillManagerComponent::GetRemainingCooldown(int32 SlotIndex) const

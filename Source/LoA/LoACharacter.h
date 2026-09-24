@@ -61,6 +61,14 @@ private:
 
 	// BeginPlay 시점의 SpringArm 길이 (BP에서 바꿔둔 값 포함) — 줌 오버라이드 해제 시 여기로 돌아간다
 	float DefaultCameraArmLength = 0.f;
+
+	// TryConsumeTickDamage — 종류별 마지막으로 틱 데미지를 받은 월드 시각
+	TMap<FName, double> LastTickDamageTimes;
+
+	// BeginPlay 시점의 SpringArm 회전 (BP에서 바꾼 값도 존중) / 패턴 오버라이드
+	FRotator DefaultCameraRotation = FRotator::ZeroRotator;
+	bool bCameraRotationOverride = false;
+	FRotator CameraRotationOverride = FRotator::ZeroRotator;
 	float CameraArmOverride = -1.f;
 
 	void EndStagger();
@@ -237,6 +245,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Camera")
 	void ClearCameraZoomOverride();
 
+	/** 패턴 연출용 카메라 각도 — SpringArm 회전(절대 회전)을 Rotation으로 부드럽게 옮긴다.
+	 *  Pitch를 얕게(예: -30) 주면 위에서 내려보던 시점이 내려와 비스듬히 보인다. Clear하면 원래 각도로 복귀 */
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void SetCameraRotationOverride(FRotator Rotation);
+
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void ClearCameraRotationOverride();
+
 	// 줌 보간 속도 (FInterpTo 속도 — 클수록 빨리 따라감)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
 	float CameraZoomInterpSpeed = 2.5f;
@@ -256,6 +272,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual void ReceiveDamage(float DamageAmount);
+
+	/** 같은 종류(Source)의 장판 틱 데미지가 여러 개 겹쳐도 Interval(실제 시간)당 한 번만 받게 — 이번 틱에 맞아도 되면 true.
+	 *  예: 거울 카운터의 불길이 여러 줄 겹친 곳에 서 있어도 한 줄분만 들어온다 */
+	bool TryConsumeTickDamage(FName Source, float Interval);
 
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual bool ConsumeMP(float Amount);

@@ -19,6 +19,7 @@ class AEchidnaLinkMirrorActor;
 class AEchidnaSwingZoneActor;
 class AEchidnaSwingChainActor;
 class AEchidnaButterflyActor;
+class AEchidnaMirrorWallActor;
 class AHexArena;
 class AAIController;
 class ALoACharacter;
@@ -1874,4 +1875,174 @@ struct FStateTreeTask_EchidnaPatrol : public FStateTreeTaskCommonBase
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
 #endif // WITH_EDITOR
+};
+
+UENUM()
+enum class EEchidnaCounterPhase : uint8
+{
+	Window,  // 청백색 발광 — 카운터 가능 시간
+	Groggy,  // 카운터 성공 → 무력화
+	Done
+};
+
+/**
+ * FStateTreeTask_EchidnaCounterPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaCounterPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// 카운터 창(청백색 발광) 유지 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Counter", meta = (ClampMin = "0.1"))
+	float CounterWindowDuration = 2.f;
+
+	UPROPERTY()
+	EEchidnaCounterPhase Phase = EEchidnaCounterPhase::Window;
+
+	UPROPERTY()
+	float Elapsed = 0.f;
+
+	// 진입 시 플레이어를 향한 Yaw — 창 동안 이 방향으로 고정(정면이 움직이면 헤드어택 위치를 잡을 수 없음)
+	UPROPERTY()
+	float LockedYaw = 0.f;
+};
+
+/**
+ * 카운터 패턴 — 보스가 멈춰서 플레이어를 바라보고 청백색으로 빛난다(카운터 창).
+ * 창 동안 정면에서 [카운터 가능] 스킬(돌풍)로 맞히면 카운터 성공 → 보스 그로기(AEchidnaBoss::CounterGroggyDuration) 동안
+ * 이 Task가 Running을 유지해 보스가 아무 패턴도 쓰지 않는다. 창이 그냥 지나가면 그대로 Succeeded
+ * (실패 시 후속 공격은 아직 없음).
+ */
+USTRUCT(meta = (DisplayName = "Echidna Counter Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaCounterPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaCounterPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+};
+
+/**
+ * FStateTreeTask_EchidnaMirrorCounterPattern의 Instance Data
+ */
+USTRUCT()
+struct FStateTreeEchidnaMirrorCounterPatternInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AEchidnaBoss> Boss;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController;
+
+	// Boss Line Threshold Reached 조건의 PatternName과 맞출 것 (State 이름도 같이 표시되므로 둘 중 하나면 됨)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	FName PatternName = TEXT("MirrorCounter");
+
+	// 비워두면 네이티브 AEchidnaMirrorWallActor
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	TSubclassOf<AEchidnaMirrorWallActor> MirrorWallClass;
+
+	// 거울 줄 생성 횟수 — 전부 카운터치면 파훼
+	UPROPERTY(EditAnywhere, Category = "Pattern", meta = (ClampMin = "1"))
+	int32 WaveCount = 4;
+
+	// 패턴 시작(카메라 전환) 후 첫 줄까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float FirstWaveDelay = 2.f;
+
+	// 줄과 줄 사이 간격 (초) — 줄 하나가 맵을 건너는 시간(기본 약 11초)과 비슷하게
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float WaveInterval = 12.f;
+
+	/** 거울 줄이 나오는 아레나 변 (0~5, 아레나 Yaw 기준 30+60k도 방향). -1이면 패턴마다 랜덤.
+	 *  어느 쪽이든 한 패턴의 모든 웨이브는 같은 변에서 나온다 */
+	UPROPERTY(EditAnywhere, Category = "Pattern", meta = (ClampMin = "-1", ClampMax = "5"))
+	int32 SpawnSide = -1;
+
+	/** 거울 줄 폭을 아레나 한 변(타일 SideCount칸) 길이에서 양쪽으로 이만큼씩 안쪽으로 줄인다 (cm).
+	 *  줄이 변 길이보다 넓으면 끝 거울이 벽 너머(플레이어가 못 가는 곳)로 밀려와 카운터를 못 친다 */
+	UPROPERTY(EditAnywhere, Category = "Pattern", meta = (ClampMin = "0.0"))
+	float RowEdgeInset = 100.f;
+
+	// 거울 줄이 아레나 외곽선보다 이만큼 바깥에서 출발/도착 (cm)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float OutsideMargin = 250.f;
+
+	// 패턴 동안 [카운터 가능] 스킬(돌풍) 쿨타임 (초) — 끝나면 원래 쿨타임으로 복구
+	UPROPERTY(EditAnywhere, Category = "Pattern", meta = (ClampMin = "0.0"))
+	float CounterSkillCooldown = 5.f;
+
+	// 마지막 줄의 불길까지 다 꺼진 뒤 패턴 종료까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float EndDelay = 1.f;
+
+	// 시점 — 위에서 내려보던(-60) 카메라가 내려와 비스듬히 보도록
+	UPROPERTY(EditAnywhere, Category = "Camera")
+	float CameraPitch = -30.f;
+
+	UPROPERTY(EditAnywhere, Category = "Camera")
+	float CameraArmLength = 1500.f;
+
+	UPROPERTY()
+	TObjectPtr<AHexArena> Arena;
+
+	UPROPERTY()
+	TArray<TObjectPtr<AEchidnaMirrorWallActor>> Walls;
+
+	UPROPERTY()
+	float Elapsed = 0.f;
+
+	UPROPERTY()
+	float EndElapsed = 0.f;
+
+	// 이번 패턴에서 거울 줄이 나오는 변 (0~5) / 그 변의 바깥 법선 Yaw — 진입 시 한 번만 정한다
+	UPROPERTY()
+	int32 SideIndex = 0;
+
+	UPROPERTY()
+	float OutwardYaw = 0.f;
+};
+
+/**
+ * 거울 카운터 (217줄) — 보스가 사라지고 카메라가 내려와 비스듬한 시점이 된 뒤,
+ * 맵 외곽 한 변에서 거울 7개짜리 줄(AEchidnaMirrorWallActor)이 반대편으로 전진한다. WaveInterval마다 총 WaveCount(4)번,
+ * **전부 같은 변**(진입 시 1회 결정)에서 나온다. 줄마다 청백색 카운터 거울 하나 — 정면에서 돌풍으로 맞히면 줄이 쓰러짐.
+ * 지나간 길엔 불길(틱 데미지). 카메라는 진입 시 한 번만 그 변을 바라보는 비스듬한 시점으로 바뀌고 패턴이 끝나면 복구.
+ * 4번 다 카운터치면 파훼(현재는 결과 로그만).
+ */
+USTRUCT(meta = (DisplayName = "Echidna Mirror Counter Pattern", Category = "EchidnaBoss"))
+struct FStateTreeTask_EchidnaMirrorCounterPattern : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeEchidnaMirrorCounterPatternInstanceData;
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+#if WITH_EDITOR
+	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
+#endif // WITH_EDITOR
+
+private:
+	void SpawnWave(FInstanceDataType& InstanceData) const;
 };

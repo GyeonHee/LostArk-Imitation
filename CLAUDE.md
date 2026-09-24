@@ -186,6 +186,11 @@
 | 사거리 밖, 키 해제 | 이동 취소, 쿨타임 없음 | 이동 취소, 쿨타임 없음 | — |
 | 이동 중 마우스 클릭 | 취소, 쿨타임 없음 | 취소, 쿨타임 없음 | — |
 
+## 스킬 시전 시 이동 정지 (2026-09-25)
+- 기본공격(2026-09-24)과 같은 규칙을 **모든 스킬 키**로 확장 — `ALoAPlayerController::OnSkillKeyDown`에서 `CancelAutoMove()` + `bMoveHaltedByAttack = true` → 다음 이동 클릭(`OnInputStarted`) 전까지 이동 버튼을 누른 채여도 안 걷는다
+- `HandleKeyDown`보다 **먼저** 멈춰야 한다 — 사거리 밖 스킬이 그 안에서 `ForceMoveTo`로 자동이동을 거는데, 순서가 반대면 멈춤이 그걸 지워버림
+- 기본공격은 큐·쿨타임이라 바로 안 나가도 멈추지만, **스킬은 `IsSlotAssigned && !IsSlotOnCooldown`일 때만** 멈춘다 — 쿨타임 중인 키를 눌렀다고 걷던 캐릭터가 서버리지 않게
+
 ## 스킬 잠금 시스템 (2026-06-23 기준)
 - `IsSkillLocked()` — 어느 슬롯이든 IsActive/IsMovingToRange이거나 PostDelay 중이면 잠금
 - `QueuedSkillSlot` — 잠금 중 입력된 다음 스킬 슬롯 1개 저장 (덮어쓰기)
@@ -706,6 +711,51 @@
 - MirrorLink에 On State Completed → Patrol
 - 테스트: `BP_Echidna`의 `SettlementNaturalAmount`를 크게(예: 20) 하면 금방 50%
 
+## 카운터 시스템 (`Raid/EchidnaBoss`, `Skill/GustTornadoActor`, `EchidnaBossStateTreeUtility`) — 2026-09-25
+
+- 로아식 3조건: ①보스 청백색 발광 중(카운터 창) ②헤드어택(정면) 위치 ③[카운터 가능] 스킬 — 셋 다 맞으면 성공 → 창 닫힘 + 그로기
+- **창**: `AEchidnaBoss::OpenCounterWindow()/CloseCounterWindow()`. 발광은 `GetMesh()->SetOverlayMaterial()`에 `M_MirrorLaser` MID(`CounterGlowColor`, HDR 청백색, Alpha=불투명도) — 메시 머티리얼을 안 건드리고 떼면 원래대로. BP 훅 `OnCounterWindowVisualChanged(bool)`
+- **정면**: `IsHeadAttackPosition()` — 보스 정면과 "보스→**시전자(플레이어)**" 수평 각도 ≤ `HeadAttackHalfAngle`(60 = 발밑 표시 FrontArcAngle 120의 절반). 토네이도 위치가 아니라 시전자 위치 기준
+- **판정 대상은 `ICounterable` 인터페이스**(`Raid/CounterableInterface.h`, `TryCounterHit(Attacker, HitComponent)`) — 보스 본체와 거울 카운터의 거울 줄이 구현. 토네이도는 대상 종류를 모르고 **오버랩된 컴포넌트마다** 인터페이스를 부른다(거울 줄은 한 액터에 거울 7개라 어느 컴포넌트를 맞았는지가 중요)
+- **스킬**: `FSkillData::bCanCounter` → `USkillGust`가 `AGustTornadoActor::Activate(..., bCanCounter)`로 넘김 → 맞은 대상이 보스면 데미지 전에 `TryCounter(InstigatorPawn)`. **`DT_Skills`의 돌풍 행에서 `bCanCounter`를 체크해야 동작**(구조체 기본값 false)
+- **성공 표시**: 데미지 폰트와 같은 `ADamageNumberActor`(`DamageNumberClass`)를 `ActivateLabel()`로 재사용해 파란 `Counter!`를 띄움 — `UDamageNumberWidget::SetLabel()`이 글자·색·폰트 크기 배율만 바꾸고 떠오르기/페이드는 숫자와 동일. 보스 Class Defaults `CounterText`/`CounterTextColor`/`CounterTextScale`(1.6)/`CounterTextHeight`(160). SortPriority에 +1000000을 더해 같은 타격의 데미지 숫자보다 항상 앞
+- **그로기**: `CounterGroggyDuration`(5초) 동안 `IsGroggy()`. BP 훅 `OnGroggyVisualChanged(bool)`, 델리게이트 `OnCountered`
+- **패턴 Task `Echidna Counter Pattern`**: 진입 시 정지 + 플레이어 바라보고 Yaw 고정 → `CounterWindowDuration`(2초) 창 → 성공 시 그로기가 끝날 때까지 Running(보스 아무것도 안 함) / 실패 시 그냥 Succeeded(후속 공격 아직 없음). `ExitState`에서 창 닫음
+- StateTree 배치(에디터 수동): `SmallPatternRotation`에 Task 하나만 + On State Completed → `Cooldown`, Boss/AIController 바인딩
+
+## 에키드나 대형 패턴 — 217줄 "거울 카운터" (`EchidnaMirrorWallActor`, `EchidnaBossStateTreeUtility`) — 2026-09-25
+
+### 흐름 (`FStateTreeTask_EchidnaMirrorCounterPattern`)
+1. 진입: 발동 표시(`MarkBigPatternTriggered`, PatternName `MirrorCounter` — 큰 패턴 잠금이라 정산 게이지 정지), 보스 **사라짐**, 카메라 줌아웃(`CameraArmLength` 1500)
+2. `FirstWaveDelay`(2초) 뒤부터 `WaveInterval`(12초)마다 거울 줄(`AEchidnaMirrorWallActor`) 1개, 총 `WaveCount`(4)개. 앞 줄을 일찍 카운터쳐도 다음 줄을 당기지 않음
+   - **4웨이브 전부 같은 변에서 나온다** — 진입 시 1회 결정(`SpawnSide`, -1이면 6변 중 랜덤). 변의 바깥 법선 = 아레나 Yaw + 30 + 60k (꼭짓점이 축 방향 타일 Yaw 0/60/...에 있어서). 외곽선보다 `OutsideMargin`(250) 바깥에서 출발해 반대편 바깥까지
+   - **시점 전환은 진입 시 한 번만**: `ALoACharacter::SetCameraRotationOverride(Pitch -30, Yaw = 그 변의 바깥 법선)` — 위에서 내려보던 -60도 시점이 내려와 비스듬해지고 플레이어 뒤에서 거울 줄을 마주보는 구도. 패턴이 끝나면(`ExitState`) 원래 시점으로 복구. (처음엔 웨이브마다 다른 변 + 카메라 회전이었는데 유저 요청으로 변경)
+3. 모든 줄이 나오고 불길까지 다 꺼지면 `EndDelay` 후 Succeeded. `ExitState`(끊겨도): 카운터 결과 집계 로그(`파훼 성공/실패 — 카운터 N / 4`) → 줄 전부 파괴 → 보스 보이게, 카메라 줌·각도 복구, 큰 패턴 잠금 해제
+- **파훼 보상(무력화 등)과 실패 페널티는 아직 없음** — 결과 로그만. 레퍼런스의 "카운터 거울이 아닌 거울을 3번 치면 갈급" 디버프도 미구현
+
+### AEchidnaMirrorWallActor — 한 웨이브
+- 액터 위치 = 시작선 중심(지면), +X = 진행 방향. 거울 줄은 `RowRoot`를 +X로 밀어 이동(`MoveSpeed` 350cm/s), 판정은 전부 액터 로컬 좌표(X = 진행 거리, Y = 좌우)
+- 거울 `MirrorCount`(7)개, 폭 `MirrorWidth`(180). **줄 폭 = 아레나 한 변 길이**(`SideCount × D` = 타일 4칸, 2120cm)에서 양쪽 `RowEdgeInset`(100)씩 뺀 값 → Task가 `Activate(..., RowWidth)`로 넘기면 `MirrorSpacing`을 그 폭에 맞춰 재계산(기본 약 290). 예전엔 간격 520으로 줄이 변보다 넓어서, 끝 거울이 카운터일 때 벽 너머(플레이어가 못 가는 곳)로 밀려와 칠 수 없었음. 줄은 변과 평행하게 중심선을 따라 가고 육각형은 가운데가 더 넓으므로 변 길이에 맞추면 끝까지 맵 안에 있다. 엔진 Cylinder를 Pitch 90으로 세운 얇은 타원판 + `M_MirrorLaser` 색. 그중 랜덤 1개가 **카운터 거울**(`CounterMirrorColor` HDR 청백색)
+- 거울 메시 콜리전: `QueryOnly` + ObjectType `WorldDynamic` + **채널 응답 전부 Ignore** — 토네이도의 오브젝트 타입 오버랩(`AllDynamicObjects`)에만 잡히고 플레이어를 밀거나 클릭 트레이스를 가로채지 않음
+- **거울 속 에키드나 상반신**: 거울 앞면에 타원 팬 PMC(`CreatePortrait`)를 붙여 `M_EchidnaMirrorPortrait`(MCP로 생성 — Unlit·양면, `Portrait` 텍스처 × `Tint` → Emissive)를 입힘. 일반 거울 = `fx_l_mirror_sden_01_cl`, **카운터 거울만 좌우 반전본 `fx_l_mirror_sden_02_cl`**(반대 방향을 봄) + `CounterPortraitTint`로 청백색 발광. 텍스처 위치: `EchidnaModling/other/Mirror/materials/textures/fx/` (`sden_03`은 거울 테두리 장식, `mn_sdsm_00_mirror*`는 거울 프롭 재질). 타원이라 테두리 밖으로 안 삐져나오고, UV는 세로 반지름 기준으로 나눠 텍스처 비율 유지(가로는 가운데만 잘라 씀). 받침(Pivot)에 붙어 있어 쓰러질 때 같이 눕는다
+- **카운터**: 카운터 거울 컴포넌트를 맞았고, 그 거울에서 시전자 방향이 +X 기준 `CounterHalfAngle`(60) 이내면 성공 → 파란 `Counter!`(보스의 `SpawnCounterText`를 거울 위치로) + 줄 정지 + 거울 전부 뒤로 쓰러짐(받침 Pitch 0→90, `FallDuration`) → `FallenLingerDuration` 뒤 숨김
+- **거울 몸통**: 전진하는 줄에 닿으면 1회 `MirrorHitDamage`(10000) + 진행 방향으로 넉다운
+- **불길**: 외곽선(`FireStartDistance`)~현재 줄 × 줄 전체 폭 직사각형(PMC, `FireColor`). `FireTickInterval`(0.5초)마다 `FireTickDamage`(3000). **거울과 수명이 같다** — 거울이 사라지는 순간(쓰러진 뒤 `FallDuration + FallenLingerDuration` / 반대편 도착 즉시) `VanishRow()`가 거울 숨김 + 불길 끔 + Done을 한 번에 처리. (예전 `FireLingerDuration`·`Burning` 단계는 삭제) 빨리 카운터칠수록 불길이 좁다
+  - **여러 줄의 불길이 겹쳐도 중첩 안 됨**: `ALoACharacter::TryConsumeTickDamage(Source, Interval)` — 종류(`"MirrorWallFire"`)별 마지막 피격 시각을 캐릭터가 들고 있어 Interval(실제 시간, 광폭화 배율로 나눔)당 한 번만 통과. 같은 줄의 다음 틱을 프레임 오차로 놓치지 않게 90%만 요구. 다른 장판에도 Source 이름만 달리 해서 쓸 수 있음
+- 반대편까지 가면(카운터 실패) 거울과 불길이 함께 사라짐
+- **스스로 소멸하지 않는다** — Task가 결과를 센 뒤 파괴. 광폭화 규칙 준수(BeginPlay `CustomTimeDilation`, 전부 Tick 기반)
+
+### 카운터 스킬 쿨타임 (패턴 동안만)
+- 진입 시 `USkillManagerComponent::SetCounterSkillCooldownOverride(CounterSkillCooldown=5)` → `bCanCounter` 슬롯의 `StartCooldown`이 DT 쿨타임 대신 5초. 이미 더 길게 남은 쿨타임도 5초로 줄임. `ExitState`에서 `ClearCounterSkillCooldownOverride()`(돌고 있는 쿨타임은 그대로)
+- **카운터 성공 시 즉시 재사용 가능**: 거울 줄의 `TryCounterHit`이 시전자의 `ResetCounterSkillCooldowns()` 호출
+  - ⚠️ 순서 함정: 돌풍은 `Execute` 안에서 토네이도가 바로 판정하므로 **카운터 성공 → 그 뒤에 `TryActivateSkill`이 `StartCooldown`** 순서다. 성공 순간 0으로 만들어도 곧바로 덮어써짐 → `CounterResetFrame = GFrameCounter`를 기록해 **같은 프레임의 카운터 슬롯 `StartCooldown`은 건너뜀**(사거리 자동이동 후 발동 경로도 같은 프레임이라 동일하게 동작)
+- 보스 본체 카운터(`Echidna Counter Pattern`)엔 적용 안 됨 — 거울 카운터 전용
+
+### 트리거 / StateTree 배치 (에디터 수동)
+- `Boss Line Threshold Reached` 조건에 **큰 패턴 진행 중이면 false** 추가(다른 큰 패턴을 끊지 않게)
+- Root 자식으로 State `MirrorCounter`, Task `Echidna Mirror Counter Pattern` 하나(Boss/AIController 바인딩)
+- Root에 On Tick Transition → `MirrorCounter`, Condition `Boss Line Threshold Reached`(TriggerLine **217**, PatternName `MirrorCounter`). On State Completed → Patrol. Enter Condition은 넣지 말 것
+
 ## 매혹 게이지 스택 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `LoAPlayerController.h/.cpp`, `UI/CharmGaugeWidget.h/.cpp`) — 2026-09-21
 
 ### 개요 — 기존 0~10 누적 게이지를 3스택 + 스택 단위 감소 방식으로 전면 재설계
@@ -778,7 +828,7 @@
 | 보스 최대 HP | 4,746,719,168 (에키드나 **싱글모드** 실제값) | C++ 기본값 (`BP_Echidna` CDO·레벨 인스턴스 모두 오버라이드를 지워 C++을 따르게 함) |
 | 보스 체력 줄 | 285 (싱글모드) | `BP_Echidna` CDO |
 | 1줄당 HP | 약 16,655,155 | — |
-| 거울 카운터 발동 줄 | 210 | `BP_Echidna` CDO `BigPatternThresholds` |
+| 거울 카운터 발동 줄 | 217 | `ST_Echidna`의 `Boss Line Threshold Reached` 조건 `TriggerLine` (C++ `BigPatternThresholds` 기본값도 217로 맞춤 — 실제 판정은 조건 값) |
 
 ⚠️ `BigPatternThresholds`의 `TriggerLine`은 **반드시 `TotalLines`보다 작아야 한다.** 285→210으로 줄일 때 트리거가 210에 그대로 남아 있어서 풀피에서 대형 패턴이 즉시 발동하던 버그가 있었음.
 

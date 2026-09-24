@@ -2,10 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "CounterableInterface.h"
 #include "EchidnaBoss.generated.h"
 
 class UBossDirectionIndicatorComponent;
 class ADamageNumberActor;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnBossLineChanged, int32 /*NewLine*/);
 
@@ -17,6 +20,9 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnSettlementGaugeChanged, float /*NewGauge*
 
 // 줄 단위가 아니라 HP가 조금이라도 깎일 때마다 — HP 바를 부드럽게 채우기 위해 UI가 구독한다
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnBossHPChanged, double /*NewHP*/, double /*MaxHP*/);
+
+// 카운터 성공 순간 1회 — Attacker = 카운터를 친 플레이어 폰
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnBossCountered, AActor* /*Attacker*/);
 
 // 정산/반정산 등 HP-줄 기준으로 한 번만 발동하는 대형 패턴 트리거 1개
 USTRUCT(BlueprintType)
@@ -40,7 +46,7 @@ struct FBossPatternThreshold
  * 실제 패턴 실행 로직은 StateTree(AEchidnaBossAIController)에서 이 액터의 상태를 참조해 처리한다.
  */
 UCLASS()
-class LOA_API AEchidnaBoss : public ACharacter
+class LOA_API AEchidnaBoss : public ACharacter, public ICounterable
 {
 	GENERATED_BODY()
 
@@ -213,7 +219,95 @@ public:
 
 	FOnSettlementGaugeChanged OnSettlementGaugeChanged;
 
+	// ── 카운터 ──────────────────────────────────────────────
+	// 로아식 카운터 3조건: ①보스가 청백색으로 빛나는 동안(카운터 창) ②헤드어택(정면) 위치에서 ③[카운터 가능] 스킬로 타격.
+	// 창을 여는 건 패턴 Task(Echidna Counter Pattern), 판정은 [카운터 가능] 스킬 액터가 TryCounter()를 불러서 한다
+
+	/** 정면 판정 반각(도) — 보스 정면과 "보스→공격자" 방향 사이 각도가 이 이하면 헤드어택.
+	 *  발밑 방향 표시(DirectionIndicator)의 FrontArcAngle(120) 절반과 맞춰 둠 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float HeadAttackHalfAngle = 60.f;
+
+	// 카운터 성공 시 무력화(그로기) 시간 (초)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	float CounterGroggyDuration = 5.f;
+
+	/** 카운터 창 동안 보스 메시 전체에 씌우는 오버레이 머티리얼 — 기본 M_MirrorLaser(Translucent+Unlit, "Base Color"의 Alpha가 Opacity).
+	 *  에셋 없이도 몸 전체가 청백색으로 빛나 보이게 하기 위함 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	TObjectPtr<UMaterialInterface> CounterGlowMaterial;
+
+	// HDR 값(1 초과)이라 블룸으로 빛남, Alpha = 오버레이 불투명도
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	FLinearColor CounterGlowColor = FLinearColor(1.5f, 3.f, 6.f, 0.55f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	FName CounterGlowColorParameterName = TEXT("Base Color");
+
+	// 카운터 성공 시 데미지 폰트(DamageNumberClass)로 띄우는 글자
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	FText CounterText = FText::FromString(TEXT("Counter!"));
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	FLinearColor CounterTextColor = FLinearColor(0.2f, 0.6f, 1.f, 1.f);
+
+	// 데미지 숫자보다 눈에 띄게 — WBP_DamageNumber 폰트 크기에 곱하는 배율
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	float CounterTextScale = 1.6f;
+
+	// 데미지 숫자(DamageNumberHeight)보다 더 위에 띄워 숫자와 겹치지 않게 (cm, 캡슐 중심 기준)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Counter")
+	float CounterTextHeight = 160.f;
+
+	/** 카운터 창 열기 — 청백색 발광 시작. 닫힐 때까지(CloseCounterWindow / 카운터 성공) 유지 */
+	UFUNCTION(BlueprintCallable, Category = "Counter")
+	void OpenCounterWindow();
+
+	UFUNCTION(BlueprintCallable, Category = "Counter")
+	void CloseCounterWindow();
+
+	UFUNCTION(BlueprintPure, Category = "Counter")
+	bool IsCounterWindowOpen() const { return bCounterWindowOpen; }
+
+	// 이 위치가 보스 정면(헤드어택) 판정 영역 안인지 — 수평 각도만 본다
+	UFUNCTION(BlueprintPure, Category = "Counter")
+	bool IsHeadAttackPosition(const FVector& AttackerLocation) const;
+
+	/** [카운터 가능] 스킬이 보스를 때렸을 때 호출. 창이 열려 있고 Attacker가 정면이면 성공 → 창 닫힘 + 그로기.
+	 *  스킬 쪽 조건(카운터 가능 여부)은 호출하는 쪽이 이미 걸렀다고 가정한다 */
+	UFUNCTION(BlueprintCallable, Category = "Counter")
+	bool TryCounter(AActor* Attacker);
+
+	// ICounterable — 보스 본체는 어느 컴포넌트를 맞았는지 상관없다
+	virtual bool TryCounterHit(AActor* Attacker, UPrimitiveComponent* HitComponent) override { return TryCounter(Attacker); }
+
+	/** 파란 "Counter!" 글자를 Location에 띄운다 — 보스 본체 카운터와 거울 카운터(거울 위치)가 같이 쓴다 */
+	void SpawnCounterText(const FVector& Location);
+
+	UFUNCTION(BlueprintPure, Category = "Counter")
+	bool IsGroggy() const { return bGroggy; }
+
+	FOnBossCountered OnCountered;
+
+	// 연출 훅 — 카운터 창 열림/닫힘 (발광 VFX·사운드 등을 BP에서 추가하고 싶을 때)
+	UFUNCTION(BlueprintImplementableEvent, Category = "Counter")
+	void OnCounterWindowVisualChanged(bool bOpen);
+
+	// 연출 훅 — 그로기 시작/종료 (쓰러지는 애니메이션 등)
+	UFUNCTION(BlueprintImplementableEvent, Category = "Counter")
+	void OnGroggyVisualChanged(bool bIsGroggy);
+
 private:
+	bool bCounterWindowOpen = false;
+	bool bGroggy = false;
+
+	FTimerHandle GroggyTimerHandle;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> CounterGlowMID;
+
+	void EndGroggy();
+
 	UPROPERTY(Transient)
 	TSet<FName> TriggeredPatterns;
 

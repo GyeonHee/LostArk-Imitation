@@ -647,7 +647,7 @@ void ALoAPlayerController::OnInputStarted()
 	bHoldMoving = false;
 	bDashSuppressed = false;
 	bWasAutoMovingBeforeDash = false;
-	bMoveHaltedByAttack = false;  // 새 이동 클릭 — 기본공격으로 멈췄던 것 해제
+	bMoveHaltedByAttack = false;  // 새 이동 클릭 — 기본공격·스킬로 멈췄던 것 해제
 
 	if (APawn* ControlledPawn = GetPawn())
 	{
@@ -796,19 +796,23 @@ void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 		return;
 	}
 
-	// 기본공격: 누르는 즉시 멈추고, 다음 이동 클릭 전까지 그 자리에 서 있는다.
-	// 공격이 큐에 들어가거나 쿨타임이라 바로 안 나가도 멈추는 건 즉시 — HandleKeyDown보다 먼저 해야
-	// 사거리 밖 공격의 ForceMoveTo가 덮어쓰이지 않는다.
-	if (SlotIndex == USkillManagerComponent::BasicAttackSlotIndex)
+	// 스킬·기본공격: 누르는 즉시 멈추고, 다음 이동 클릭 전까지 그 자리에 서 있는다.
+	// HandleKeyDown보다 먼저 해야 사거리 밖 스킬의 ForceMoveTo(사거리 자동이동)가 덮어쓰이지 않는다.
+	// 기본공격은 큐·쿨타임이라 바로 안 나가도 멈추지만, 스킬은 실제로 나갈 수 있을 때만 멈춘다 —
+	// 쿨타임 중이거나 빈 슬롯을 눌렀다고 걷던 캐릭터가 서버리면 안 되므로
+	USkillManagerComponent* SkillManager = GetSkillManager();
+	const bool bBasicAttack = SlotIndex == USkillManagerComponent::BasicAttackSlotIndex;
+	const bool bUsableSkill = SkillManager && SkillManager->IsSlotAssigned(SlotIndex) && !SkillManager->IsSlotOnCooldown(SlotIndex);
+	if (bBasicAttack || bUsableSkill)
 	{
 		CancelAutoMove();
 		bWasAutoMovingBeforeDash = false;  // 대시 직후라도 대시 끝나고 이동이 되살아나지 않게
 		bMoveHaltedByAttack = true;
 	}
 
-	if (USkillManagerComponent* SM = GetSkillManager())
+	if (SkillManager)
 	{
-		SM->HandleKeyDown(SlotIndex);
+		SkillManager->HandleKeyDown(SlotIndex);
 	}
 }
 

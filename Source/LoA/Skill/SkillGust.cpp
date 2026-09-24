@@ -47,7 +47,7 @@ void USkillGust::Execute_Implementation(AActor* Owner)
     {
         const float TotalDamage = (Character ? Character->AttackPower : 100.f)
                                 * SkillData.DamageCoefficient;
-        Zone->Activate(TotalDamage, Character ? Character->GetController() : nullptr);
+        Zone->Activate(TotalDamage, Character ? Character->GetController() : nullptr, SkillData.bCanCounter);
 
         GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green,
             FString::Printf(TEXT("[돌풍] 발동 — 총 데미지 %.0f"), TotalDamage));

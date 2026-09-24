@@ -21,6 +21,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "DamageNumber")
 	void SetDamage(float Damage);
 
+	/** 숫자 대신 글자를 띄울 때(카운터 성공 "Counter!" 등) — 색과 글자 크기 배율을 같이 바꾼다 */
+	UFUNCTION(BlueprintCallable, Category = "DamageNumber")
+	void SetLabel(const FText& Label, FLinearColor Color, float FontSizeScale = 1.f);
+
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "DamageNumber", meta = (BindWidget))
 	TObjectPtr<UTextBlock> DamageText;

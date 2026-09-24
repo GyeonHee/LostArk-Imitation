@@ -170,7 +170,7 @@ protected:
 	/** Whether auto-move was active before the dash — restored after dash ends */
 	bool bWasAutoMovingBeforeDash = false;
 
-	/** 기본공격으로 멈춘 뒤 새 이동 클릭(OnInputStarted)이 들어오기 전까지 true — 이동 버튼을 누른 채였어도 다시 걷지 않게 한다 */
+	/** 기본공격·스킬로 멈춘 뒤 새 이동 클릭(OnInputStarted)이 들어오기 전까지 true — 이동 버튼을 누른 채였어도 다시 걷지 않게 한다 */
 	bool bMoveHaltedByAttack = false;
 
 	/** 스킬트리 토글 중복 호출 방지용 타임스탬프 */
