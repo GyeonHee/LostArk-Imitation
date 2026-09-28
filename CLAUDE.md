@@ -120,6 +120,7 @@
 ### UI 시스템 (MVVM)
 - `WBP_HUD` — HP/MP 바, HUD_ViewModel 바인딩
 - `WBP_SkillTree` — K키로 토글, SkillTree_ViewModel 바인딩
+  - 목록 = `DT_Skills` 전체 행 중 `USkillManagerComponent::IsSkillTreeRow()`가 true인 것 — 대시(`DashRowName`)·즉시 기상(`GetUpRowName`)·기본공격(`BasicAttackClass` 기본값의 `SkillRowName`)은 DT에 쿨타임/아이콘용으로만 있는 행이라 제외. **DT에 이런 비(非)스킬 행을 추가하면 여기서도 빼줄 것** (예전엔 대시만 빼서 즉시 기상·빈 칸(기본공격)이 목록에 떴음)
 - `WBP_SkillTreeRow` — ListView 행, IUserObjectListEntry 구현
 - `USkillDragDropOperation` — 스킬 드래그앤드랍
 - `WBP_BossHP` (`/Game/LostArk/UI/`) — 보스 HP 바. **MVVM이 아니라 `UBossHPWidget`(C++) 상속 + `BindWidget`** 방식
@@ -756,6 +757,60 @@
 - Root 자식으로 State `MirrorCounter`, Task `Echidna Mirror Counter Pattern` 하나(Boss/AIController 바인딩)
 - Root에 On Tick Transition → `MirrorCounter`, Condition `Boss Line Threshold Reached`(TriggerLine **217**, PatternName `MirrorCounter`). On State Completed → Patrol. Enter Condition은 넣지 말 것
 
+## 대기 지역(로비) — 정비소 & 보스 입장 (`Source/LoA/Lobby/`, `UI/ZoneLabelWidget`, `UI/ZoneNoticeWidget`) — 2026-09-28
+
+- 레벨 `Lv_EchidnaLobby`(`/Game/LostArk/Level/`, World Partition) — `Lvl_TopDown` 복제 후 장애물·경사로·중앙 단상을 지우고 바닥(±2000)·외곽 벽·하늘·조명만 남김. **`GameDefaultMap`/`EditorStartupMap` 둘 다 이 레벨** → PIE가 로비에서 시작
+- ⚠️ **버그였던 것 (HUD·K 스킬창 없음 + 입장 구역이 반응 안 함)**: TopDown 템플릿을 복제했더니 World Settings `DefaultGameMode`가 `BP_TopDownGameMode`로 오버라이드된 채 따라왔다 → 템플릿 컨트롤러/캐릭터가 스폰돼서 `BP_LoAPlayerController`의 HUD·스킬 입력이 전부 없고, 구역 판정의 `ALoACharacter` 캐스트도 실패. `BP_LostArkGameMode`로 교체(MCP로 레벨 WorldSettings 수정·저장). **템플릿 레벨을 복제해 새 레벨을 만들 땐 World Settings GameMode부터 확인할 것**
+- `ALobbyZoneActor`(Abstract): 정N각형 테두리(바닥 링 + 빛나는 띠) + 옅은 바닥 채움을 PMC로 그림(`M_MirrorLaser` `"Base Color"` MID, HexTile 테두리와 같은 방식). `BorderSides` 64 = 원, 8 = 팔각형(`BorderAngleOffset` 22.5로 변이 축에 나란함). `OnConstruction`에서도 그려서 에디터에서 바로 보임
+  - 진입 판정은 오버랩이 아니라 **Tick에서 2D 정다각형 판정**(`IsInsideZone` — 변심거리 투영) → 콜리전 설정 불필요, 팔각형도 정확. 대상은 **0번 플레이어 폰(APawn)** — 캐릭터 기능이 필요한 쪽(정비소)만 `ALoACharacter`로 캐스트
+  - 진입/이탈 순간 `OnPlayerEnterZone`/`OnPlayerExitZone`, 안에 있는 동안 `TickPlayerInZone`. `SetCurrentBorderColor()`로 런타임 테두리 색 변경(숨쉬기 연출 유지)
+  - ⚠️ **MID는 항상 `ZoneMaterial`(원본 `M_MirrorLaser`)을 부모로 만들고, 슬롯의 MID는 이 액터 소속일 때만 재사용**. 버그였던 것 두 가지: ①슬롯 머티리얼을 부모로 삼아 PIE에서 MID를 부모로 MID를 만듦("not a valid parent" + 색 안 먹음) ②BP 컴파일 리인스턴싱 뒤 옛 액터 소속 MID가 버려져 슬롯이 비어 **테두리·채움이 회색 불투명**(엔진 기본 머티리얼)으로 나옴. **PMC+MID를 OnConstruction에서 만드는 액터를 BP로 쓸 땐 원본 머티리얼을 별도 프로퍼티로 들고 있을 것**
+  - 머리 위 이름표 = `UWidgetComponent`(Screen) + `UZoneLabelWidget`(C++ 트리), 상단 알림 띠 = `UZoneNoticeWidget`(C++ 트리, ZOrder 8). **알림 글자는 `AddToViewport` 뒤에 넣어야 함** — 트리가 `RebuildWidget`에서 만들어지므로. 이름표도 같은 함정(`BeginPlay`의 `SetLabel` 시점엔 WidgetComponent가 아직 화면에 안 올려서 트리가 없음 → 글자가 조용히 버려져 이름표가 안 보였음) → `SetLabel`이 트리가 없으면 `TakeWidget()`으로 먼저 만든다. **C++ 트리 위젯에 값을 넣는 함수는 항상 트리 존재부터 보장할 것**
+- `ARepairStationActor`(원형, 금색): 들어오는 순간 `ALoACharacter::RestoreFullStatus()`(HP·MP 최대) + `USkillManagerComponent::ResetAllCooldowns()`(대시·기상 포함 전 슬롯) + "정비 완료" 알림 `NoticeDuration`(2초). 재진입마다 다시 정비. 내구도·배틀아이템 시스템이 없어서 일단 이렇게 정의함
+  - **스킬 슬롯 등록은 정비소 안에서만**: 들어오면 `USkillManagerComponent::SetSlotEditAllowed(true)`, 나가면 false. `AssignSkillToSlot`(WBP_SkillTree OnDrop이 부름)이 꺼져 있으면 거부 + `ALoAPlayerController::ShowTimedNotice()`로 "스킬은 정비소에서만 등록할 수 있습니다." 안내(ZOrder 11 — 스킬트리 창 위). 보스 맵엔 정비소가 없으니 항상 등록 불가. 스킬 레벨업(+/-)은 제한 없음
+- `ARaidEntranceActor`(팔각형, 보라): 안에 있으면 `EnterCountdown`(**3초**) 카운트다운 알림("에키드나 2관문 / 잠시 후 다음 지역으로 이동됩니다. / N초")
+  - 끝나기 전에 나가면 **카운트 초기화 + 알림 즉시 제거**
+  - 0초 → 이동 확정: 테두리 `ReadyBorderColor`(초록) + "이동합니다." + **캐릭터 정지·조작 불가**(`SetHeldByPattern(true)` — 이동·스킬·대시 전부 막힘, 새 레벨에선 캐릭터가 새로 스폰되니 해제 불필요) → `TravelDelay`(0.8초) 뒤 `OpenLevelBySoftObjectPtr(TargetLevel = Echidna2-1)`. 확정 뒤엔 나가도 취소 안 됨
+- **레벨 이동 시 스킬 배치 유지 — `ULoAGameInstance`**(`DefaultEngine.ini` `GameInstanceClass=/Script/LoA.LoAGameInstance`): OpenLevel로 캐릭터·컴포넌트는 새로 만들어지지만 GameInstance는 게임 내내 산다. `USkillManagerComponent::EndPlay`가 슬롯 0~7 행 이름·`SkillLevels`·`AvailableSkillPoints`를 저장하고, `BeginPlay` 끝에서 복원(`bHasSkillLoadout` 전엔 BP 기본 배치). 복원은 등록 제한을 거치지 않는 `AssignSkillToSlotInternal`/`ClearSlotInternal`로. 로그 `[SkillLoadout] 저장/복원`
+  - ⚠️ **버그였던 것 (레벨 이동 후 WBP_HUD `RefreshingSlot`에서 Accessed None 16개)**: 복원이 슬롯마다 `OnSkillSlotChanged`를 쐈는데, 복원은 캐릭터 `BeginPlay`(같은 프레임)에서 돌고 WBP_HUD의 `Slot Images` 배열은 Construct의 `Delay` 뒤에 채워져서 `Array Get`이 None → `SetBrushFromTexture`/`SetColorAndOpacity` 에러. 복원 땐 브로드캐스트 안 함(`bBroadcast=false`) — 아이콘은 HUD 초기화 루프가 `GetSlotIcon`으로 복원된 값을 읽어간다. **BeginPlay 시점에 HUD 바인딩 이벤트를 쏘지 말 것**
+- **BP**: `/Game/LostArk/Lobby/BP_RepairStation`(ZoneRadius **450**) / `BP_RaidEntrance`(ZoneRadius **420**) — 레벨엔 이 BP들이 배치돼 있다(2026-09-28 C++ 액터에서 교체). 크기·색·카운트다운 등은 BP Class Defaults에서 조절. C++ 클래스는 콘텐츠 브라우저 `C++ Classes/LoA/Lobby`
+- 배치: PlayerStart (-1300,0) → 정비소 (-300,0) → 입장 구역 (1300,0) 일직선. 참고: `BP_Sorceress`의 기본 메시는 원래 `SKM_Quinn_Simple`(마네킹)이다 — 로비 문제 아님
+- MCP 테스트 팁: `StartPIE`의 `startTransform`으로 구역 안에 바로 스폰 가능, PIE 중엔 `find_actors`가 PIE 월드(`UEDPIE_0_...`) 액터를 돌려주므로 `set_actor_transform`으로 폰을 옮겨 이탈 테스트도 가능
+- 로비엔 `AHexArena`/`AEchidnaBoss`가 없으므로 미니맵·보스 HP 위젯은 컨트롤러가 알아서 안 만든다(HUD·스킬창은 정상)
+
+## 보스 맵 진입 인트로 연출 (`LoAPlayerController`, `Raid/EchidnaBoss`, `Raid/EchidnaBossAIController`, `UI/CinematicOverlayWidget`) — 2026-09-28
+
+- 흐름: 보스 맵 로드 → 검은 화면 페이드 인(`IntroFadeInTime` 0.6) → 인트로 카메라(`ACameraActor` 스폰)가 **보스 정면 높은 곳**(`IntroStartOffset` 2600/0/2200, 보스 Yaw 기준 로컬)에서 아레나 전체를 비추다 **보스 얼굴 앞**(`IntroEndOffset` 800/250/200)으로 ease-in-out 이동(`IntroCameraDuration` 2.5초), 시선은 보스 중심 + `IntroLookAtHeight` → 레터박스 + "2관문 / 에키드나" 타이틀 → 플레이어 카메라로 `SetViewTargetWithBlend`(`IntroBlendOutTime` 0.7) → `AEchidnaBoss::StartCombat()`
+- 연출 중: 플레이어 붙잡힘(`SetHeldByPattern` — 폰이 늦게 빙의될 수 있어 매 틱 확인), K 스킬창 차단, HUD·보스 HP·미니맵 Collapsed(원래 Visibility 기억 후 복구). 빙의(OnPossess)가 뷰 타깃을 폰으로 되돌릴 수 있어 카메라 이동 중엔 매 틱 다시 잡음. `UpdateRaidIntro`는 Tick의 **폰 체크보다 앞**
+- **보스는 `StartCombat()` 전까지 완전히 정지**: `bWaitForIntro`(기본 true)면 BeginPlay에서 광폭화 타이머·정산 게이지 자연 상승·AI를 시작하지 않는다. `StartCombat`이 셋을 한꺼번에 시작(광폭화 기준 시각도 이때). 인트로가 못 부르면 `IntroMaxWait`(10초) 뒤 스스로 시작. 시작 전 `GetEnrageRemainingTime()` = 꽉 찬 시간
+  - ⚠️ **StateTree AI 시작 경로는 두 개** — `AAIController::OnPossess`(`bStartAILogicOnPossess`)와 `UStateTreeComponent::BeginPlay`(`bStartLogicAutomatically`, 기본 true). 둘 다 꺼야 보스가 멈춘다(`AEchidnaBossAIController` 생성자). 실제 시작은 `StartBossLogic()`
+- 인트로 카메라는 끝날 때 바로 Destroy하지 않고 `SetLifeSpan(0.5)` — 블렌드 마지막 프레임에 카메라 매니저가 아직 참조할 수 있어서
+- 보스를 배치한 테스트 레벨에서 인트로 없이 바로 싸우고 싶으면 레벨의 보스 `bWaitForIntro` 끄기
+
+## 플레이어 사망 → 공략 실패 → 정비소 복귀 (`LoACharacter`, `LoAPlayerController`, `UI/DefeatWidget`, `LoAGameInstance`) — 2026-09-28
+
+- **사망 판정**: `ALoACharacter::ReceiveDamage`에서 HP가 0 이하가 되면 `Die()` → `bIsDead`(`IsActionLocked`에 포함), 캐스팅·사거리이동 취소 + 정지, 매혹 중이면 해제(컨트롤러 무작위 행동 타이머도 멈춤), BP 훅 `OnDeathVisualChanged(true)`, `OnDied` 브로드캐스트. 이후 `ReceiveDamage`·`ApplyKnockdown`·`ApplyStagger`·`ApplyStun`·`ApplyPull`·`AddCharmGauge`는 전부 무시
+  - 예전엔 HP가 0에서 멈추기만 하고 아무 일도 없었다
+- **패배 연출**(`ALoAPlayerController::OnPlayerDied`/`UpdateDefeat` — Tick의 폰 체크보다 앞): 플레이어 카메라 후처리 `ColorSaturation`을 `DefeatGrayFadeTime`(0.6초)에 걸쳐 1→0(흑백), `UDefeatWidget`(ZOrder 30, C++ 트리) 페이드 인 — 어두운 배경 + 붉은 띠 + "사망하였습니다. / 부활을 진행할 수 없습니다. / N초 후 정비소로 이동합니다." 패널 + 큰 "공략에 실패하였습니다." + 하단 노란 `DeathCauseText`. 열린 스킬창은 닫음
+- **복귀**: `DefeatReturnDelay`(3초) 뒤 `ULoAGameInstance::bReturnToRepairStation = true` + `ReturnToLobby()` → `OpenLevel(RaidReturnLevel = Lv_EchidnaLobby)`. 대기 지역에서 `MoveToRepairStationIfReturning()`(BeginPlay·OnPossess 둘 다 — 빙의 순서가 달라서)이 폰을 PlayerStart에서 `ARepairStationActor` 위치로 옮기고 표시를 끈다 → 정비소가 바로 정비(HP/MP·쿨타임) + 스킬 등록 허용. 새 캐릭터라 흑백·사망 상태는 자연히 초기화, 스킬 배치는 GameInstance로 유지
+
+## 보스 처치 → 던전 클리어 → 정비소 복귀 (`Raid/EchidnaBoss`, `LoAPlayerController`, `UI/ClearWidget`) — 2026-09-28
+
+- **처치 판정**: `AEchidnaBoss::ReceiveDamage`에서 HP 0 → `HandleDefeated()` 1회 — `ClearTime`(전투 시작부터) 기록, AI 정지(`AEchidnaBossAIController::StopBossLogic` → `StopLogic` → 진행 중 Task의 `ExitState`가 연기·붙잡힘·카메라 등 정리), `StopMovement`, BP 훅 `OnDefeatedVisual`, `OnDefeated` 브로드캐스트. 이후 `ReceiveDamage`는 무시(데미지 숫자도 안 뜸)
+  - 예전엔 HP 0이 돼도 AI가 계속 돌아서 **죽은 보스가 패턴을 계속 썼다**
+- **클리어 연출**(`ALoAPlayerController::OnBossDefeated`/`UpdateClear`, 컨트롤러 BeginPlay에서 보스를 찾아 구독): 플레이어 `SetInvulnerable(true)`(이미 나간 장판·레이저에 맞아 클리어 후 죽지 않게 — `IsImmune()` = 사망 또는 무적, 데미지·CC·매혹 전부 무시) + `UClearWidget`(ZOrder 30, **흑백 아님**) 페이드 인 — 상단 "욕망의 주인, 에키드나를 처치하였습니다. / 정비소 이동까지 남은 시간 / N초", 가운데 금빛 띠 2겹 + 큰 "던전 클리어", 아래 결과 줄 "클리어 시간 HH:MM:SS"(아이템 시스템이 없어 레퍼런스의 전리품 줄 자리에 클리어 시간)
+- `ClearReturnDelay`(3초) 뒤 사망과 같은 `ReturnToLobby()` → 정비소 위치에 스폰
+- 사망·클리어는 서로 덮지 않는다(먼저 뜬 쪽이 우선)
+
+## 레이드 흐름 마무리 — 중단·페이드 이동·디스크 저장·테스트 치트 (2026-09-28)
+
+- **레벨 이동은 전부 `ALoAPlayerController::TravelToLevelWithFade()`**(보스 입장·사망·클리어·중단): `TravelFadeOutTime`(0.5) 동안 검게 페이드 아웃(bHoldWhenFinished) → `OpenLevel`. `ULoAGameInstance::bFadeInOnArrive`를 켜두면 도착 레벨 BeginPlay가 `ArriveFadeInTime`(0.5) 페이드 인(보스 맵은 인트로가 대신). 이동 대기 중 중복 호출 무시
+- **레이드 중단**: 보스 맵 좌상단 "중단하기"(`UAbandonRaidWidget`, 위치 (20,200), ZOrder 6, 루트 `SelfHitTestInvisible`이라 빈 곳 클릭은 클릭 이동으로) → 확인 창 "레이드를 중단하시겠습니까?" 확인/취소 → `AbandonRaid()`: 무적+붙잡힘 → 정비소 복귀. 인트로 중엔 숨김, 사망·클리어 시 사라짐
+- **디스크 저장 `ULoASaveGame`**(슬롯 `LoA` = `Saved/SaveGames/LoA.sav`): 스킬 배치·스킬 레벨·포인트·최고 클리어 기록·클리어 횟수. `ULoAGameInstance::Init`에서 읽고, 스킬 배치 저장(SkillManager EndPlay)·클리어(`RecordClear`)마다 씀. **초기 상태로 테스트하려면 이 파일을 지울 것**
+- 클리어 화면 결과 줄: "클리어 시간 00:04:12 (최고 기록 00:03:50)" 또는 "최고 기록 갱신!"
+- **테스트 콘솔 명령**(`~` 콘솔): `LoAKillBoss`(보스 즉사 → 클리어), `LoAKillSelf`(플레이어 즉사 → 패배). 쓴 판은 최고 기록에 안 남김
+- 대시: `IsActionLocked()`(경직·기절·끌려감·붙잡힘·사망) 중이면 막힘 — 예전엔 기절 중에도 대시가 나갔다
+
 ## 매혹 게이지 스택 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `LoAPlayerController.h/.cpp`, `UI/CharmGaugeWidget.h/.cpp`) — 2026-09-21
 
 ### 개요 — 기존 0~10 누적 게이지를 3스택 + 스택 단위 감소 방식으로 전면 재설계
@@ -937,6 +992,10 @@
 - [x] 광폭화 7분 40초 "랜잡" 패턴 C++ 구현 (위 섹션) — **`ST_Echidna`에 `RandomGrab` State + Root On Tick Transition 배치는 에디터에서 수동**
 - [x] 정산 패턴 전부 — 25/75 똥장판, 50/100 거울잇기 (발동 지점 숫자 추적 방식)
 - [x] 시간 패턴 "그네" (광폭화 3분 40초) C++ 구현 (위 섹션) — **`ST_Echidna`에 `Swing` State + Root On Tick Transition 배치는 에디터에서 수동**
+- [x] (2026-09-28 `ST_Echidna` 읽기 확인) 짤패턴 10종(백스탭하트·리본·두번긋고도넛·하트발사·8거울·끌고간후·구체·4거울·좌우장판) + 큰 패턴 5종(똥장판·랜잡·거울잇기·그네·거울카운터) 전부 배치됨, 돌풍 `bCanCounter`도 체크됨
+- [ ] **`Echidna Counter Pattern`(보스 본체 카운터)은 `SmallPatternRotation`에 없음** — 배치 필요
+- [ ] 그네 `ButterflyClass`가 네이티브 — `BP_EchidnaButterfly` 값을 쓰려면 할당
+- [ ] 플레이어 사망(`OnDeathVisualChanged`)·보스 처치(`OnDefeatedVisual`) 애니메이션 BP 연결
 - [ ] Border_GetUp UI 최종 위치/스타일 다듬기
 - [x] DT_Skills `InstantGetUp` 행 — Cooldown 15초 + Icon 채워짐 확인 완료 (2026-09-22)
 - [x] StateTree `ST_Echidna`에 `Echidna Retreat Fan Pattern` Task 배치 완료 (`RetreatFan` State)
@@ -949,8 +1008,8 @@
 - [x] 보스 피격 데미지 폰트 — `ADamageNumberActor`(월드 액터) + `WBP_DamageNumber`/`BP_DamageNumber` 생성·연결 완료. 3초 페이드, 최신 타격이 앞(`TranslucentSortPriority`)
 - [x] 보스 앞/뒤 방향 표시 — `UBossDirectionIndicatorComponent`, 정면은 가운데 뾰족한 호/후방은 매끈한 호
 - [x] 끌어당기기(`ApplyPull`) 2단계 재구현 — 멈춤 → 강제 드래그 → 패턴 끝날 때까지 속박
-- [ ] `ST_Echidna`의 `Echidna Donut Slash Pattern` Task에서 `SlashZoneClass`→`BP_EchidnaFanZone_Stagger`, `OuterDonutClass`→`BP_EchidnaFanZone_KnockdownCharm`으로 재할당 필요 (Task 배치·`FanZoneClass`·Boss/AIController 바인딩은 이미 완료, BP 2개도 이미 생성·설정 완료 — 드롭다운 재할당만 남음)
-- [x] StateTree `ST_Echidna`에 `Echidna Heart Burst Pattern` Task는 이미 배치됨 — **다만 `Heart Class`가 `BP_EchidnaHeart`가 아니라 네이티브 `EchidnaHeartActor`로 잘못 바인딩되어 있음, 반드시 `Heart Class`를 `/Game/LostArk/Raid/Echidna/Pattern/BP_EchidnaHeart`로 바꿔야 함** (StateTree 필드 재할당은 MCP로 못 하는 부분이라 에디터에서 직접 드롭다운 변경 필요)
+- [x] `Echidna Donut Slash Pattern` 재할당 완료(2026-09-28 MCP 읽기로 확인). ⚠️ 단 **`FanZoneClass`(3번 작은 도넛)도 `BP_EchidnaFanZone_Stagger`로 들어가 있어** 3번이 넉다운이 아니라 경직으로 나감 — 설계대로면 `BP_EhidnaFanZone`
+- [x] `Echidna Heart Burst Pattern`의 `Heart Class` = `BP_EchidnaHeart` (2026-09-28 확인)
 - [ ] `HeartMeshComp`를 `UProceduralMeshComponent`로 바꾼 뒤 `BP_EchidnaHeart`를 다시 열어서 컴파일 에러/경고 없는지 확인 필요 — 예전(Plane 스프라이트 시절)에 이 컴포넌트에 걸어둔 Material/Rotation 오버라이드들은 컴포넌트 타입 자체가 바뀌면서 무효화됐을 가능성이 있음(에디터가 자동으로 정리하거나, 혹은 에러를 띄울 수 있음) — 컴파일 후 한 번은 반드시 직접 열어서 확인할 것
 - [ ] 위 항목 컴파일은 **Live Coding이 아니라 에디터를 완전히 닫고 하는 풀 빌드를 권장** — `HeartMeshComp`의 UPROPERTY 타입 자체가 바뀐 변경이라 Live Coding 핫패치로는 불안정할 수 있음
 - [ ] BP_EchidnaFanZone 서브클래스 생성 + 부채꼴 전용 커스텀 머티리얼(Color Vector Parameter + Translucent) 할당 — VFX는 안 씀, 색상만으로 표현
@@ -967,6 +1026,9 @@
 - [ ] PER_Lava_Brutal 이미터 스케일 조정 (NS_Explosion_Impact 잔상 크기)
 
 ## 자주 쓰는 빌드 명령
+- 에디터 시작 시 "Asset Manager settings do not include an entry for assets of type GameFeatureData" 에러: MCP용 `AllToolsets` 플러그인이 `GameFeatures` 플러그인을 끌어와서 생김(게임 동작과 무관). `DefaultGame.ini` `[/Script/Engine.AssetManagerSettings]`에 `GameFeatureData` 스캔 항목(`/Game/Unused`)을 넣어 해결(2026-09-28)
+- ⚠️ **유니티 빌드 이름 충돌**: 여러 cpp를 한 덩어리로 합쳐 컴파일하므로 **익명 네임스페이스 헬퍼도 파일 간에 이름이 겹치면 C2084(이미 본문이 있음)**. 평소엔 다른 덩어리라 멀쩡하다가 새 파일을 추가해 묶음 조합이 바뀌는 순간 터진다(2026-09-28 `GetCapsuleRadius`가 PoopBeam·MirrorWall에 둘 다 있어서 발생 → 파일별 이름으로 변경). 헬퍼는 `GetPoopBeamCapsuleRadius`처럼 파일 고유 접두어를 붙일 것
+- Bash에서 Build.bat을 부르면 경로 공백 때문에 실패 → PowerShell에서 `&`로 실행
 - `LoA.Build.cs`에 **`SlateCore`** 의존성 추가함(2026-09-24) — `FSlateBrush` 등 SlateCore 타입을 멤버로 들고 있으면 LNK2019(`FSlateBrush::FSlateBrush`)가 난다
 ```
 & "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" LoAEditor Win64 Development "C:\Users\User\Documents\Unreal Projects\LoA\LoA.uproject" -NoUBTMakefiles

@@ -5,6 +5,8 @@
 #include "Skill/SkillCombo.h"
 #include "Engine/Engine.h"
 #include "LoACharacter.h"
+#include "LoAGameInstance.h"
+#include "LoAPlayerController.h"
 
 // Sets default values for this component's properties
 USkillManagerComponent::USkillManagerComponent()
@@ -98,6 +100,64 @@ void USkillManagerComponent::BeginPlay()
             UE_LOG(LogTemp, Log, TEXT("[SkillManager] 즉시 기상 DT 로드 성공 (쿨타임: %.1f초)"), Row->Cooldown);
         }
     }
+
+    // 이전 레벨에서 쓰던 배치가 있으면 BP 기본 배치를 덮어쓴다
+    RestoreLoadoutFromGameInstance();
+}
+
+void USkillManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // OpenLevel로 레벨이 바뀌면 캐릭터와 함께 이 컴포넌트도 파괴된다 — 그 직전에 GameInstance로 옮겨둔다
+    SaveLoadoutToGameInstance();
+    Super::EndPlay(EndPlayReason);
+}
+
+void USkillManagerComponent::SaveLoadoutToGameInstance() const
+{
+    ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr;
+    if (!GI)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[SkillLoadout] ULoAGameInstance가 아님 — 저장 건너뜀 (DefaultEngine.ini GameInstanceClass 확인)"));
+        return;
+    }
+
+    GI->SkillSlotRowNames.SetNum(8);
+    for (int32 i = 0; i < 8; ++i)
+    {
+        GI->SkillSlotRowNames[i] = GetSlotRowName(i);
+    }
+    GI->SkillLevels = SkillLevels;
+    GI->AvailableSkillPoints = AvailableSkillPoints;
+    GI->bHasSkillLoadout = true;
+    // 게임을 껐다 켜도 남도록 디스크에도 (레벨 이동·PIE 종료 때마다 불리므로 빈도 문제 없음)
+    GI->SaveToDisk();
+    UE_LOG(LogTemp, Log, TEXT("[SkillLoadout] 저장 — Q~F: %s"),
+        *FString::JoinBy(GI->SkillSlotRowNames, TEXT(", "), [](const FName& N) { return N.ToString(); }));
+}
+
+void USkillManagerComponent::RestoreLoadoutFromGameInstance()
+{
+    ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr;
+    if (!GI || !GI->bHasSkillLoadout) return;
+
+    for (int32 i = 0; i < 8 && i < GI->SkillSlotRowNames.Num(); ++i)
+    {
+        const FName RowName = GI->SkillSlotRowNames[i];
+        if (RowName == GetSlotRowName(i)) continue;
+
+        if (RowName.IsNone())
+        {
+            ClearSlotInternal(i, false);
+        }
+        else if (!AssignSkillToSlotInternal(RowName, i, false))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[SkillLoadout] 슬롯 %d 복원 실패 — '%s'"), i, *RowName.ToString());
+        }
+    }
+    SkillLevels = GI->SkillLevels;
+    AvailableSkillPoints = GI->AvailableSkillPoints;
+    UE_LOG(LogTemp, Log, TEXT("[SkillLoadout] 복원 — Q~F: %s"),
+        *FString::JoinBy(GI->SkillSlotRowNames, TEXT(", "), [](const FName& N) { return N.ToString(); }));
 }
 
 void USkillManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -408,6 +468,14 @@ void USkillManagerComponent::ResetCounterSkillCooldowns()
     }
 }
 
+void USkillManagerComponent::ResetAllCooldowns()
+{
+    for (float& EndTime : CooldownEndTimes)
+    {
+        EndTime = 0.0f;
+    }
+}
+
 float USkillManagerComponent::GetRemainingCooldown(int32 SlotIndex) const
 {
     UWorld* World = GetWorld();
@@ -526,6 +594,21 @@ bool USkillManagerComponent::LevelDownSkill(FName RowName)
     return true;
 }
 
+bool USkillManagerComponent::IsSkillTreeRow(FName RowName) const
+{
+    if (RowName.IsNone() || RowName == DashRowName || RowName == GetUpRowName) return false;
+
+    // 기본공격 행 이름은 BasicAttackClass 기본값에서 읽는다 — BeginPlay 전(인스턴스가 아직 없을 때)에도 판정되게
+    if (BasicAttackClass)
+    {
+        if (const USkillBase* BasicAttackCDO = BasicAttackClass->GetDefaultObject<USkillBase>())
+        {
+            if (RowName == BasicAttackCDO->SkillRowName) return false;
+        }
+    }
+    return true;
+}
+
 TArray<FName> USkillManagerComponent::GetAllSkillRowNames() const
 {
     if (SkillDataTable)
@@ -534,6 +617,33 @@ TArray<FName> USkillManagerComponent::GetAllSkillRowNames() const
 }
 
 bool USkillManagerComponent::AssignSkillToSlot(FName RowName, int32 SlotIndex)
+{
+    if (!bSlotEditAllowed)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[SkillManager] 정비소 밖 — 스킬 등록 거부 ('%s' → 슬롯 %d)"), *RowName.ToString(), SlotIndex);
+        if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+        {
+            if (ALoAPlayerController* PC = Pawn->GetController<ALoAPlayerController>())
+            {
+                PC->ShowTimedNotice(NSLOCTEXT("Skill", "SlotLockedTitle", "스킬 등록 불가"),
+                    NSLOCTEXT("Skill", "SlotLockedMessage", "스킬은 정비소에서만 등록할 수 있습니다."), 2.f);
+            }
+        }
+        return false;
+    }
+    return AssignSkillToSlotInternal(RowName, SlotIndex);
+}
+
+void USkillManagerComponent::ClearSlotInternal(int32 SlotIndex, bool bBroadcast)
+{
+    if (SlotIndex < 0 || SlotIndex >= 8) return;
+    if (SlotClasses.IsValidIndex(SlotIndex)) SlotClasses[SlotIndex] = nullptr;
+    SlotInstances[SlotIndex] = nullptr;
+    CooldownEndTimes[SlotIndex] = 0.0f;
+    if (bBroadcast) OnSkillSlotChanged.Broadcast(SlotIndex, NAME_None);
+}
+
+bool USkillManagerComponent::AssignSkillToSlotInternal(FName RowName, int32 SlotIndex, bool bBroadcast)
 {
     if (SlotIndex < 0 || SlotIndex >= 8) return false;
     if (!SkillDataTable) return false;
@@ -553,7 +663,7 @@ bool USkillManagerComponent::AssignSkillToSlot(FName RowName, int32 SlotIndex)
     CooldownEndTimes[SlotIndex] = 0.0f;
     CooldownDurations[SlotIndex] = Data->Cooldown;
 
-    OnSkillSlotChanged.Broadcast(SlotIndex, RowName);
+    if (bBroadcast) OnSkillSlotChanged.Broadcast(SlotIndex, RowName);
     return true;
 }
 

@@ -22,7 +22,7 @@ namespace
 		Tris.Append({ Base, Base + 2, Base + 1, Base, Base + 3, Base + 2 });
 	}
 
-	float GetCapsuleRadius(const ACharacter* Character)
+	float GetPoopBeamCapsuleRadius(const ACharacter* Character)
 	{
 		const UCapsuleComponent* Capsule = Character ? Character->GetCapsuleComponent() : nullptr;
 		return Capsule ? Capsule->GetScaledCapsuleRadius() : 0.f;
@@ -155,7 +155,7 @@ void AEchidnaPoopBeamActor::ExplodeCircle()
 	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)
 	{
 		const float Dist = FVector::Dist2D(It->GetActorLocation(), Center);
-		if (Dist <= CircleRadius + GetCapsuleRadius(*It))
+		if (Dist <= CircleRadius + GetPoopBeamCapsuleRadius(*It))
 		{
 			TryHit(*It);
 		}
@@ -176,7 +176,7 @@ void AEchidnaPoopBeamActor::ExplodeSegment(int32 SegmentIndex)
 	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)
 	{
 		const FVector Local = Xform.InverseTransformPosition(It->GetActorLocation());
-		const float Margin = GetCapsuleRadius(*It);
+		const float Margin = GetPoopBeamCapsuleRadius(*It);
 		if (Local.X >= Start - Margin && Local.X <= End + Margin && FMath::Abs(Local.Y) <= BeamHalfWidth + Margin)
 		{
 			TryHit(*It);
@@ -189,7 +189,7 @@ void AEchidnaPoopBeamActor::TryHit(ACharacter* Character)
 	if (!Character || AlreadyHit.Contains(Character)) return;
 	AlreadyHit.Add(Character);
 
-	const bool bInCircle = FVector::Dist2D(Character->GetActorLocation(), GetActorLocation()) <= CircleRadius + GetCapsuleRadius(Character);
+	const bool bInCircle = FVector::Dist2D(Character->GetActorLocation(), GetActorLocation()) <= CircleRadius + GetPoopBeamCapsuleRadius(Character);
 	const float Damage = bInCircle ? CircleDamage : BeamDamage;
 
 	UGameplayStatics::ApplyDamage(Character, Damage, InstigatorController.Get(), this, UDamageType::StaticClass());

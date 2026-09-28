@@ -15,6 +15,9 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnBossLineChanged, int32 /*NewLine*/);
 // 광폭화 타이머가 다 되어 광폭화에 들어가는 순간 1회
 DECLARE_MULTICAST_DELEGATE(FOnBossEnraged);
 
+// 보스 처치(HP 0) — 레이드 클리어
+DECLARE_MULTICAST_DELEGATE(FOnBossDefeated);
+
 // 정산 게이지 값이 바뀔 때마다 (0~100)
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnSettlementGaugeChanged, float /*NewGauge*/);
 
@@ -128,8 +131,41 @@ public:
 	// 데미지를 받을 때마다 브로드캐스트 — 보스 HP UI(UBossHPWidget)가 구독
 	FOnBossHPChanged OnHPChanged;
 
+	// ── 전투 시작 (인트로 연출) ─────────────────────────────
+	// true면 BeginPlay에서 바로 싸우지 않고 StartCombat()을 기다린다 — 보스 맵 진입 인트로(ALoAPlayerController)가 끝날 때 부른다.
+	// 그 전까지 AI(StateTree)·광폭화 타이머·정산 게이지 자연 상승이 전부 멈춰 있어 보스가 가만히 서 있다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Intro")
+	bool bWaitForIntro = true;
+
+	// 인트로가 어떤 이유로든 StartCombat을 못 부를 때 스스로 시작하는 시간 (초) — 보스가 영원히 멈춰 있지 않게
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Intro")
+	float IntroMaxWait = 10.f;
+
+	// 전투 시작 — AI 가동 + 광폭화 타이머 + 정산 게이지 자연 상승. 여러 번 불려도 한 번만 동작
+	UFUNCTION(BlueprintCallable, Category = "Intro")
+	void StartCombat();
+
+	UFUNCTION(BlueprintPure, Category = "Intro")
+	bool IsCombatStarted() const { return bCombatStarted; }
+
+	// ── 처치(클리어) ─────────────────────────────────────────
+	// HP가 0이 되는 순간 한 번: AI 정지 + 제자리 정지 + 이후 데미지 무시 + 클리어 시간 기록 + OnDefeated.
+	// 클리어 화면·정비소 복귀는 OnDefeated를 구독한 ALoAPlayerController가 담당
+	UFUNCTION(BlueprintPure, Category = "Defeat")
+	bool IsDefeated() const { return bDefeated; }
+
+	// 전투 시작(StartCombat)부터 처치까지 걸린 시간 (초)
+	UFUNCTION(BlueprintPure, Category = "Defeat")
+	float GetClearTime() const { return ClearTime; }
+
+	FOnBossDefeated OnDefeated;
+
+	// 쓰러지는 애니메이션 등 연출 훅
+	UFUNCTION(BlueprintImplementableEvent, Category = "Defeat")
+	void OnDefeatedVisual();
+
 	// ── 광폭화 ──────────────────────────────────────────────
-	// 레이드 시작(보스 BeginPlay)부터 이 시간이 지나면 광폭화 (초, 기본 9분)
+	// 전투 시작(StartCombat)부터 이 시간이 지나면 광폭화 (초, 기본 9분)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enrage")
 	float EnrageTimeLimit = 540.f;
 
@@ -312,6 +348,15 @@ private:
 	TSet<FName> TriggeredPatterns;
 
 	FName ActiveTimedPattern = NAME_None;
+
+	bool bCombatStarted = false;
+
+	bool bDefeated = false;
+	float ClearTime = 0.f;
+
+	void HandleDefeated();
+
+	FTimerHandle IntroFallbackTimerHandle;
 
 	FTimerHandle EnrageTimerHandle;
 

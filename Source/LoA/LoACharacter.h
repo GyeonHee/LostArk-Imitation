@@ -17,6 +17,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMPChanged, float /*NewMP*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnCharmGaugeChanged, int32 /*NewCharmGauge*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnKnockdownChanged, bool /*bKnockedDown*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnCharmedChanged, bool /*bCharmed*/);
+DECLARE_MULTICAST_DELEGATE(FOnPlayerDied);
 
 /**
  *  A controllable top-down perspective character
@@ -70,6 +71,8 @@ private:
 	bool bCameraRotationOverride = false;
 	FRotator CameraRotationOverride = FRotator::ZeroRotator;
 	float CameraArmOverride = -1.f;
+
+	void Die();
 
 	void EndStagger();
 
@@ -152,6 +155,12 @@ public:
 	bool bIsCharmed = false;
 
 	// 넉다운 상태 여부 — 특정 패턴에 맞아 쓰러진 동안 true (이동/스킬 입력 차단은 컨트롤러 쪽에서 처리)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Death")
+	bool bIsDead = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Death")
+	bool bInvulnerable = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Knockdown")
 	bool bIsKnockedDown = false;
 
@@ -283,6 +292,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	virtual void RestoreMP(float Amount);
 
+	// HP·MP를 최대치로 — 대기 지역 정비소가 호출
+	UFUNCTION(BlueprintCallable, Category="Stats")
+	void RestoreFullStatus();
+
 	/** 매혹 게이지 스택 추가 (MaxCharmGauge에서 클램프) — 호출될 때마다 스택 감소 타이머가 CharmGaugeStackDuration으로
 	 * 다시 갱신됨. MaxCharmGauge에 도달하면 IsCharmed()가 true로 바뀌고 OnCharmedChanged가 브로드캐스트되며,
 	 * CharmedDuration 뒤 EndCharm()이 매혹 해제 + 스택 초기화를 한다.
@@ -361,7 +374,27 @@ public:
 
 	/** 넉다운·경직·기절·끌려가는 중 하나라도 걸려 있으면 이동/스킬 입력이 막혀야 하는 상태인지 — 컨트롤러의 입력 차단 체크에서 사용 */
 	UFUNCTION(BlueprintPure, Category="Stagger")
-	bool IsActionLocked() const { return bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled || bIsHeld; }
+	bool IsActionLocked() const { return bIsDead || bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled || bIsHeld; }
+
+	// ── 사망 ─────────────────────────────────────────────────
+	// HP가 0 이하가 되면 ReceiveDamage가 Die()를 부른다. 이후 데미지·CC·매혹을 전부 무시하고 조작 불가(IsActionLocked).
+	// 패배 연출(흑백 화면 + "공략에 실패하였습니다." + 정비소 복귀)은 OnDied를 구독한 ALoAPlayerController가 담당
+	UFUNCTION(BlueprintPure, Category="Death")
+	bool IsDead() const { return bIsDead; }
+
+	FOnPlayerDied OnDied;
+
+	// 무적 — 데미지·CC·매혹을 전부 무시한다. 레이드 클리어 순간 켠다(남은 장판에 맞아 클리어 후 죽지 않게)
+	UFUNCTION(BlueprintCallable, Category="Death")
+	void SetInvulnerable(bool bInInvulnerable) { bInvulnerable = bInInvulnerable; }
+
+	// 사망했거나 무적이면 데미지·CC를 받지 않는다
+	UFUNCTION(BlueprintPure, Category="Death")
+	bool IsImmune() const { return bIsDead || bInvulnerable; }
+
+	// 쓰러지는 애니메이션 등 연출 훅
+	UFUNCTION(BlueprintImplementableEvent, Category="Death")
+	void OnDeathVisualChanged(bool bDead);
 
 	/** 경직 상태가 바뀔 때 호출 — 짧은 피격 리액션 애니메이션은 BP에서 구현 */
 	UFUNCTION(BlueprintImplementableEvent, Category="Stagger")

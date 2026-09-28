@@ -2,6 +2,16 @@
 
 #include "LoAPlayerController.h"
 #include "UI/ScreenFogWidget.h"
+#include "UI/ZoneNoticeWidget.h"
+#include "UI/CinematicOverlayWidget.h"
+#include "UI/DefeatWidget.h"
+#include "UI/ClearWidget.h"
+#include "UI/AbandonRaidWidget.h"
+#include "LoAGameInstance.h"
+#include "Lobby/RepairStationActor.h"
+#include "Camera/CameraComponent.h"
+#include "Camera/CameraActor.h"
+#include "Camera/PlayerCameraManager.h"
 #include "UI/MinimapWidget.h"
 #include "Raid/HexArena.h"
 #include "GameFramework/Pawn.h"
@@ -87,6 +97,7 @@ void ALoAPlayerController::BeginPlay()
 	}
 
 	// OnPossess가 BeginPlay 전에 이미 호출된 경우를 대비해 여기서도 바인딩 시도
+	MoveToRepairStationIfReturning(GetPawn());
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
 	{
 		BindCharacterEvents(Char);
@@ -179,6 +190,451 @@ void ALoAPlayerController::BeginPlay()
 		UE_LOG(LogTemp, Warning, TEXT("[CastBar] 생성 건너뜀 — CastBarWidgetClass:%s, IsLocal:%d"),
 			CastBarWidgetClass ? TEXT("설정됨") : TEXT("미설정"), IsLocalController());
 	}
+
+	// 보스 맵 진입 인트로 — HUD 위젯들을 다 만든 뒤라야 숨길 수 있어서 BeginPlay 맨 끝
+	if (IsLocalController())
+	{
+		if (AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass())))
+		{
+			Boss->OnDefeated.AddUObject(this, &ALoAPlayerController::OnBossDefeated);
+
+			// 좌상단 "중단하기" — 인트로보다 먼저 만들어야 인트로가 같이 숨긴다
+			AbandonWidget = CreateWidget<UAbandonRaidWidget>(this, UAbandonRaidWidget::StaticClass());
+			if (AbandonWidget)
+			{
+				AbandonWidget->AddToViewport(6);
+			}
+
+			if (Boss->bWaitForIntro)
+			{
+				BeginRaidIntro(Boss);
+			}
+		}
+
+		// 페이드 아웃하며 넘어왔으면 검은 화면에서 시작해 밝아진다 (인트로가 있으면 인트로가 이미 페이드 인을 건다)
+		if (ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>(); GI && GI->bFadeInOnArrive)
+		{
+			GI->bFadeInOnArrive = false;
+			if (!bRaidIntroActive && PlayerCameraManager)
+			{
+				PlayerCameraManager->StartCameraFade(1.f, 0.f, ArriveFadeInTime, FLinearColor::Black, false, false);
+			}
+		}
+	}
+}
+
+void ALoAPlayerController::TravelToLevelWithFade(const TSoftObjectPtr<UWorld>& Level)
+{
+	if (bLevelTravelPending || Level.IsNull()) return;
+	bLevelTravelPending = true;
+	PendingTravelLevel = Level;
+
+	if (ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>())
+	{
+		GI->bFadeInOnArrive = true;
+	}
+
+	if (PlayerCameraManager && TravelFadeOutTime > 0.f)
+	{
+		// 검게 덮은 채로 유지(bHoldWhenFinished) — 레벨이 바뀌면 새 카메라 매니저가 새로 시작한다
+		PlayerCameraManager->StartCameraFade(0.f, 1.f, TravelFadeOutTime, FLinearColor::Black, false, true);
+		GetWorldTimerManager().SetTimer(TravelFadeTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			UGameplayStatics::OpenLevelBySoftObjectPtr(this, PendingTravelLevel);
+		}), TravelFadeOutTime, false);
+	}
+	else
+	{
+		UGameplayStatics::OpenLevelBySoftObjectPtr(this, PendingTravelLevel);
+	}
+}
+
+void ALoAPlayerController::AbandonRaid()
+{
+	if (bClearActive || bDefeatActive || bRaidIntroActive || bLevelTravelPending) return;
+
+	// 페이드 아웃 동안 맞아 죽거나 움직이지 않게
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		Char->SetInvulnerable(true);
+		Char->SetHeldByPattern(true);
+	}
+	if (AbandonWidget)
+	{
+		AbandonWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Raid] 레이드 중단 — 정비소로 복귀"));
+	ReturnToLobby();
+}
+
+void ALoAPlayerController::LoAKillBoss()
+{
+	if (AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass())))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAKillBoss — 이번 판은 기록하지 않음"));
+		bCheatUsedThisRaid = true;
+		Boss->ReceiveDamage(static_cast<float>(Boss->GetHP()) + 1.f);
+	}
+}
+
+void ALoAPlayerController::LoAKillSelf()
+{
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAKillSelf"));
+		bCheatUsedThisRaid = true;
+		Char->ReceiveDamage(Char->GetMaxHP() * 10.f);
+	}
+}
+
+void ALoAPlayerController::OnPlayerDied()
+{
+	// 클리어 화면이 이미 떴으면(무적이라 보통은 안 오지만) 패배로 덮지 않는다
+	if (bDefeatActive || bClearActive || !IsLocalController()) return;
+	bDefeatActive = true;
+	bDefeatTravelling = false;
+	DefeatElapsed = 0.f;
+	DefeatShownSeconds = -1;
+
+	CancelAutoMove();
+
+	if (AbandonWidget)
+	{
+		AbandonWidget->CloseConfirm();
+		AbandonWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	// 스킬창이 열려 있었으면 닫고 입력 모드를 게임으로 되돌린다
+	if (SkillTreeWidget && SkillTreeWidget->GetVisibility() != ESlateVisibility::Collapsed)
+	{
+		SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
+		FInputModeGameAndUI DefaultMode;
+		DefaultMode.SetHideCursorDuringCapture(false);
+		DefaultMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(DefaultMode);
+	}
+
+	DefeatWidget = CreateWidget<UDefeatWidget>(this, UDefeatWidget::StaticClass());
+	if (DefeatWidget)
+	{
+		// 보스 HP·HUD(0~10)·스킬창보다 위
+		DefeatWidget->AddToViewport(30);
+		DefeatWidget->SetTexts(DeathCauseText);
+		DefeatWidget->SetRenderOpacity(0.f);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Defeat] 공략 실패 — %.1f초 뒤 정비소로 복귀"), DefeatReturnDelay);
+}
+
+void ALoAPlayerController::UpdateDefeat(float DeltaSeconds)
+{
+	if (!bDefeatActive) return;
+	DefeatElapsed += DeltaSeconds;
+
+	// 화면 흑백 — 플레이어 카메라 후처리의 채도를 1 → 0으로. 새 레벨에선 카메라가 새로 만들어지니 되돌릴 필요 없음
+	const float GrayAlpha = FMath::Clamp(DefeatElapsed / FMath::Max(0.01f, DefeatGrayFadeTime), 0.f, 1.f);
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		if (UCameraComponent* Camera = Char->GetTopDownCameraComponent())
+		{
+			const float Saturation = 1.f - GrayAlpha;
+			Camera->PostProcessSettings.bOverride_ColorSaturation = true;
+			Camera->PostProcessSettings.ColorSaturation = FVector4(Saturation, Saturation, Saturation, 1.f);
+			Camera->PostProcessBlendWeight = 1.f;
+		}
+	}
+
+	if (DefeatWidget)
+	{
+		DefeatWidget->SetRenderOpacity(FMath::Clamp(DefeatElapsed / 0.5f, 0.f, 1.f));
+
+		const int32 Seconds = FMath::Max(0, FMath::CeilToInt(DefeatReturnDelay - DefeatElapsed));
+		if (Seconds != DefeatShownSeconds)
+		{
+			DefeatShownSeconds = Seconds;
+			DefeatWidget->SetCountdown(Seconds);
+		}
+	}
+
+	if (!bDefeatTravelling && DefeatElapsed >= DefeatReturnDelay)
+	{
+		bDefeatTravelling = true;
+		ReturnToLobby();
+	}
+}
+
+void ALoAPlayerController::ReturnToLobby()
+{
+	if (ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>())
+	{
+		GI->bReturnToRepairStation = true;
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Raid] %s 로 이동 (정비소 복귀)"), *RaidReturnLevel.ToString());
+	TravelToLevelWithFade(RaidReturnLevel);
+}
+
+void ALoAPlayerController::OnBossDefeated()
+{
+	// 이미 죽어서 패배 화면이 떴으면 클리어로 덮지 않는다
+	if (bClearActive || bDefeatActive || !IsLocalController()) return;
+	bClearActive = true;
+	bClearTravelling = false;
+	ClearElapsed = 0.f;
+	ClearShownSeconds = -1;
+
+	// 보스는 멈췄지만 이미 나간 장판·레이저가 남아 있을 수 있다 — 클리어 후에 죽지 않게 무적
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		Char->SetInvulnerable(true);
+	}
+	if (AbandonWidget)
+	{
+		AbandonWidget->CloseConfirm();
+		AbandonWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	// 클리어 시간 — 전투 시작부터 처치까지
+	float ClearSeconds = 0.f;
+	if (AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass())))
+	{
+		ClearSeconds = Boss->GetClearTime();
+	}
+	const int32 Total = FMath::Max(0, FMath::FloorToInt(ClearSeconds));
+	auto FormatTime = [](int32 Seconds)
+	{
+		return FText::FromString(FString::Printf(TEXT("%02d:%02d:%02d"), Seconds / 3600, (Seconds / 60) % 60, Seconds % 60));
+	};
+
+	// 최고 기록 갱신 여부 — GameInstance가 디스크에도 저장
+	bool bNewRecord = false;
+	float BestSeconds = ClearSeconds;
+	ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>();
+	if (GI && !bCheatUsedThisRaid)
+	{
+		bNewRecord = GI->RecordClear(ClearSeconds);
+		BestSeconds = GI->BestClearTime;
+	}
+	const FText ResultLine = bCheatUsedThisRaid
+		? FText::Format(NSLOCTEXT("Clear", "ClearTimeCheat", "클리어 시간  {0}    (테스트 명령 사용 — 기록 안 함)"), FormatTime(Total))
+		: bNewRecord
+		? FText::Format(NSLOCTEXT("Clear", "ClearTimeNew", "클리어 시간  {0}    최고 기록 갱신!"), FormatTime(Total))
+		: FText::Format(NSLOCTEXT("Clear", "ClearTime", "클리어 시간  {0}    (최고 기록 {1})"), FormatTime(Total),
+			FormatTime(FMath::Max(0, FMath::FloorToInt(BestSeconds))));
+
+	ClearWidget = CreateWidget<UClearWidget>(this, UClearWidget::StaticClass());
+	if (ClearWidget)
+	{
+		ClearWidget->AddToViewport(30);
+		ClearWidget->SetTexts(ClearHeadlineText, ResultLine);
+		ClearWidget->SetRenderOpacity(0.f);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Clear] 던전 클리어 (%d초) — %.1f초 뒤 정비소로 복귀"), Total, ClearReturnDelay);
+}
+
+void ALoAPlayerController::UpdateClear(float DeltaSeconds)
+{
+	if (!bClearActive) return;
+	ClearElapsed += DeltaSeconds;
+
+	if (ClearWidget)
+	{
+		ClearWidget->SetRenderOpacity(FMath::Clamp(ClearElapsed / 0.5f, 0.f, 1.f));
+
+		const int32 Seconds = FMath::Max(0, FMath::CeilToInt(ClearReturnDelay - ClearElapsed));
+		if (Seconds != ClearShownSeconds)
+		{
+			ClearShownSeconds = Seconds;
+			ClearWidget->SetCountdown(Seconds);
+		}
+	}
+
+	if (!bClearTravelling && ClearElapsed >= ClearReturnDelay)
+	{
+		bClearTravelling = true;
+		ReturnToLobby();
+	}
+}
+
+void ALoAPlayerController::MoveToRepairStationIfReturning(APawn* InPawn)
+{
+	if (!InPawn) return;
+
+	ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>();
+	if (!GI || !GI->bReturnToRepairStation) return;
+
+	// 정비소가 없는 레벨이면 표시를 남겨둔다 (대기 지역에 도착했을 때 처리)
+	AActor* Station = UGameplayStatics::GetActorOfClass(this, ARepairStationActor::StaticClass());
+	if (!Station) return;
+
+	GI->bReturnToRepairStation = false;
+
+	// 높이는 PlayerStart에 스폰된 그대로 두고 수평 위치만 정비소 중심으로
+	FVector Target = Station->GetActorLocation();
+	Target.Z = InPawn->GetActorLocation().Z;
+	InPawn->SetActorLocation(Target, false, nullptr, ETeleportType::TeleportPhysics);
+	UE_LOG(LogTemp, Log, TEXT("[Defeat] 정비소로 복귀 — %s"), *Target.ToString());
+}
+
+void ALoAPlayerController::BeginRaidIntro(AEchidnaBoss* Boss)
+{
+	bRaidIntroActive = true;
+	bIntroBlendingOut = false;
+	RaidIntroElapsed = 0.f;
+	IntroBoss = Boss;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	IntroCamera = GetWorld()->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), FTransform::Identity, SpawnParams);
+
+	// 첫 프레임부터 인트로 카메라 위치로 — 그 뒤 매 틱 UpdateRaidIntro가 움직인다
+	UpdateRaidIntro(0.f);
+
+	// 레벨이 막 열린 참이라 검은 화면에서 서서히 밝아지게
+	if (PlayerCameraManager)
+	{
+		PlayerCameraManager->StartCameraFade(1.f, 0.f, IntroFadeInTime, FLinearColor::Black, false, false);
+	}
+
+	// 연출 중엔 전투 UI를 숨긴다 (원래 Visibility를 기억했다가 되돌림). 캐스팅 바는 원래 숨어 있으니 제외
+	IntroHiddenWidgets.Reset();
+	IntroHiddenVisibilities.Reset();
+	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), AbandonWidget.Get() })
+	{
+		if (!Widget) continue;
+		IntroHiddenWidgets.Add(Widget);
+		IntroHiddenVisibilities.Add(Widget->GetVisibility());
+		Widget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	IntroOverlay = CreateWidget<UCinematicOverlayWidget>(this, UCinematicOverlayWidget::StaticClass());
+	if (IntroOverlay)
+	{
+		IntroOverlay->AddToViewport(20);
+		IntroOverlay->SetTitle(IntroTitle, IntroSubtitle);
+		IntroOverlay->SetBarAmount(0.f);
+		IntroOverlay->SetTitleOpacity(0.f);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[RaidIntro] 시작 — 카메라 %.1f초 + 복귀 %.1f초 뒤 전투 시작"), IntroCameraDuration, IntroBlendOutTime);
+}
+
+void ALoAPlayerController::UpdateRaidIntro(float DeltaSeconds)
+{
+	if (!bRaidIntroActive) return;
+	RaidIntroElapsed += DeltaSeconds;
+
+	AEchidnaBoss* Boss = IntroBoss.Get();
+	if (!Boss || !IntroCamera)
+	{
+		EndRaidIntro();
+		return;
+	}
+
+	// 폰은 BeginPlay보다 늦게 빙의될 수 있어서 매 틱 확인해 묶는다
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && !Char->IsHeldByPattern())
+	{
+		Char->SetHeldByPattern(true);
+	}
+
+	const float CameraDuration = FMath::Max(0.1f, IntroCameraDuration);
+
+	if (!bIntroBlendingOut)
+	{
+		const float Alpha = FMath::Clamp(RaidIntroElapsed / CameraDuration, 0.f, 1.f);
+		const float Ease = FMath::InterpEaseInOut(0.f, 1.f, Alpha, 2.f);
+
+		// 보스가 바라보는 방향 기준 오프셋 — 정면에서 얼굴을 보게 된다
+		const FVector BossLocation = Boss->GetActorLocation();
+		const FQuat BossYaw = FRotator(0.f, Boss->GetActorRotation().Yaw, 0.f).Quaternion();
+		const FVector CameraLocation = BossLocation + BossYaw.RotateVector(FMath::Lerp(IntroStartOffset, IntroEndOffset, Ease));
+		const FVector LookAt = BossLocation + FVector(0.f, 0.f, IntroLookAtHeight);
+		IntroCamera->SetActorLocationAndRotation(CameraLocation, (LookAt - CameraLocation).Rotation());
+
+		// 빙의(OnPossess)가 뷰 타깃을 폰으로 되돌려 놓을 수 있어서 매 틱 다시 잡는다
+		if (GetViewTarget() != IntroCamera)
+		{
+			SetViewTarget(IntroCamera);
+		}
+
+		if (Alpha >= 1.f)
+		{
+			bIntroBlendingOut = true;
+			if (APawn* ControlledPawn = GetPawn())
+			{
+				SetViewTargetWithBlend(ControlledPawn, IntroBlendOutTime, VTBlend_EaseInOut, 2.f);
+			}
+		}
+	}
+
+	if (IntroOverlay)
+	{
+		// 레터박스: 처음 0.4초 동안 내려오고, 카메라 복귀하는 동안 걷힌다
+		const float BarAmount = bIntroBlendingOut
+			? 1.f - (RaidIntroElapsed - CameraDuration) / FMath::Max(0.01f, IntroBlendOutTime)
+			: RaidIntroElapsed / 0.4f;
+		IntroOverlay->SetBarAmount(BarAmount);
+
+		// 보스 이름: 0.5초부터 서서히 떠서 카메라 이동이 끝나기 0.5초 전부터 사라진다
+		const float TitleIn = FMath::Clamp((RaidIntroElapsed - 0.5f) / 0.6f, 0.f, 1.f);
+		const float TitleOut = FMath::Clamp((CameraDuration - RaidIntroElapsed) / 0.5f, 0.f, 1.f);
+		IntroOverlay->SetTitleOpacity(bIntroBlendingOut ? 0.f : TitleIn * TitleOut);
+	}
+
+	if (bIntroBlendingOut && RaidIntroElapsed >= CameraDuration + IntroBlendOutTime)
+	{
+		EndRaidIntro();
+	}
+}
+
+void ALoAPlayerController::EndRaidIntro()
+{
+	if (!bRaidIntroActive) return;
+	bRaidIntroActive = false;
+
+	APawn* ControlledPawn = GetPawn();
+	// 중간에 끊긴 경우(보스 소실 등)엔 블렌드 없이 바로 플레이어 카메라로
+	if (!bIntroBlendingOut && ControlledPawn)
+	{
+		SetViewTarget(ControlledPawn);
+	}
+
+	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn))
+	{
+		Char->SetHeldByPattern(false);
+	}
+
+	for (int32 i = 0; i < IntroHiddenWidgets.Num(); ++i)
+	{
+		if (IntroHiddenWidgets[i])
+		{
+			IntroHiddenWidgets[i]->SetVisibility(IntroHiddenVisibilities[i]);
+		}
+	}
+	IntroHiddenWidgets.Reset();
+	IntroHiddenVisibilities.Reset();
+
+	if (IntroOverlay)
+	{
+		IntroOverlay->RemoveFromParent();
+		IntroOverlay = nullptr;
+	}
+
+	// 블렌드 마지막 프레임에 아직 카메라 매니저가 참조할 수 있어서 바로 지우지 않고 잠깐 뒤에 소멸
+	if (IntroCamera)
+	{
+		IntroCamera->SetLifeSpan(0.5f);
+		IntroCamera = nullptr;
+	}
+
+	if (AEchidnaBoss* Boss = IntroBoss.Get())
+	{
+		Boss->StartCombat();
+	}
+	IntroBoss = nullptr;
+
+	UE_LOG(LogTemp, Log, TEXT("[RaidIntro] 종료 — 전투 시작"));
 }
 
 void ALoAPlayerController::OnBossHPChanged(double NewHP, double NewMaxHP)
@@ -204,6 +660,29 @@ void ALoAPlayerController::SetScreenFog(bool bEnable, float FadeTime)
 
 	FogTargetOpacity = bEnable ? 1.f : 0.f;
 	FogFadeSpeed = FadeTime > 0.f ? 1.f / FadeTime : 1000.f;
+}
+
+void ALoAPlayerController::ShowTimedNotice(const FText& Title, const FText& Message, float Duration)
+{
+	if (!IsLocalController()) return;
+
+	if (!TimedNoticeWidget)
+	{
+		TimedNoticeWidget = CreateWidget<UZoneNoticeWidget>(this, UZoneNoticeWidget::StaticClass());
+		if (!TimedNoticeWidget) return;
+	}
+	// 스킬트리 창(10)이 열려 있을 때 뜨므로 그보다 위 — 트리는 AddToViewport에서 만들어지니 글자는 그 뒤에 넣는다
+	if (!TimedNoticeWidget->IsInViewport())
+	{
+		TimedNoticeWidget->AddToViewport(11);
+	}
+	TimedNoticeWidget->SetNotice(Title, Message);
+	TimedNoticeWidget->SetCounter(FText::GetEmpty());
+
+	GetWorldTimerManager().SetTimer(TimedNoticeTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (TimedNoticeWidget) TimedNoticeWidget->RemoveFromParent();
+	}), Duration, false);
 }
 
 void ALoAPlayerController::UpdateScreenFog(float DeltaSeconds)
@@ -285,6 +764,8 @@ void ALoAPlayerController::OnPossess(APawn* InPawn)
 		CMC->PrimaryComponentTick.AddPrerequisite(this, PrimaryActorTick);
 	}
 
+	MoveToRepairStationIfReturning(InPawn);
+
 	if (ALoACharacter* Char = Cast<ALoACharacter>(InPawn))
 	{
 		if (HUDViewModel)
@@ -300,6 +781,7 @@ void ALoAPlayerController::BindCharacterEvents(ALoACharacter* InCharacter)
 	InCharacter->OnHPChanged.RemoveAll(this);
 	InCharacter->OnMPChanged.RemoveAll(this);
 	InCharacter->OnCharmedChanged.RemoveAll(this);
+	InCharacter->OnDied.RemoveAll(this);
 
 	HUDViewModel->SetMaxHP(InCharacter->GetMaxHP());
 	HUDViewModel->SetHP(InCharacter->GetHP());
@@ -309,11 +791,15 @@ void ALoAPlayerController::BindCharacterEvents(ALoACharacter* InCharacter)
 	InCharacter->OnHPChanged.AddUObject(this, &ALoAPlayerController::OnPlayerHPChanged);
 	InCharacter->OnMPChanged.AddUObject(this, &ALoAPlayerController::OnPlayerMPChanged);
 	InCharacter->OnCharmedChanged.AddUObject(this, &ALoAPlayerController::OnPlayerCharmedChanged);
+	InCharacter->OnDied.AddUObject(this, &ALoAPlayerController::OnPlayerDied);
 }
 
 void ALoAPlayerController::OnSkillTreeToggle()
 {
 	if (!SkillTreeWidget) return;
+
+	// 보스 맵 진입 연출 중·사망 후엔 스킬창도 못 연다
+	if (bRaidIntroActive || bDefeatActive) return;
 
 	// 0.3초 내 중복 호출 무시 (SetWidgetToFocus 시 Enhanced Input 재평가로 인한 이중 발동 방지)
 	const float Now = GetWorld()->GetTimeSeconds();
@@ -535,6 +1021,11 @@ void ALoAPlayerController::SetupInputComponent()
 void ALoAPlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// 폰 체크보다 앞 — 인트로는 폰이 빙의되기 전부터 카메라를 움직여야 한다
+	UpdateRaidIntro(DeltaSeconds);
+	UpdateDefeat(DeltaSeconds);
+	UpdateClear(DeltaSeconds);
 
 	APawn* ControlledPawn = GetPawn();
 	if (!ControlledPawn) return;
@@ -768,7 +1259,8 @@ void ALoAPlayerController::OnDashInput()
 	}
 
 	// 경직·매혹 중엔 대시도 막힘 (즉시 기상 같은 대체 동작 없이 그냥 입력 무시)
-	if (Char->IsStaggered() || Char->IsCharmed()) return;
+	// 경직·기절·끌려감·붙잡힘·사망 중엔 대시도 막힘 (넉다운은 위에서 즉시 기상으로 처리), 매혹 중엔 플레이어가 조종 못 함
+	if (Char->IsActionLocked() || Char->IsCharmed()) return;
 
 	if (!Char->SkillManager) return;
 	if (Char->SkillManager->IsSlotOnCooldown(USkillManagerComponent::DashSlotIndex)) return;

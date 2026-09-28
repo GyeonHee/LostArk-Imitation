@@ -14,7 +14,8 @@ void USkillTree_ViewModel::Initialize(USkillManagerComponent* InManager)
 
     for (const FName& RowName : InManager->GetAllSkillRowNames())
     {
-        if (RowName == InManager->DashRowName) continue;
+        // 대시·즉시 기상·기본공격은 스킬트리에서 배우거나 슬롯에 넣는 스킬이 아니다
+        if (!InManager->IsSkillTreeRow(RowName)) continue;
 
         USkillTreeEntry_ViewModel* Entry = NewObject<USkillTreeEntry_ViewModel>(this);
         Entry->Initialize(RowName, InManager, this);

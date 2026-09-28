@@ -199,11 +199,43 @@ float ALoACharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 
 void ALoACharacter::ReceiveDamage(float DamageAmount)
 {
+	if (IsImmune()) return;
+
 	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다
 	DamageAmount *= AEchidnaBoss::GetEnrageDamageMultiplier(this);
 
 	HP = FMath::Max(HP - DamageAmount, 0.f);
 	OnHPChanged.Broadcast(HP);
+
+	if (HP <= 0.f)
+	{
+		Die();
+	}
+}
+
+void ALoACharacter::Die()
+{
+	if (bIsDead) return;
+	bIsDead = true;
+
+	// 하던 걸 전부 끊고 제자리에 세운다 (기절·붙잡힘과 같은 방식)
+	if (SkillManager)
+	{
+		SkillManager->CancelActiveCastSkill();
+		SkillManager->CancelPendingRangeMove();
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+
+	// 매혹 중이었으면 풀어서 컨트롤러의 무작위 행동 타이머도 멈추게 한다
+	if (bIsCharmed)
+	{
+		GetWorldTimerManager().ClearTimer(CharmedTimerHandle);
+		EndCharm();
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Death] 플레이어 사망"));
+	OnDeathVisualChanged(true);
+	OnDied.Broadcast();
 }
 
 bool ALoACharacter::ConsumeMP(float Amount)
@@ -220,8 +252,18 @@ void ALoACharacter::RestoreMP(float Amount)
 	OnMPChanged.Broadcast(MP);
 }
 
+void ALoACharacter::RestoreFullStatus()
+{
+	HP = MaxHP;
+	OnHPChanged.Broadcast(HP);
+	MP = MaxMP;
+	OnMPChanged.Broadcast(MP);
+}
+
 void ALoACharacter::AddCharmGauge(int32 Amount)
 {
+	if (IsImmune()) return;
+
 	if (Amount <= 0) return;
 
 	// 매혹 중 재히트로 지속시간이 연장되면 "매혹은 CharmedDuration만큼만"이 깨진다. 스택도 이미 최대라 할 일이 없음
@@ -287,6 +329,8 @@ void ALoACharacter::EndCharm()
 
 void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
 {
+	if (IsImmune()) return;
+
 	// 이미 완전히 누운 상태면 재입력 무시. 정착 타이머 대기 중(bKnockdownAirborne)엔 재히트를 허용해서
 	// 타이머를 계속 갱신 — 거울 레이저처럼 틱마다 맞는 패턴은 그동안 계속 공중에 떠 있는 것처럼 보임
 	if (bIsKnockedDown && !bKnockdownAirborne) return;
@@ -334,6 +378,8 @@ void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
 
 void ALoACharacter::ApplyPull(const FVector& TargetLocation, float PullSpeed)
 {
+	if (IsImmune()) return;
+
 	// 넉다운 중이면 이미 더 강한 행동불능 상태이므로 무시
 	if (bIsKnockedDown) return;
 
@@ -481,6 +527,8 @@ void ALoACharacter::GetUpFromKnockdown()
 
 void ALoACharacter::ApplyStagger()
 {
+	if (IsImmune()) return;
+
 	// 넉다운 중이면 이미 더 강한 행동불능 상태이므로 무시
 	if (bIsKnockedDown) return;
 
@@ -534,6 +582,8 @@ void ALoACharacter::SetHeldByPattern(bool bHeld)
 
 void ALoACharacter::ApplyStun(float Duration)
 {
+	if (IsImmune()) return;
+
 	// 넉다운 중이면 이미 더 강한 행동불능 상태이므로 무시
 	if (bIsKnockedDown) return;
 

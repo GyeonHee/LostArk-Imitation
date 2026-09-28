@@ -18,6 +18,11 @@ class ALoACharacter;
 class UBossHPWidget;
 class UCastBarWidget;
 class AEchidnaBoss;
+class ACameraActor;
+class UCinematicOverlayWidget;
+class UDefeatWidget;
+class UClearWidget;
+class UAbandonRaidWidget;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
 
@@ -122,6 +127,164 @@ public:
 	/** 화면 전체 핑크 연기 켜기/끄기 — FadeTime초 동안 서서히. 위젯은 처음 켤 때 만들고 HUD 아래(ZOrder -1)에 깐다 */
 	UFUNCTION(BlueprintCallable, Category = "UI")
 	void SetScreenFog(bool bEnable, float FadeTime = 1.f);
+
+	/** 화면 상단 중앙 알림 띠를 Duration초 동안 띄운다 (예: 정비소 밖에서 스킬 등록 시도) — 다시 부르면 글자·시간만 갱신 */
+	void ShowTimedNotice(const FText& Title, const FText& Message, float Duration = 2.f);
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<class UZoneNoticeWidget> TimedNoticeWidget;
+
+	FTimerHandle TimedNoticeTimer;
+
+	// ── 보스 맵 진입 인트로 ──────────────────────────────────
+	// 보스(bWaitForIntro)가 있는 레벨에 들어오면: 검은 화면 페이드 인 → 보스 정면 높은 곳에서 아레나 전체를 비추다
+	// 보스 얼굴 쪽으로 다가감(IntroCameraDuration) + 레터박스·보스 이름 → 플레이어 카메라로 블렌드(IntroBlendOutTime) → AEchidnaBoss::StartCombat.
+	// 그동안 플레이어는 붙잡힘(조작 불가), HUD·보스 HP·미니맵·캐스팅 바는 숨김, K 스킬창도 막는다
+public:
+	UFUNCTION(BlueprintPure, Category = "RaidIntro")
+	bool IsRaidIntroActive() const { return bRaidIntroActive; }
+
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	float IntroCameraDuration = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	float IntroBlendOutTime = 0.7f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	float IntroFadeInTime = 0.6f;
+
+	// 카메라 시작/끝 위치 — 보스 기준 로컬 오프셋 (X = 보스 정면, Y = 오른쪽, Z = 위). 시작은 높고 멀리(아레나 전체), 끝은 보스 얼굴 앞
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	FVector IntroStartOffset = FVector(2600.f, 0.f, 2200.f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	FVector IntroEndOffset = FVector(800.f, 250.f, 200.f);
+
+	// 카메라가 바라보는 지점 — 보스 캡슐 중심에서 이만큼 위 (얼굴 근처)
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	float IntroLookAtHeight = 120.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	FText IntroTitle = NSLOCTEXT("RaidIntro", "Title", "에키드나");
+
+	UPROPERTY(EditDefaultsOnly, Category = "RaidIntro")
+	FText IntroSubtitle = NSLOCTEXT("RaidIntro", "Subtitle", "2관문");
+
+private:
+	void BeginRaidIntro(AEchidnaBoss* Boss);
+	void UpdateRaidIntro(float DeltaSeconds);
+	void EndRaidIntro();
+
+	bool bRaidIntroActive = false;
+	bool bIntroBlendingOut = false;
+	float RaidIntroElapsed = 0.f;
+
+	TWeakObjectPtr<AEchidnaBoss> IntroBoss;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ACameraActor> IntroCamera;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCinematicOverlayWidget> IntroOverlay;
+
+	// 인트로 동안 숨긴 HUD 위젯들과 원래 Visibility
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UUserWidget>> IntroHiddenWidgets;
+
+	TArray<ESlateVisibility> IntroHiddenVisibilities;
+
+	// ── 사망 / 공략 실패 ──────────────────────────────────────
+	// 플레이어가 죽으면(ALoACharacter::OnDied): 화면이 DefeatGrayFadeTime에 걸쳐 흑백이 되고 패배 화면(UDefeatWidget)이 뜬 뒤
+	// DefeatReturnDelay초 후 RaidReturnLevel(대기 지역)로 이동 — 거기서 정비소 위치에 새 캐릭터로 선다
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Defeat")
+	float DefeatReturnDelay = 3.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Defeat")
+	float DefeatGrayFadeTime = 0.6f;
+
+	// 사망·클리어 후 돌아갈 대기 지역
+	UPROPERTY(EditDefaultsOnly, Category = "Defeat")
+	TSoftObjectPtr<UWorld> RaidReturnLevel = TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/LostArk/Level/Lv_EchidnaLobby.Lv_EchidnaLobby")));
+
+	UPROPERTY(EditDefaultsOnly, Category = "Defeat")
+	FText DeathCauseText = NSLOCTEXT("Defeat", "DeathCause", "플레이어님이 욕망의 주인, 에키드나에 의해 사망하였습니다.");
+
+private:
+	void OnPlayerDied();
+	void UpdateDefeat(float DeltaSeconds);
+
+	// 대기 지역에 막 도착했고 사망 복귀 중이면 폰을 정비소 위치로 옮긴다 (BeginPlay·OnPossess 둘 다에서 — 빙의 순서가 달라서)
+	void MoveToRepairStationIfReturning(APawn* InPawn);
+
+	bool bDefeatActive = false;
+	bool bDefeatTravelling = false;
+	float DefeatElapsed = 0.f;
+	int32 DefeatShownSeconds = -1;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UDefeatWidget> DefeatWidget;
+
+	// ── 보스 처치 / 던전 클리어 ────────────────────────────────
+	// 보스 HP 0(AEchidnaBoss::OnDefeated): 플레이어 무적 + 클리어 화면(UClearWidget, 흑백 아님) → ClearReturnDelay초 뒤 정비소 복귀
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Clear")
+	float ClearReturnDelay = 3.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Clear")
+	FText ClearHeadlineText = NSLOCTEXT("Clear", "Headline", "욕망의 주인, 에키드나를 처치하였습니다.");
+
+private:
+	void OnBossDefeated();
+	void UpdateClear(float DeltaSeconds);
+
+	// 사망·클리어 공통 — 정비소 복귀 표시 후 대기 지역으로
+	void ReturnToLobby();
+
+	bool bClearActive = false;
+	bool bClearTravelling = false;
+	float ClearElapsed = 0.f;
+	int32 ClearShownSeconds = -1;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UClearWidget> ClearWidget;
+
+	// ── 레이드 중단 / 레벨 이동 페이드 / 테스트 치트 ────────────────────
+public:
+	/** 레이드 포기 — 보스 맵 좌상단 "중단하기" 확인 시. 무적+정지 후 정비소로 복귀 */
+	void AbandonRaid();
+
+	/** 화면을 검게 페이드 아웃한 뒤 레벨 이동 — 도착한 레벨은 BeginPlay에서 페이드 인(인트로가 있으면 인트로가 담당).
+	 *  보스 입장·사망·클리어·중단 모두 이걸로 옮긴다. 이동 대기 중 중복 호출은 무시 */
+	void TravelToLevelWithFade(const TSoftObjectPtr<UWorld>& Level);
+
+	/** 테스트용 콘솔 명령 — 보스 즉사(클리어 확인용) */
+	UFUNCTION(Exec)
+	void LoAKillBoss();
+
+	/** 테스트용 콘솔 명령 — 플레이어 즉사(사망 확인용) */
+	UFUNCTION(Exec)
+	void LoAKillSelf();
+
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Travel")
+	float TravelFadeOutTime = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Travel")
+	float ArriveFadeInTime = 0.5f;
+
+private:
+	// 이번 판에 치트를 썼으면 클리어해도 최고 기록에 남기지 않는다
+	bool bCheatUsedThisRaid = false;
+
+	bool bLevelTravelPending = false;
+	TSoftObjectPtr<UWorld> PendingTravelLevel;
+	FTimerHandle TravelFadeTimer;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbandonRaidWidget> AbandonWidget;
 
 protected:
 	// 보스 HP 바 옆 광폭화 타이머 + 초상화 아래 정산 게이지 갱신 — UpdateCastBar와 같은 이유로 Tick의 IsActionLocked 조기 return보다 앞에서 호출

@@ -22,6 +22,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 public:
@@ -102,6 +103,10 @@ public:
      *  같은 프레임에 뒤따라 오는 StartCooldown도 건너뛴다 */
     void ResetCounterSkillCooldowns();
 
+    /** 모든 슬롯(대시·즉시기상 포함) 쿨타임 즉시 초기화 — 대기 지역 정비소 */
+    UFUNCTION(BlueprintCallable, Category = "Skill")
+    void ResetAllCooldowns();
+
     // 스킬 후딜레이 — Instant/Cast/Charge 완료 후 다음 스킬 입력을 받는 창 (초)
     UPROPERTY(EditAnywhere, Category="Skills")
     float SkillPostDelay = 0.3f;
@@ -147,9 +152,20 @@ public:
     UFUNCTION(BlueprintCallable, Category="SkillTree")
     TArray<FName> GetAllSkillRowNames() const;
 
-    // 스킬트리에서 드래그앤드랍/우클릭으로 슬롯(0~7)에 스킬 배정
+    // 스킬트리 창에 보여줄 행인가 — 대시·즉시 기상·기본공격처럼 DT에 쿨타임/아이콘용으로만 들어 있는 행은 제외
+    UFUNCTION(BlueprintPure, Category="SkillTree")
+    bool IsSkillTreeRow(FName RowName) const;
+
+    // 스킬트리에서 드래그앤드랍/우클릭으로 슬롯(0~7)에 스킬 배정 — 정비소 안(bSlotEditAllowed)에서만 성공
     UFUNCTION(BlueprintCallable, Category="SkillTree")
     bool AssignSkillToSlot(FName RowName, int32 SlotIndex);
+
+    // 스킬 슬롯 등록 허용 여부 — 대기 지역 정비소가 들어올 때 켜고 나갈 때 끈다. 보스 맵엔 정비소가 없으니 항상 꺼짐
+    UFUNCTION(BlueprintCallable, Category="SkillTree")
+    void SetSlotEditAllowed(bool bAllowed) { bSlotEditAllowed = bAllowed; }
+
+    UFUNCTION(BlueprintPure, Category="SkillTree")
+    bool IsSlotEditAllowed() const { return bSlotEditAllowed; }
 
     // 슬롯이 변경될 때마다 브로드캐스트 — WBP_HUD가 바인딩해서 아이콘 갱신
     UPROPERTY(BlueprintAssignable, Category="SkillTree")
@@ -158,6 +174,18 @@ public:
 private:
     UPROPERTY()
     TArray<TObjectPtr<USkillBase>> SlotInstances;
+
+    bool bSlotEditAllowed = false;
+
+    // 등록 제한 없이 슬롯에 배정/비우기 — 레벨 이동 후 GameInstance 복원용.
+    // bBroadcast=false면 OnSkillSlotChanged를 쏘지 않는다: 복원은 BeginPlay에서 도는데 그때 WBP_HUD의 Slot Images 배열은
+    // 아직 비어 있어서(Construct의 Delay 뒤에 채워짐) RefreshingSlot이 Accessed None을 낸다. 아이콘은 HUD 초기화 루프가 GetSlotIcon으로 읽어간다
+    bool AssignSkillToSlotInternal(FName RowName, int32 SlotIndex, bool bBroadcast = true);
+    void ClearSlotInternal(int32 SlotIndex, bool bBroadcast = true);
+
+    // 레벨이 바뀌어도 유지되도록 GameInstance에 스킬 배치·레벨 저장/복원
+    void SaveLoadoutToGameInstance() const;
+    void RestoreLoadoutFromGameInstance();
 
     // 쿨타임 종료 시각 (WorldTime 기준)
     TArray<float> CooldownEndTimes;

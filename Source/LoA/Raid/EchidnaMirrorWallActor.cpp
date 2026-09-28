@@ -27,7 +27,7 @@ namespace
 		Tris.Append({ Base, Base + 2, Base + 1, Base, Base + 3, Base + 2 });
 	}
 
-	float GetCapsuleRadius(const ACharacter* Character)
+	float GetMirrorWallCapsuleRadius(const ACharacter* Character)
 	{
 		const UCapsuleComponent* Capsule = Character ? Character->GetCapsuleComponent() : nullptr;
 		return Capsule ? Capsule->GetScaledCapsuleRadius() : 0.f;
@@ -297,7 +297,7 @@ void AEchidnaMirrorWallActor::TickAdvancing(float DeltaTime)
 		if (MirrorHitActors.Contains(Character)) continue;
 
 		const FVector Local = Xform.InverseTransformPosition(Character->GetActorLocation());
-		const float Margin = GetCapsuleRadius(Character);
+		const float Margin = GetMirrorWallCapsuleRadius(Character);
 		if (FMath::Abs(Local.X - RowOffset) <= MirrorHitThickness + Margin && FMath::Abs(Local.Y) <= HalfWidth + Margin)
 		{
 			MirrorHitActors.Add(Character);
@@ -354,7 +354,7 @@ void AEchidnaMirrorWallActor::TickFire(float DeltaTime)
 	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)
 	{
 		const FVector Local = Xform.InverseTransformPosition(It->GetActorLocation());
-		const float Margin = GetCapsuleRadius(*It);
+		const float Margin = GetMirrorWallCapsuleRadius(*It);
 		if (Local.X >= FireStartDistance - Margin && Local.X <= RowOffset - MirrorHitThickness && FMath::Abs(Local.Y) <= HalfWidth + Margin
 			&& It->TryConsumeTickDamage(TEXT("MirrorWallFire"), RealTickInterval))
 		{

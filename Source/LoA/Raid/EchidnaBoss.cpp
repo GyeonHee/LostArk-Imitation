@@ -1,5 +1,6 @@
 #include "EchidnaBoss.h"
 #include "BossDirectionIndicatorComponent.h"
+#include "EchidnaBossAIController.h"
 #include "UI/DamageNumberActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -48,15 +49,45 @@ void AEchidnaBoss::BeginPlay()
 	// 컨트롤러가 보스보다 먼저 BeginPlay를 돌면 HP가 아직 0이라 빈 바를 보게 되므로 여기서 한 번 밀어준다
 	OnHPChanged.Broadcast(HP, MaxHP);
 
-	// 레이드 시작 = 보스 BeginPlay. 월드 타이머라 보스 자신의 CustomTimeDilation과 무관하게 실제 시간으로 흐른다
+	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
+
+	if (bWaitForIntro)
+	{
+		// 인트로가 끝나면 컨트롤러가 StartCombat을 부른다. 안 불리면 IntroMaxWait 뒤 스스로 시작
+		GetWorldTimerManager().SetTimer(IntroFallbackTimerHandle, this, &AEchidnaBoss::StartCombat, FMath::Max(0.1f, IntroMaxWait), false);
+		UE_LOG(LogLoA, Log, TEXT("[Echidna] 인트로 대기 — StartCombat 호출 전까지 AI·광폭화·정산 정지"));
+	}
+	else
+	{
+		StartCombat();
+	}
+}
+
+void AEchidnaBoss::StartCombat()
+{
+	if (bCombatStarted) return;
+	bCombatStarted = true;
+	GetWorldTimerManager().ClearTimer(IntroFallbackTimerHandle);
+
+	// 레이드 시작 = 전투 시작. 월드 타이머라 보스 자신의 CustomTimeDilation과 무관하게 실제 시간으로 흐른다
 	EnrageStartTime = GetWorld()->GetTimeSeconds();
 	if (EnrageTimeLimit > 0.f)
 	{
 		GetWorldTimerManager().SetTimer(EnrageTimerHandle, this, &AEchidnaBoss::Enrage, EnrageTimeLimit, false);
 	}
 
-	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
 	ScheduleNaturalSettlement();
+
+	if (AEchidnaBossAIController* AIC = Cast<AEchidnaBossAIController>(GetController()))
+	{
+		AIC->StartBossLogic();
+	}
+	else
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[Echidna] StartCombat — AEchidnaBossAIController가 아님, AI를 시작하지 못함"));
+	}
+
+	UE_LOG(LogLoA, Log, TEXT("[Echidna] 전투 시작"));
 }
 
 void AEchidnaBoss::ScheduleNaturalSettlement()
@@ -142,6 +173,8 @@ float AEchidnaBoss::GetEnrageRemainingTime() const
 {
 	if (bEnraged) return 0.f;
 	if (FrozenEnrageRemaining >= 0.f) return FrozenEnrageRemaining;
+	// 인트로 중 — 아직 타이머가 안 돌았으니 꽉 찬 시간
+	if (!bCombatStarted) return EnrageTimeLimit;
 
 	const UWorld* World = GetWorld();
 	if (!World) return EnrageTimeLimit;
@@ -228,6 +261,9 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 
 void AEchidnaBoss::ReceiveDamage(float DamageAmount)
 {
+	// 처치 후엔 남은 장판·틱 데미지가 들어와도 무시 (데미지 숫자도 안 띄움)
+	if (bDefeated) return;
+
 	HP = FMath::Clamp(HP - static_cast<double>(DamageAmount), 0.0, MaxHP);
 
 	// 광폭화 전에 잡았으면 타이머를 그 시점 값으로 멈춘다 (클리어 타이밍이 UI에 남도록)
@@ -252,6 +288,32 @@ void AEchidnaBoss::ReceiveDamage(float DamageAmount)
 		LastBroadcastLine = NewLine;
 		OnLineChanged.Broadcast(NewLine);
 	}
+
+	if (HP <= 0.0)
+	{
+		HandleDefeated();
+	}
+}
+
+void AEchidnaBoss::HandleDefeated()
+{
+	if (bDefeated) return;
+	bDefeated = true;
+
+	ClearTime = bCombatStarted ? static_cast<float>(GetWorld()->GetTimeSeconds() - EnrageStartTime) : 0.f;
+
+	// 죽은 보스가 패턴을 계속 쓰지 않게 AI를 멈추고 제자리에 세운다
+	if (AEchidnaBossAIController* AIC = Cast<AEchidnaBossAIController>(GetController()))
+	{
+		AIC->StopMovement();
+		AIC->StopBossLogic();
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+	GetWorldTimerManager().ClearTimer(IntroFallbackTimerHandle);
+
+	UE_LOG(LogLoA, Log, TEXT("[Echidna] 처치 — 클리어 시간 %.1f초"), ClearTime);
+	OnDefeatedVisual();
+	OnDefeated.Broadcast();
 }
 
 void AEchidnaBoss::SpawnDamageNumber(float DamageAmount)
