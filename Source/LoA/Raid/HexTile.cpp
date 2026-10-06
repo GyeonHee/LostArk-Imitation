@@ -178,6 +178,10 @@ void AHexTile::SetPoopActive(bool bNewActive)
 	if (TileType != EHexTileType::PoopZone) bNewActive = false;
 	if (bPoopActive == bNewActive) return;
 	bPoopActive = bNewActive;
+	if (bPoopActive && GetWorld())
+	{
+		PoopActivatedTime = GetWorld()->GetTimeSeconds();
+	}
 
 	ApplyTileMaterial();
 	RefreshBorder();
@@ -292,8 +296,14 @@ void AHexTile::RefreshPoopTicking()
 	{
 		if (!GetWorldTimerManager().IsTimerActive(PoopTickTimerHandle))
 		{
-			ApplyPoopTick();
-			GetWorldTimerManager().SetTimer(PoopTickTimerHandle, this, &AHexTile::ApplyPoopTick, PoopTickInterval, true);
+			// 막 활성화됐으면 유예가 끝난 순간 첫 틱, 아니면 밟는 즉시 첫 틱
+			const float Grace = GetPoopGraceRemaining();
+			if (Grace <= 0.f)
+			{
+				ApplyPoopTick();
+			}
+			GetWorldTimerManager().SetTimer(PoopTickTimerHandle, this, &AHexTile::ApplyPoopTick, PoopTickInterval, true,
+				Grace > 0.f ? Grace : PoopTickInterval);
 		}
 	}
 	else
@@ -325,8 +335,16 @@ void AHexTile::HandleEndOverlap(UPrimitiveComponent* OverlappedComp, AActor* Oth
 void AHexTile::ApplyPoopTick()
 {
 	ALoACharacter* Character = OverlappingCharacter.Get();
-	if (!Character || !IsPoopActive()) return;
+	// 유예가 끝나는 순간 타이머가 부르므로 부동소수 오차로 첫 틱을 놓치지 않게 약간 여유
+	if (!Character || !IsPoopActive() || GetPoopGraceRemaining() > 0.02f) return;
 
 	Character->AddCharmGauge(PoopCharmGaugePerTick);
 	Character->ReceiveDamage(PoopTickDamage);
+}
+
+float AHexTile::GetPoopGraceRemaining() const
+{
+	const UWorld* World = GetWorld();
+	if (!World) return 0.f;
+	return FMath::Max(0.f, PoopActivatedTime + PoopActivateGraceTime - World->GetTimeSeconds());
 }

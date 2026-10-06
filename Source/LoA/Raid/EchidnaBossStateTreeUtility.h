@@ -9,6 +9,7 @@
 class AEchidnaBoss;
 class AEchidnaMirrorActor;
 class AEchidnaFanZoneActor;
+class AEchidnaBigFlowerActor;
 class AEchidnaTetherActor;
 class AEchidnaHeartActor;
 class AEchidnaOrbActor;
@@ -22,6 +23,9 @@ class AEchidnaButterflyActor;
 class AEchidnaMirrorWallActor;
 class AHexArena;
 class AAIController;
+class ACameraActor;
+class UNiagaraSystem;
+class UTexture2D;
 class ALoACharacter;
 
 /**
@@ -350,6 +354,22 @@ struct FStateTreeEchidnaRandomGrabPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float FogDelay = 3.f;
 
+	// ── 시작 대사창 (FogDelay가 지나 연기가 깔릴 때 내린다 — 둘을 같이 맞출 것) ──
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	FText DialogueSpeaker = NSLOCTEXT("Echidna", "RandomGrabSpeaker", "렌");
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro", meta = (MultiLine = true))
+	FText DialogueLine = NSLOCTEXT("Echidna", "RandomGrabLine", "조심해! 발 밑에서... 지독한 향이...\n맙소사, 꽃이 피어나고 있어!");
+
+	// 비우면 초상화 없이 이름·대사만
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	TSoftObjectPtr<UTexture2D> DialoguePortrait;
+
+	// 대사창이 떠 있는 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	float DialogueDuration = 3.f;
+
 	// 연기가 끼기 시작한 뒤 첫 파란 장판까지 (초)
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float FirstTrapDelay = 1.f;
@@ -372,6 +392,52 @@ struct FStateTreeEchidnaRandomGrabPatternInstanceData
 	// 마지막 파리지옥이 나온 뒤 패턴 종료(연기 걷힘·꽃 사라짐)까지 (초)
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float EndDelay = 1.5f;
+
+	// ── 작은 연꽃 폭탄: 연기가 깔린 뒤 한 번만, 맵 전체에 골고루 작은 연꽃이 피었다가 LotusFuseTime 뒤 원형으로 터진다 ──
+	// 폭발 범위 = 연꽃 크기(LotusRadius). 폭발 연출은 부채꼴 패턴과 같은 Niagara(AEchidnaFanZoneActor를 360도 원으로 재사용)
+
+	// 피는 연꽃 수 — 이 범위에서 랜덤 (0이면 연꽃 없음). 서로 다른 타일에 하나씩이라 맵 전체에 퍼진다
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus", meta = (ClampMin = "0"))
+	int32 LotusCountMin = 10;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus", meta = (ClampMin = "0"))
+	int32 LotusCountMax = 15;
+
+	// 연기가 깔린 뒤 각 연꽃이 피기까지 (초) — 연꽃마다 이 범위에서 랜덤
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus")
+	float LotusSpawnDelayMin = 1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus")
+	float LotusSpawnDelayMax = 2.f;
+
+	// 핀 뒤 터지기까지 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus")
+	float LotusFuseTime = 2.f;
+
+	// 연꽃 크기(꽃잎 길이) = 폭발 반지름 (cm)
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus")
+	float LotusRadius = 110.f;
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Lotus")
+	float LotusDamage = 5000.f;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaBigFlowerActor>> LotusFlowers;
+
+	// LotusFlowers와 같은 인덱스 — 각 연꽃의 폭발(원형 부채꼴 장판)
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaFanZoneActor>> LotusZones;
+
+	// 아직 안 핀 연꽃 — 남은 시간(초)과 위치
+	UPROPERTY(Transient)
+	TArray<float> PendingLotusTimes;
+
+	UPROPERTY(Transient)
+	TArray<FVector> PendingLotusLocations;
+
+	// 연꽃을 이미 예약했는지 — 연기가 깔린 순간 한 번만
+	UPROPERTY(Transient)
+	bool bLotusScheduled = false;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AEchidnaFlytrapZoneActor>> Traps;
@@ -423,6 +489,12 @@ struct FStateTreeTask_EchidnaRandomGrabPattern : public FStateTreeTaskCommonBase
 private:
 	// Coord 타일에 파란 장판
 	bool SpawnTrapAt(FInstanceDataType& InstanceData, const FIntPoint& Coord) const;
+
+	// 연꽃 예약(연기가 깔린 순간 1회)·피우기·터진 연꽃 정리
+	void ScheduleLotus(FInstanceDataType& InstanceData) const;
+	void TickLotus(FInstanceDataType& InstanceData, float DeltaTime) const;
+	void SpawnLotusAt(FInstanceDataType& InstanceData, const FVector& Location) const;
+	bool HasLiveLotus(const FInstanceDataType& InstanceData) const;
 };
 
 UENUM()
@@ -461,9 +533,29 @@ struct FStateTreeEchidnaMirrorLinkPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	TSubclassOf<AEchidnaLinkMirrorActor> MirrorClass;
 
-	// 보스가 사라져 있는 시간 (초) — 이후 보스·거울 동시 등장
+	// 보스가 사라져 있는 시간 (초) — 이후 보스·거울 동시 등장. 대사(DialogueDuration)가 더 길면 대사가 끝날 때까지 기다린다
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float VanishDuration = 1.f;
+
+	// ── 시작 연출: 대사창 + 시점 확대 → 끝나면 거울 등장 ──
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	FText DialogueSpeaker = NSLOCTEXT("Echidna", "MirrorLinkSpeaker", "에키드나");
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro", meta = (MultiLine = true))
+	FText DialogueLine = NSLOCTEXT("Echidna", "MirrorLinkLine", "욕망은 모두 이어져있단다.\n그리고 그 주인을 비추지.\n어디, 원한다면 그 끝을 마주해보거라.");
+
+	// 비우면 초상화 없이 이름·대사만
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	TSoftObjectPtr<UTexture2D> DialoguePortrait = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/T_EchidnaPortrait.T_EchidnaPortrait")));
+
+	// 대사창이 떠 있는 시간 (초) — 이게 끝나야 거울·보스가 등장
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	float DialogueDuration = 4.f;
+
+	// 패턴 동안 카메라 붐 길이 (cm) — 0 이하면 시점 그대로
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	float CameraArmLength = 1700.f;
 
 	// 실패 데미지 = 최대 HP × 이 배율 (즉사급)
 	UPROPERTY(EditAnywhere, Category = "Pattern")
@@ -571,6 +663,25 @@ struct FStateTreeEchidnaSwingPatternInstanceData
 	// 보스가 사라져 있는 시간 (초) — 이후 외곽 랜덤 타일에 등장
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float VanishDuration = 1.f;
+
+	// ── 시작 대사창 (이게 끝나야 보스가 사라지며 패턴 시작) ──
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	FText DialogueSpeaker = NSLOCTEXT("Echidna", "SwingSpeaker", "에키드나");
+
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro", meta = (MultiLine = true))
+	FText DialogueLine = NSLOCTEXT("Echidna", "SwingLine", "벗어나는 일은 쉽지 않을 거란다.\n난... 어디에나 있으니 말이야.");
+
+	// 비우면 초상화 없이 이름·대사만
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	TSoftObjectPtr<UTexture2D> DialoguePortrait = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/T_EchidnaPortrait.T_EchidnaPortrait")));
+
+	// 대사창이 떠 있는 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Pattern|Intro")
+	float DialogueDuration = 3.f;
+
+	UPROPERTY(Transient)
+	bool bIntroDone = false;
 
 	// 외곽에 등장한 뒤 장판이 나오기까지 (초). 장판이 터지는 시간은 Zone 클래스의 TelegraphDuration(3초)
 	UPROPERTY(EditAnywhere, Category = "Pattern")
@@ -900,6 +1011,18 @@ struct FStateTreeEchidnaRetreatFanPatternInstanceData
 	// 고리 1개당 1회만 판정 — 플레이어 최대체력(10만)의 12%
 	UPROPERTY(EditAnywhere, Category = "Fan")
 	float Damage = 12000.f;
+
+	// 고리가 열릴 때 부채꼴 영역을 채울 Niagara — 스폰한 장판의 RingVFX로 넘긴다(BP 값보다 우선).
+	// 같은 FanZone BP를 쓰는 다른 패턴(도넛·리본 등)에는 영향을 주지 않도록 BP가 아니라 이 Task에서 지정. 비우면 BP 값 그대로
+	UPROPERTY(EditAnywhere, Category = "Fan|VFX")
+	TSoftObjectPtr<UNiagaraSystem> RingVFX = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan")));
+
+	// 0 이하면 BP 값 유지
+	UPROPERTY(EditAnywhere, Category = "Fan|VFX")
+	float RingVFXSpacing = -1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Fan|VFX")
+	float RingVFXScale = -1.f;
 
 	UPROPERTY(Transient)
 	EEchidnaRetreatFanPhase Phase = EEchidnaRetreatFanPhase::Casting1;
@@ -2000,6 +2123,82 @@ struct FStateTreeEchidnaMirrorCounterPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Camera")
 	float CameraArmLength = 1500.f;
 
+	// ── 시작 시네마틱: 거울이 생길 자리로 줌인 → 거울이 돌면서 솟아오름 → 빠르게 줌아웃하며 거울이 오른쪽부터 차례로 사라짐 ──
+
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	bool bPlayIntro = true;
+
+	// 줌인 카메라 — 거울 줄 정면에서 이만큼 떨어진 곳 (cm). 가까울수록 화면에 거울 몇 개만 크게 보임
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroCameraDistance = 650.f;
+
+	// 줌인 카메라 높이 (지면 기준 cm) — 거울 가운데쯤
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroCameraHeight = 200.f;
+
+	// 시네마틱 거울 줄 위치 — 아레나 외곽선에서 맵 안쪽으로 이만큼 들어온 곳 (cm). 실제 줄은 맵 밖(OutsideMargin)에서 출발하지만
+	// 시네마틱은 바닥 위에서 솟아올라야 해서 안쪽에 세운다
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroRowInset = 350.f;
+
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroBlendInTime = 0.5f;
+
+	// 거울 하나가 솟아오르는 시간 / 다음 거울까지 간격 / 솟아오르며 도는 바퀴 수
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroRiseDuration = 0.7f;
+
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroAppearStagger = 0.12f;
+
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroSpinTurns = 1.f;
+
+	// 다 솟아오른 뒤 정지 (초)
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroHoldTime = 0.6f;
+
+	// 플레이어 카메라로 빠르게 빠지는 시간 (초)
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroZoomOutTime = 0.6f;
+
+	// 퇴장 — 거울 하나가 미끄러지는 시간 / 다음 거울까지 간격 / 미끄러지는 거리
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroExitSlideDuration = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroExitStagger = 0.07f;
+
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float IntroExitSlideDistance = 500.f;
+
+	// ── 패턴 동안 줄 양 끝 바깥에 세로로 서 있는 거울 기둥 (장식, 판정 없음) ──
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	bool bSpawnSideColumns = true;
+
+	// 줄 끝 거울 가장자리에서 기둥까지 띄우는 거리 (cm)
+	UPROPERTY(EditAnywhere, Category = "Intro")
+	float SideColumnGap = 60.f;
+
+	UPROPERTY(Transient)
+	bool bIntroDone = false;
+
+	// 0 줌인 / 1 솟아오름+정지 / 2 줌아웃+퇴장
+	UPROPERTY(Transient)
+	int32 IntroStep = 0;
+
+	UPROPERTY(Transient)
+	float IntroElapsed = 0.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaMirrorWallActor> IntroRow;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ACameraActor> IntroCamera;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaMirrorWallActor>> SideColumns;
+
 	UPROPERTY()
 	TObjectPtr<AHexArena> Arena;
 
@@ -2045,4 +2244,14 @@ struct FStateTreeTask_EchidnaMirrorCounterPattern : public FStateTreeTaskCommonB
 
 private:
 	void SpawnWave(FInstanceDataType& InstanceData) const;
+
+	// 줄이 나오는 변 기준 기하 — 아레나 중심, 진행 방향, 시작선 위치, 중심→시작선 거리, 중심→외곽선 거리, 줄 폭
+	bool ComputeRowGeometry(const FInstanceDataType& InstanceData, FVector& OutCenter, FVector& OutTravelDir,
+		FVector& OutStartLocation, float& OutStartDistance, float& OutEdgeDistance, float& OutRowWidth) const;
+
+	void StartIntro(FInstanceDataType& InstanceData) const;
+	// 시네마틱 진행 — 끝나면 true
+	bool TickIntro(FInstanceDataType& InstanceData, float DeltaTime) const;
+	void FinishIntro(FInstanceDataType& InstanceData) const;
+	void SpawnSideColumns(FInstanceDataType& InstanceData) const;
 };

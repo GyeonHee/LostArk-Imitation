@@ -14,6 +14,8 @@
 #include "GameFramework/DamageType.h"
 #include "UObject/ConstructorHelpers.h"
 #include "EngineUtils.h"
+#include "Raid/PatternVFXUtil.h"
+#include "NiagaraSystem.h"
 
 namespace
 {
@@ -84,6 +86,14 @@ AEchidnaMirrorWallActor::AEchidnaMirrorWallActor()
 	if (CounterPortraitFinder.Succeeded())
 	{
 		CounterPortraitTexture = CounterPortraitFinder.Object;
+	}
+
+	// 불길 연출 — 부채꼴 패턴과 같은 Niagara
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> FireVFXFinder(
+		TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan"));
+	if (FireVFXFinder.Succeeded())
+	{
+		FireVFX = FireVFXFinder.Object;
 	}
 }
 
@@ -170,12 +180,13 @@ void AEchidnaMirrorWallActor::BuildMirrors()
 		Mesh->SetCollisionObjectType(ECC_WorldDynamic);
 		Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
 		Mesh->SetGenerateOverlapEvents(false);
-		Mesh->SetCastShadow(true);
+		Mesh->SetCastShadow(!bGlassMirrors);
 
 		if (BaseMaterial)
 		{
 			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-			MID->SetVectorParameterValue(ColorParameterName, i == CounterMirrorIndex ? CounterMirrorColor : NormalMirrorColor);
+			MID->SetVectorParameterValue(ColorParameterName,
+				bGlassMirrors ? GlassMirrorColor : (i == CounterMirrorIndex ? CounterMirrorColor : NormalMirrorColor));
 			Mesh->SetMaterial(0, MID);
 		}
 
@@ -183,7 +194,8 @@ void AEchidnaMirrorWallActor::BuildMirrors()
 
 		MirrorPivots.Add(Pivot);
 		MirrorMeshes.Add(Mesh);
-		PortraitMeshes.Add(CreatePortrait(Pivot, i == CounterMirrorIndex));
+		// 투명 유리 거울엔 상반신 없음
+		PortraitMeshes.Add(bGlassMirrors ? nullptr : CreatePortrait(Pivot, i == CounterMirrorIndex));
 	}
 }
 
@@ -247,6 +259,8 @@ void AEchidnaMirrorWallActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	TickDisplayAnim(DeltaTime);
+
 	switch (Phase)
 	{
 	case EEchidnaMirrorWallPhase::Advancing:
@@ -276,7 +290,8 @@ void AEchidnaMirrorWallActor::Tick(float DeltaTime)
 		break;
 	}
 
-	if (Phase == EEchidnaMirrorWallPhase::Advancing || Phase == EEchidnaMirrorWallPhase::Falling)
+	// 불길은 줄이 전진하는 동안만 — 카운터로 쓰러지기 시작하면 꺼진다
+	if (Phase == EEchidnaMirrorWallPhase::Advancing)
 	{
 		TickFire(DeltaTime);
 	}
@@ -340,6 +355,19 @@ void AEchidnaMirrorWallActor::VanishRow()
 
 void AEchidnaMirrorWallActor::TickFire(float DeltaTime)
 {
+	// 불길 연출 — 지나간 영역 전체에 Niagara를 주기적으로 다시 깔아 계속 타오르게 (DeltaTime은 광폭화 배율 포함)
+	FireVFXElapsed += DeltaTime;
+	if (FireVFX && FireVFXElapsed >= FireVFXRefreshInterval)
+	{
+		FireVFXElapsed = 0.f;
+		const float FireEnd = RowOffset - MirrorHitThickness;
+		if (FireEnd > FireStartDistance)
+		{
+			PatternVFX::SpawnRectArea(this, FireVFX, GetActorTransform(), FireStartDistance, FireEnd,
+				GetRowHalfWidth(), FireVFXSpacing, FireVFXScale, FireVFXMaxCount);
+		}
+	}
+
 	FireTickElapsed += DeltaTime;
 	if (FireTickInterval <= 0.f || FireTickElapsed < FireTickInterval) return;
 	FireTickElapsed -= FireTickInterval;
@@ -365,7 +393,7 @@ void AEchidnaMirrorWallActor::TickFire(float DeltaTime)
 
 void AEchidnaMirrorWallActor::UpdateFireMesh()
 {
-	if (RowOffset <= FireStartDistance)
+	if (RowOffset <= FireStartDistance || !ShouldShowFireMesh())
 	{
 		FireMesh->ClearAllMeshSections();
 		return;
@@ -405,6 +433,8 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 	bCountered = true;
 	StopRow();
 	Phase = EEchidnaMirrorWallPhase::Falling;
+	// 거울이 쓰러지면 불길도 꺼진다 (이미 깔린 이펙트는 약 1초 뒤 스스로 사라짐)
+	FireMesh->ClearAllMeshSections();
 
 	UE_LOG(LogLoA, Warning, TEXT("[MirrorWall] 카운터 성공 — 거울 %d번, 진행 %.0f / %.0f"), CounterMirrorIndex, RowOffset, TravelDistance);
 
@@ -423,4 +453,112 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 		BossPtr->SpawnCounterText(MirrorTop);
 	}
 	return true;
+}
+
+void AEchidnaMirrorWallActor::SetupDisplayRow(float RowWidth, int32 Count, float Spacing, bool bHiddenUntilAppear, bool bGlass)
+{
+	bGlassMirrors = bGlass;
+	if (Count > 0)
+	{
+		MirrorCount = Count;
+	}
+	if (Spacing > 0.f)
+	{
+		MirrorSpacing = Spacing;
+	}
+	else if (RowWidth > 0.f && MirrorCount > 1)
+	{
+		MirrorSpacing = FMath::Max(MirrorWidth, (RowWidth - MirrorWidth) / (MirrorCount - 1));
+	}
+
+	// 판정 없는 장식 — 카운터 거울 없음, 전진·불길 없음
+	CounterMirrorIndex = -1;
+	Phase = EEchidnaMirrorWallPhase::Idle;
+	RowOffset = 0.f;
+	BuildMirrors();
+	for (UStaticMeshComponent* Mesh : MirrorMeshes)
+	{
+		if (Mesh) Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	if (bHiddenUntilAppear)
+	{
+		// 땅속(바닥 타일 아래)에 숨겨둔다 — PlayAppear가 끌어올림
+		for (USceneComponent* Pivot : MirrorPivots)
+		{
+			if (Pivot)
+			{
+				Pivot->SetRelativeLocation(Pivot->GetRelativeLocation() * FVector(1.f, 1.f, 0.f) - FVector(0.f, 0.f, MirrorHeight + 20.f));
+				Pivot->SetVisibility(false, true);
+			}
+		}
+	}
+}
+
+void AEchidnaMirrorWallActor::PlayAppear(float Stagger, float RiseDuration, float SpinTurns)
+{
+	DisplayAnim = EDisplayAnim::Appear;
+	DisplayElapsed = 0.f;
+	DisplayStagger = FMath::Max(0.f, Stagger);
+	DisplayDuration = FMath::Max(0.05f, RiseDuration);
+	DisplaySpinTurns = SpinTurns;
+}
+
+void AEchidnaMirrorWallActor::PlayExit(float Stagger, float SlideDuration, float SlideDistance)
+{
+	DisplayAnim = EDisplayAnim::Exit;
+	DisplayElapsed = 0.f;
+	DisplayStagger = FMath::Max(0.f, Stagger);
+	DisplayDuration = FMath::Max(0.05f, SlideDuration);
+	DisplaySlideDistance = SlideDistance;
+}
+
+void AEchidnaMirrorWallActor::TickDisplayAnim(float DeltaTime)
+{
+	if (DisplayAnim == EDisplayAnim::None) return;
+
+	DisplayElapsed += DeltaTime;
+	const int32 Num = MirrorPivots.Num();
+	bool bAllDone = true;
+
+	for (int32 i = 0; i < Num; ++i)
+	{
+		USceneComponent* Pivot = MirrorPivots[i];
+		if (!Pivot) continue;
+
+		// 인덱스 0 = 로컬 Y가 가장 작은(정면에서 볼 때 가장 오른쪽) 거울 — 등장·퇴장 모두 여기부터 차례대로
+		const float Local = DisplayElapsed - DisplayStagger * i;
+		const float Alpha = FMath::Clamp(Local / DisplayDuration, 0.f, 1.f);
+		if (Alpha < 1.f) bAllDone = false;
+		if (Local < 0.f) continue;
+
+		const float BaseY = GetMirrorLocalY(i);
+
+		if (DisplayAnim == EDisplayAnim::Appear)
+		{
+			Pivot->SetVisibility(true, true);
+			// 땅에서 솟아오름(감속) + 세로축으로 돌다가 정면에서 멈춤
+			const float Rise = FMath::InterpEaseOut(0.f, 1.f, Alpha, 2.5f);
+			const float Z = -(MirrorHeight + 20.f) * (1.f - Rise);
+			const float Yaw = 360.f * DisplaySpinTurns * (1.f - Rise);
+			Pivot->SetRelativeLocation(FVector(0.f, BaseY, Z));
+			Pivot->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
+		}
+		else
+		{
+			// 오른쪽(로컬 -Y)으로 빠르게 미끄러지며 작아짐(가속) → 다 작아지면 숨김
+			const float Move = FMath::InterpEaseIn(0.f, 1.f, Alpha, 2.f);
+			Pivot->SetRelativeLocation(FVector(0.f, BaseY - DisplaySlideDistance * Move, 0.f));
+			Pivot->SetRelativeScale3D(FVector(FMath::Max(0.01f, 1.f - Move)));
+			if (Alpha >= 1.f)
+			{
+				Pivot->SetVisibility(false, true);
+			}
+		}
+	}
+
+	if (bAllDone)
+	{
+		DisplayAnim = EDisplayAnim::None;
+	}
 }

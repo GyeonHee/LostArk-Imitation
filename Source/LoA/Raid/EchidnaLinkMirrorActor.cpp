@@ -9,6 +9,13 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
+namespace
+{
+	// 헥스 이웃 6방향 (AHexArena와 같은 순서) — 유니티 빌드 이름 충돌을 피하려고 파일 고유 이름
+	const int32 LinkMirrorDQ[6] = { 1,  0, -1, -1,  0,  1 };
+	const int32 LinkMirrorDR[6] = { 0,  1,  1,  0, -1, -1 };
+}
+
 AEchidnaLinkMirrorActor::AEchidnaLinkMirrorActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -142,85 +149,134 @@ void AEchidnaLinkMirrorActor::BeginFiring()
 	Phase = EEchidnaLinkMirrorPhase::Firing;
 	PhaseElapsed = 0.f;
 	OrbTraveled = 0.f;
+	OrbHop = 0;
+	bHopFails = false;
 
 	// 5초가 되면 플레이어는 강제로 멈춘다 — 푸는 건 패턴 Task의 ExitState
-	if (ALoACharacter* Character = Player.Get())
+	ALoACharacter* Character = Player.Get();
+	if (Character)
 	{
 		Character->SetHeldByPattern(true);
 	}
 
 	BeamMeshComp->SetVisibility(false);
-
-	// 거울 정면(현재 빛줄기 방향)으로 발사
-	OrbDirection = GetActorForwardVector().GetSafeNormal2D();
 	OrbMeshComp->SetWorldLocation(GetActorLocation() + FVector(0.f, 0.f, OrbHeight));
 	OrbMeshComp->SetVisibility(true);
+	OrbDirection = GetActorForwardVector().GetSafeNormal2D();
+
+	AHexArena* HexArena = Arena.Get();
+	bPlayerCoordValid = Character && HexArena && HexArena->WorldToTileCoord(Character->GetActorLocation(), PlayerCoord);
+	if (!HexArena || !HexArena->WorldToTileCoord(GetActorLocation(), MirrorCoord))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LinkMirror] 거울 타일을 못 찾음 — 실패"));
+		Finish(EEchidnaLinkResult::Fail);
+		return;
+	}
+
+	// 첫 칸 = 거울 타일의 이웃 중 거울 정면(빛줄기 방향)과 가장 잘 맞는 타일
+	const FVector MirrorTop = GetActorLocation();
+	FIntPoint FirstHop = MirrorCoord;
+	FVector FirstHopTop = FVector::ZeroVector;
+	float BestDot = -2.f;
+	float NeighborDistance = 0.f;
+	for (int32 d = 0; d < 6; d++)
+	{
+		const FIntPoint N(MirrorCoord.X + LinkMirrorDQ[d], MirrorCoord.Y + LinkMirrorDR[d]);
+		FVector Top;
+		if (!HexArena->GetTileTopLocation(N, Top)) continue;
+
+		const FVector ToN = Top - MirrorTop;
+		NeighborDistance = ToN.Size2D();
+		const float Dot = FVector::DotProduct(ToN.GetSafeNormal2D(), OrbDirection);
+		if (Dot > BestDot)
+		{
+			BestDot = Dot;
+			FirstHop = N;
+			FirstHopTop = Top;
+		}
+	}
+
+	// 정면 쪽(±30도)에 타일이 없으면(외곽 바깥을 향함) 한 칸 거리만큼 허공으로 나갔다가 실패
+	if (BestDot < FMath::Cos(FMath::DegreesToRadians(30.f)) || FirstHop == MirrorCoord)
+	{
+		const float Dist = NeighborDistance > 0.f ? NeighborDistance : 530.f;
+		OrbTarget = MirrorTop + OrbDirection * Dist + FVector(0.f, 0.f, OrbHeight);
+		bHopFails = true;
+		UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 거울 정면에 타일 없음 — 실패 예정"));
+		return;
+	}
+
+	OrbTarget = FirstHopTop + FVector(0.f, 0.f, OrbHeight);
+	OrbDirection = (FirstHopTop - MirrorTop).GetSafeNormal2D();
+
+	// 첫 칸에 플레이어가 서 있어야 한다 — 거울과 2칸 이상 떨어졌거나 정면이 아니면 실패
+	if (!bPlayerCoordValid || PlayerCoord != FirstHop)
+	{
+		bHopFails = true;
+		UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 첫 칸 (%d,%d)에 플레이어 없음 (플레이어 %s, 거울과 거리 %d) — 실패 예정"),
+			FirstHop.X, FirstHop.Y, bPlayerCoordValid ? *PlayerCoord.ToString() : TEXT("?"),
+			bPlayerCoordValid ? AHexArena::GetHexDistance(MirrorCoord, PlayerCoord) : -1);
+	}
 }
 
 void AEchidnaLinkMirrorActor::TickFiring(float DeltaTime)
 {
-	const float Step = OrbSpeed * DeltaTime;
-	const FVector NewLocation = OrbMeshComp->GetComponentLocation() + OrbDirection * Step;
-	OrbMeshComp->SetWorldLocation(NewLocation);
-	OrbTraveled += Step;
+	// 빛은 웨이포인트(타일 중심) 사이를 직선으로 한 칸씩
+	const FVector Current = OrbMeshComp->GetComponentLocation();
+	const FVector Next = FMath::VInterpConstantTo(Current, OrbTarget, DeltaTime, OrbSpeed);
+	OrbMeshComp->SetWorldLocation(Next);
 
-	ALoACharacter* Character = Player.Get();
-	if (Character)
+	if (FVector::Dist(Next, OrbTarget) <= 5.f)
 	{
-		const float CapsuleRadius = Character->GetCapsuleComponent() ? Character->GetCapsuleComponent()->GetScaledCapsuleRadius() : 0.f;
-		if (FVector::Dist2D(NewLocation, Character->GetActorLocation()) <= OrbHitRadius + CapsuleRadius)
-		{
-			// 플레이어에 닿음 — 플레이어 타일에 노란 테두리, 그 타일 옆에 보스가 있으면 보스에게로
-			AHexArena* HexArena = Arena.Get();
-			FIntPoint PlayerCoord;
-			if (HexArena && HexArena->WorldToTileCoord(Character->GetActorLocation(), PlayerCoord))
-			{
-				if (AHexTile* Tile = HexArena->GetTile(PlayerCoord))
-				{
-					Tile->SetLinkHighlighted(true);
-				}
-
-				if (AHexArena::GetHexDistance(PlayerCoord, BossCoord) == 1 && Boss.IsValid())
-				{
-					Phase = EEchidnaLinkMirrorPhase::Linking;
-					PhaseElapsed = 0.f;
-					OrbMeshComp->SetWorldLocation(Character->GetActorLocation() + FVector(0.f, 0.f, OrbHeight * 0.3f));
-					return;
-				}
-			}
-
-			UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 플레이어는 맞혔지만 옆 칸에 보스가 없음 — 실패"));
-			Finish(EEchidnaLinkResult::Fail);
-			return;
-		}
-	}
-
-	if (OrbTraveled >= MaxTravelDistance)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 빛 덩어리가 플레이어에 닿지 못하고 맵 밖으로 — 실패"));
-		Finish(EEchidnaLinkResult::Fail);
+		OnOrbArrived();
 	}
 }
 
 void AEchidnaLinkMirrorActor::TickLinking(float DeltaTime)
 {
-	const AActor* BossActor = Boss.Get();
-	if (!BossActor)
+	// 두 번째 칸(보스)으로 가는 이동도 같은 방식
+	TickFiring(DeltaTime);
+}
+
+void AEchidnaLinkMirrorActor::OnOrbArrived()
+{
+	if (bHopFails)
 	{
+		UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 빛이 플레이어를 거치지 못함 — 거울잇기 실패"));
 		Finish(EEchidnaLinkResult::Fail);
 		return;
 	}
 
-	const FVector Target = BossActor->GetActorLocation();
-	const FVector Current = OrbMeshComp->GetComponentLocation();
-	const FVector Next = FMath::VInterpConstantTo(Current, Target, DeltaTime, OrbSpeed);
-	OrbMeshComp->SetWorldLocation(Next);
-
-	if (FVector::Dist(Next, Target) <= 10.f)
+	AHexArena* HexArena = Arena.Get();
+	if (OrbHop == 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 빛 덩어리가 보스에게 도달 — 거울잇기 성공"));
-		Finish(EEchidnaLinkResult::Success);
+		// 플레이어 타일 도착 — 노란 테두리, 다음 칸이 보스(다음 거울)여야 한다
+		if (HexArena)
+		{
+			if (AHexTile* Tile = HexArena->GetTile(PlayerCoord))
+			{
+				Tile->SetLinkHighlighted(true);
+			}
+		}
+
+		const AActor* BossActor = Boss.Get();
+		if (!BossActor || AHexArena::GetHexDistance(PlayerCoord, BossCoord) != 1)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 플레이어 (%d,%d) 옆 칸에 보스 (%d,%d)가 없음 — 실패"),
+				PlayerCoord.X, PlayerCoord.Y, BossCoord.X, BossCoord.Y);
+			Finish(EEchidnaLinkResult::Fail);
+			return;
+		}
+
+		OrbHop = 1;
+		Phase = EEchidnaLinkMirrorPhase::Linking;
+		PhaseElapsed = 0.f;
+		OrbTarget = BossActor->GetActorLocation();
+		return;
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("[LinkMirror] 거울 → 플레이어 → 보스로 한 칸씩 이어짐 — 거울잇기 성공"));
+	Finish(EEchidnaLinkResult::Success);
 }
 
 void AEchidnaLinkMirrorActor::Finish(EEchidnaLinkResult InResult)

@@ -1,4 +1,6 @@
 #include "Raid/EchidnaPoopBeamActor.h"
+#include "Raid/PatternVFXUtil.h"
+#include "NiagaraSystem.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoACharacter.h"
 #include "ProceduralMeshComponent.h"
@@ -29,6 +31,17 @@ namespace
 	}
 }
 
+namespace
+{
+	// 따라잡기 각속도 — 각도 차가 클수록 빠르게 (거울·똥장판 추적 장판 공용 규칙)
+	float GetPoopBeamCatchUpSpeed(float BaseSpeed, float CatchUpSpeed, float StartAngle, float FullAngle, const FRotator& Current, const FRotator& Target)
+	{
+		const float Diff = FMath::Abs(FRotator::NormalizeAxis(Target.Yaw - Current.Yaw));
+		const float Alpha = FMath::SmoothStep(StartAngle, FMath::Max(StartAngle + 1.f, FullAngle), Diff);
+		return FMath::Max(BaseSpeed, FMath::Lerp(BaseSpeed, CatchUpSpeed, Alpha));
+	}
+}
+
 AEchidnaPoopBeamActor::AEchidnaPoopBeamActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -44,6 +57,10 @@ AEchidnaPoopBeamActor::AEchidnaPoopBeamActor()
 	{
 		BeamMesh->SetMaterial(0, MatFinder.Object);
 	}
+
+	// 폭발 연출 — 부채꼴 패턴과 같은 Niagara
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> ExplodeVFXFinder(TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan"));
+	if (ExplodeVFXFinder.Succeeded()) ExplodeVFX = ExplodeVFXFinder.Object;
 }
 
 void AEchidnaPoopBeamActor::BeginPlay()
@@ -108,7 +125,9 @@ void AEchidnaPoopBeamActor::TickTracking(float DeltaTime)
 		if (!ToTarget.IsNearlyZero())
 		{
 			const FRotator Desired(0.f, ToTarget.Rotation().Yaw, 0.f);
-			SetActorRotation(FMath::RInterpConstantTo(GetActorRotation(), Desired, DeltaTime, TrackingRotationSpeed));
+			const float RotationSpeed = GetPoopBeamCatchUpSpeed(TrackingRotationSpeed, TrackingCatchUpSpeed,
+				TrackingCatchUpStartAngle, TrackingCatchUpFullAngle, GetActorRotation(), Desired);
+			SetActorRotation(FMath::RInterpConstantTo(GetActorRotation(), Desired, DeltaTime, RotationSpeed));
 		}
 	}
 
@@ -121,6 +140,11 @@ void AEchidnaPoopBeamActor::TickTracking(float DeltaTime)
 		Phase = EEchidnaPoopBeamPhase::Exploding;
 		PhaseElapsed = 0.f;
 		BuildSection(SectionFill, 0.f, 0.f, 0.f);
+		if (!ShouldShowExplodeMesh())
+		{
+			// 폭발은 Niagara로만 — 예고 배경도 이 순간 걷는다
+			BuildSection(SectionBackground, 0.f, 0.f, 0.f);
+		}
 
 		ExplodeCircle();
 		ExplodeSegment(0);
@@ -151,6 +175,8 @@ void AEchidnaPoopBeamActor::ExplodeCircle()
 {
 	if (CircleRadius <= 0.f) return;
 
+	PatternVFX::SpawnFanArea(this, ExplodeVFX, GetActorTransform(), 0.f, CircleRadius, 180.f, ExplodeVFXSpacing, ExplodeVFXScale, ExplodeVFXMaxCount);
+
 	const FVector Center = GetActorLocation();
 	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)
 	{
@@ -169,8 +195,12 @@ void AEchidnaPoopBeamActor::ExplodeSegment(int32 SegmentIndex)
 	const float Start = SegLen * SegmentIndex;
 	const float End = SegLen * (SegmentIndex + 1);
 
-	// 터진 칸까지 누적해서 밝게 — 원은 첫 칸과 함께 이미 터진 상태로 유지
-	BuildSection(SectionExplode, 0.f, End, CircleRadius);
+	if (ShouldShowExplodeMesh())
+	{
+		// 터진 칸까지 누적해서 밝게 — 원은 첫 칸과 함께 이미 터진 상태로 유지
+		BuildSection(SectionExplode, 0.f, End, CircleRadius);
+	}
+	PatternVFX::SpawnRectArea(this, ExplodeVFX, GetActorTransform(), Start, End, BeamHalfWidth, ExplodeVFXSpacing, ExplodeVFXScale, ExplodeVFXMaxCount);
 
 	const FTransform& Xform = GetActorTransform();
 	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)

@@ -8,6 +8,8 @@
 #include "Engine/OverlapResult.h"
 #include "LoACharacter.h"
 #include "LoA.h"
+#include "Raid/PatternVFXUtil.h"
+#include "NiagaraSystem.h"
 
 namespace
 {
@@ -62,6 +64,13 @@ AEchidnaFanZoneActor::AEchidnaFanZoneActor()
 	{
 		BaseMaterial = DefaultMatFinder.Object;
 	}
+
+	// 부채꼴 패턴 공용 판정 이펙트 (NS_Blaze 복제 → 핑크 + 1초)
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> RingVFXFinder(TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan"));
+	if (RingVFXFinder.Succeeded())
+	{
+		RingVFX = RingVFXFinder.Object;
+	}
 }
 
 void AEchidnaFanZoneActor::BeginPlay()
@@ -102,7 +111,17 @@ void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
 void AEchidnaFanZoneActor::BeginRingExpansion()
 {
 	bStartedExploding = true;
-	ApplyMeshColor(FanColor, FanOpacity);
+
+	// 판정 단계는 Niagara로만 표현 — 예고 메시는 여기서 숨긴다 (이펙트가 없으면 예전처럼 색 메시로 대체)
+	bHitMeshVisible = bShowHitMesh || !RingVFX;
+	if (bHitMeshVisible)
+	{
+		ApplyMeshColor(FanColor, FanOpacity);
+	}
+	else if (FanMeshComp)
+	{
+		FanMeshComp->SetVisibility(false);
+	}
 
 	// 첫 구간은 예고가 끝나자마자 — 별도 대기 없음
 	RevealNextRing();
@@ -125,8 +144,12 @@ void AEchidnaFanZoneActor::RevealNextRing()
 	CurrentRing++;
 	const float NewOuterRadius = FMath::Lerp(FanInnerRadius, FanRange, (float)CurrentRing / (float)RingCount);
 
-	BuildFanMesh(NewOuterRadius);
+	if (bHitMeshVisible)
+	{
+		BuildFanMesh(NewOuterRadius);
+	}
 	ApplyRingDamage(PrevOuterRadius, NewOuterRadius);
+	SpawnRingVFX(PrevOuterRadius, NewOuterRadius);
 
 	if (CurrentRing >= RingCount)
 	{
@@ -265,4 +288,15 @@ void AEchidnaFanZoneActor::ApplyMeshColor(const FLinearColor& Color, float Opaci
 	{
 		MID->SetVectorParameterValue(ColorParameterName, FLinearColor(Color.R, Color.G, Color.B, Opacity));
 	}
+}
+
+void AEchidnaFanZoneActor::SpawnRingVFX(float InnerRadius, float OuterRadius)
+{
+	if (!RingVFX) return;
+
+	// 첫 고리는 FanInnerRadius부터 시작 (판정과 동일한 안쪽 한계선) — 격자 배치는 PatternVFX 공용 함수
+	const int32 Count = PatternVFX::SpawnFanArea(this, RingVFX, GetActorTransform(),
+		FMath::Max(InnerRadius, FanInnerRadius), OuterRadius, FanAngle * 0.5f, RingVFXSpacing, RingVFXScale, RingVFXMaxPerRing);
+
+	UE_LOG(LogLoA, Verbose, TEXT("[EchidnaFanZone] RingVFX %d개 스폰 — R=%.0f~%.0f"), Count, InnerRadius, OuterRadius);
 }

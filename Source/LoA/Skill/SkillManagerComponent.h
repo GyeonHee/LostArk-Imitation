@@ -160,6 +160,11 @@ public:
     UFUNCTION(BlueprintCallable, Category="SkillTree")
     bool AssignSkillToSlot(FName RowName, int32 SlotIndex);
 
+    /** HUD에서 드래그로 두 스킬 슬롯(0~7, Q~F)을 맞바꾼다 — 인스턴스·쿨타임까지 같이 옮겨서 스왑으로 쿨타임이 초기화되지 않는다.
+     *  시전·사거리 이동·후딜 중이거나, 둘 중 하나라도 쿨타임 중이면 거부. 정비소 제한 없음(새 스킬을 넣는 게 아니라 위치만 바꾸므로) */
+    UFUNCTION(BlueprintCallable, Category = "Skill")
+    bool SwapSkillSlots(int32 SlotA, int32 SlotB);
+
     // 스킬 슬롯 등록 허용 여부 — 대기 지역 정비소가 들어올 때 켜고 나갈 때 끈다. 보스 맵엔 정비소가 없으니 항상 꺼짐
     UFUNCTION(BlueprintCallable, Category="SkillTree")
     void SetSlotEditAllowed(bool bAllowed) { bSlotEditAllowed = bAllowed; }

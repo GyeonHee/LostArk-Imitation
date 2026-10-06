@@ -88,12 +88,38 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TetherOpacity = 0.35f;
 
-	// 당기기 판정이 실제로 발동하는 순간(PerformSnap) 색상 — 완전 불투명 빨강
+	// (미사용 — 2026-10-07부터 판정 순간엔 예고 장판을 숨기고 StrikeMeshComp/StrikeColor로 표현. BP에 저장된 값 호환용으로만 남김)
 	UPROPERTY(EditDefaultsOnly, Category = "VFX")
 	FLinearColor SnapColor = FLinearColor(1.f, 0.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float SnapOpacity = 1.0f;
+
+	// ── 실제 판정 연출: 판정 순간 예고 장판을 숨기고, 이 메시가 보스 쪽(액터 원점)에서 TetherRange까지 뻗었다가
+	//    StrikeHoldDuration 머문 뒤 다시 원점으로 빨려 들어간다. 폭은 판정 박스와 같은 TetherHalfWidth*2
+
+	// 뻗어 나가는 줄기 메시 (엔진 Plane, 로컬 +X로 뻗음)
+	UPROPERTY(VisibleAnywhere, Category = "Tether|Strike")
+	TObjectPtr<UStaticMeshComponent> StrikeMeshComp;
+
+	// 끝까지 뻗는 시간 (초)
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike", meta = (ClampMin = "0.0"))
+	float StrikeExtendDuration = 0.12f;
+
+	// 다 뻗은 채 머무는 시간 (초)
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike", meta = (ClampMin = "0.0"))
+	float StrikeHoldDuration = 0.25f;
+
+	// 원점으로 빨려 들어가는 시간 (초)
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike", meta = (ClampMin = "0.0"))
+	float StrikeRetractDuration = 0.35f;
+
+	// 줄기 색 — 1보다 큰 값은 블룸으로 빛남
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike")
+	FLinearColor StrikeColor = FLinearColor(2.0f, 0.35f, 1.1f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StrikeOpacity = 0.9f;
 
 	// StateTree Task가 "당기기 판정까지 끝났는지" 폴링할 때 사용
 	bool IsFinished() const { return bSnapped; }
@@ -103,6 +129,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 
 private:
 	FVector PullTarget = FVector::ZeroVector;
@@ -113,6 +140,12 @@ private:
 
 	FTimerHandle SnapTimerHandle;
 	FTimerHandle ResolveTimerHandle;
+
+	// 판정 순간부터 흐른 시간 — 음수면 줄기 연출 전(예고 중)
+	float StrikeElapsed = -1.f;
+
+	float GetStrikeTotalDuration() const { return StrikeExtendDuration + StrikeHoldDuration + StrikeRetractDuration; }
+	void SetStrikeLength(float Length);
 
 	void ApplyMeshColor(const FLinearColor& Color, float Opacity);
 	void PerformSnap();

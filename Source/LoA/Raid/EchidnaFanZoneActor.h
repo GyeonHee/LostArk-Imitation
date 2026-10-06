@@ -6,6 +6,7 @@
 
 class UProceduralMeshComponent;
 class UMaterialInterface;
+class UNiagaraSystem;
 
 /**
  * 에키드나 "뒤로 빠지며 좌우장판" 짤패턴에 쓰이는 부채꼴(전방 확산) 장판 1개.
@@ -112,6 +113,31 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Effect", meta = (EditCondition = "bApplyCharmGaugeOnHit"))
 	int32 CharmGaugePerHit = 1;
 
+	// 고리가 열릴 때마다 그 고리 영역(부채꼴 조각)을 채우는 Niagara — 비워두면 VFX 없이 색 메시만.
+	// 이펙트 하나를 키우는 게 아니라 RingVFXSpacing 간격의 격자로 여러 개를 깔아서 부채꼴/도넛/호 어떤 모양이든 그대로 따라간다.
+	// 각 인스턴스는 바깥(반지름) 방향을 바라보게 회전 — 원래 앞으로 뻗는 이펙트(블레이즈 등)가 안→밖으로 퍼지는 느낌이 됨
+	// 기본값 NS_EchidnaRetreatFan(생성자) — 모든 부채꼴/도넛/호 패턴 공용
+	UPROPERTY(EditAnywhere, Category = "VFX")
+	TObjectPtr<UNiagaraSystem> RingVFX;
+
+	// 격자 간격 (cm) — 반지름 방향 줄 간격이자 호 방향 간격. 작을수록 촘촘하지만 인스턴스 수가 늘어남
+	UPROPERTY(EditAnywhere, Category = "VFX", meta = (ClampMin = "30.0"))
+	float RingVFXSpacing = 250.f;
+
+	// 각 인스턴스의 스케일 — 이펙트가 경계 밖으로 많이 번지면 줄일 것
+	UPROPERTY(EditAnywhere, Category = "VFX", meta = (ClampMin = "0.05"))
+	float RingVFXScale = 0.6f;
+
+	// 고리 하나에 깔 수 있는 최대 개수 — 넘으면 간격을 자동으로 넓혀 이 개수 안으로 맞춘다.
+	// 큰 도넛(RingCount=1로 한 번에 전체를 판정)은 면적이 넓어서 간격 그대로면 수백 개가 깔릴 수 있음
+	UPROPERTY(EditAnywhere, Category = "VFX", meta = (ClampMin = "1"))
+	int32 RingVFXMaxPerRing = 80;
+
+	// 실제 판정(고리 확장) 단계에서도 색 메시를 보여줄지 — 기본 false: 예고(반투명)만 메시로 보이고, 판정은 RingVFX로만 표현.
+	// RingVFX가 비어 있으면 아무것도 안 보이게 되므로 그땐 메시를 자동으로 보여준다
+	UPROPERTY(EditDefaultsOnly, Category = "VFX")
+	bool bShowHitMesh = false;
+
 	// StateTree Task가 "예고가 끝나고 실제 판정이 시작됐는지"(보스 후방 홉 타이밍) 폴링할 때 사용
 	bool HasStartedExploding() const { return bStartedExploding; }
 
@@ -128,6 +154,7 @@ private:
 	float Damage = 0.f;
 	TWeakObjectPtr<AController> InstigatorController;
 	bool bExploded = false;
+	bool bHitMeshVisible = true;
 	bool bStartedExploding = false;
 	int32 CurrentRing = 0;
 
@@ -140,4 +167,5 @@ private:
 	void BuildFanMesh(float OuterRadius);
 	bool IsActorInRing(const AActor* Actor, float InnerRadius, float OuterRadius) const;
 	void ApplyRingDamage(float InnerRadius, float OuterRadius);
+	void SpawnRingVFX(float InnerRadius, float OuterRadius);
 };

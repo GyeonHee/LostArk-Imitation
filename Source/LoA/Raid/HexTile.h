@@ -73,6 +73,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Tile|PoopZone")
 	float PoopTickInterval = 1.f;
 
+	// 활성화된 직후 이 시간(초) 동안은 밟고 있어도 틱 효과 없음 — 비활성 장판 위에 서 있다가 패턴이 시작되면
+	// 피할 틈도 없이 바로 맞던 문제. 바닥은 활성화 순간 바로 빨개지므로 그걸 보고 빠져나갈 시간
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Tile|PoopZone", meta = (ClampMin = "0.0"))
+	float PoopActivateGraceTime = 0.5f;
+
 	// 초당 플레이어 최대체력(10만)의 2% — 밟고 버티면 아프지만 즉사는 아닌 수준
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Tile|PoopZone")
 	float PoopTickDamage = 2000.f;
@@ -184,6 +189,12 @@ protected:
 
 private:
 	FTimerHandle PoopTickTimerHandle;
+
+	// 마지막으로 활성화된 월드 시각 — PoopActivateGraceTime 유예 계산용
+	float PoopActivatedTime = -1000.f;
+
+	// 유예가 남아 있으면 남은 시간(초), 아니면 0
+	float GetPoopGraceRemaining() const;
 
 	// InitTile에서 받는 헥스 내접원 반지름(= 변까지 거리). 꼭짓점 반지름은 이 값 * 2/√3
 	float TileInRadius = 0.f;

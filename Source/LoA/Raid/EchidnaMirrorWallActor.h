@@ -12,6 +12,7 @@ class UStaticMesh;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UTexture2D;
+class UNiagaraSystem;
 
 UENUM()
 enum class EEchidnaMirrorWallPhase : uint8
@@ -62,6 +63,21 @@ public:
 	// 거울·불길 다 사라짐 — 패턴 종료 판단용
 	bool IsFinished() const { return Phase == EEchidnaMirrorWallPhase::Done; }
 
+	// ── 연출 전용 줄 (판정·불길·카운터 없음) — 거울 카운터 시네마틱의 줄, 패턴 중 양쪽 세로 거울 기둥 ──
+
+	/** 판정 없는 장식 줄을 만든다. Count/Spacing이 0 이하면 기본값(MirrorCount, RowWidth에 맞춘 간격).
+	 *  bHiddenUntilAppear면 PlayAppear 전까지 땅속에 숨겨둔다 */
+	void SetupDisplayRow(float RowWidth, int32 Count = -1, float Spacing = -1.f, bool bHiddenUntilAppear = true, bool bGlass = false);
+
+	/** 거울이 하나씩(인덱스 순서, Stagger 간격) 땅에서 돌면서 솟아오른다 */
+	void PlayAppear(float Stagger, float RiseDuration, float SpinTurns);
+
+	/** 정면(+X)에서 볼 때 오른쪽(로컬 -Y)부터 하나씩 오른쪽으로 미끄러지며 작아져 사라진다 */
+	void PlayExit(float Stagger, float SlideDuration, float SlideDistance);
+
+	// 등장/퇴장 애니메이션이 아직 진행 중인지
+	bool IsDisplayAnimating() const { return DisplayAnim != EDisplayAnim::None; }
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MirrorWall")
 	TObjectPtr<USceneComponent> RowRoot;
 
@@ -76,11 +92,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorSpacing = 300.f;
 
+	// 레퍼런스(로아 거울 카운터)처럼 거울끼리 거의 맞닿는 크기 — 변 길이 약 1920cm에 7개면 간격 약 277이라 폭 260이면 틈 약 17cm.
+	// 키는 폭의 약 1.5배(세로로 긴 타원)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
-	float MirrorHeight = 320.f;
+	float MirrorHeight = 380.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
-	float MirrorWidth = 180.f;
+	float MirrorWidth = 260.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorThickness = 20.f;
@@ -122,6 +140,29 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire")
 	float FireTickDamage = 3000.f;
 
+	// 불길 연출 — 부채꼴 패턴과 같은 Niagara(기본 NS_EchidnaRetreatFan, 1초짜리)를 FireVFXRefreshInterval마다 불길 영역 전체에
+	// 다시 깔아서 계속 타오르게 한다. 거울이 쓰러지거나 사라지면(또는 패턴이 끝나면) 더 안 깔아서 꺼진다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire")
+	TObjectPtr<UNiagaraSystem> FireVFX;
+
+	// 이펙트 수명(약 1초)보다 짧아야 끊기지 않음
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire", meta = (ClampMin = "0.1"))
+	float FireVFXRefreshInterval = 0.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire", meta = (ClampMin = "30.0"))
+	float FireVFXSpacing = 320.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire", meta = (ClampMin = "0.05"))
+	float FireVFXScale = 0.6f;
+
+	// 한 번 깔 때 최대 개수 — 넘으면 간격을 넓힘
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire", meta = (ClampMin = "1"))
+	int32 FireVFXMaxCount = 50;
+
+	// 예전 불길 장판 메시(FireColor)도 같이 보여줄지 — FireVFX가 비면 자동으로 메시
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Fire")
+	bool bShowFireMesh = false;
+
 	// ── 비주얼 ──
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Visual")
 	FLinearColor NormalMirrorColor = FLinearColor(0.85f, 0.75f, 0.95f, 0.95f);
@@ -132,6 +173,10 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Visual")
 	FLinearColor FireColor = FLinearColor(6.f, 1.4f, 0.25f, 0.5f);
+
+	// 상반신 없는 투명 유리 거울 색 (SetupDisplayRow의 bGlass — 패턴 중 양쪽 세로 기둥). Alpha = 불투명도
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Visual")
+	FLinearColor GlassMirrorColor = FLinearColor(0.75f, 0.8f, 1.f, 0.22f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Visual")
 	FName ColorParameterName = TEXT("Base Color");
@@ -174,6 +219,21 @@ protected:
 
 private:
 	EEchidnaMirrorWallPhase Phase = EEchidnaMirrorWallPhase::Idle;
+
+	enum class EDisplayAnim : uint8 { None, Appear, Exit };
+	EDisplayAnim DisplayAnim = EDisplayAnim::None;
+	float DisplayElapsed = 0.f;
+	float DisplayStagger = 0.f;
+	float DisplayDuration = 0.f;
+	float DisplaySpinTurns = 0.f;
+	float DisplaySlideDistance = 0.f;
+	void TickDisplayAnim(float DeltaTime);
+
+	float FireVFXElapsed = 0.f;
+
+	// true면 BuildMirrors가 초상화 없이 GlassMirrorColor로 만든다
+	bool bGlassMirrors = false;
+	bool ShouldShowFireMesh() const { return bShowFireMesh || !FireVFX; }
 
 	TWeakObjectPtr<AEchidnaBoss> Boss;
 	TWeakObjectPtr<AController> InstigatorController;

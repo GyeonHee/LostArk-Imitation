@@ -120,6 +120,9 @@ protected:
 	float FogTargetOpacity = 0.f;
 	float FogFadeSpeed = 1.f;
 
+	// 연기를 켜둔 출처들 — 패턴(랜잡·그네)과 매혹 상태가 서로의 연기를 끄지 않도록, 하나라도 남아 있으면 연기 유지
+	TSet<FName> ScreenFogSources;
+
 	// Tick에서 연기 불투명도를 목표값으로 보간 — UpdateCastBar와 같이 IsActionLocked 조기 return보다 앞에서 호출
 	void UpdateScreenFog(float DeltaSeconds);
 
@@ -128,12 +131,51 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UI")
 	void SetScreenFog(bool bEnable, float FadeTime = 1.f);
 
+	/** 출처별 연기 요청 — SetScreenFog는 "Pattern" 출처. 매혹 상태는 "Charm" 출처로 켜고 끈다 */
+	void SetScreenFogSource(FName Source, bool bEnable, float FadeTime = 1.f);
+
+	/** 보스 대사창(하단 중앙, 초상화 + 이름 + 대사)을 페이드 인 — HideBossDialogue로 내린다 */
+	void ShowBossDialogue(const FText& Speaker, const FText& Line, class UTexture2D* Portrait);
+	void HideBossDialogue();
+
 	/** 화면 상단 중앙 알림 띠를 Duration초 동안 띄운다 (예: 정비소 밖에서 스킬 등록 시도) — 다시 부르면 글자·시간만 갱신 */
 	void ShowTimedNotice(const FText& Title, const FText& Message, float Duration = 2.f);
 
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UZoneNoticeWidget> TimedNoticeWidget;
+
+	// ── HUD 슬롯 클릭·드래그 스왑 ──────────────────────────────
+	// HUD 루트가 HitTestInvisible(클릭 이동을 막지 않으려고)이라 슬롯 위젯은 마우스를 못 받는다 — 그래서 컨트롤러가
+	// 커서 위치와 슬롯 위젯 Geometry를 직접 비교한다. 슬롯 위에서 누른 클릭은 기본공격·이동으로 넘기지 않고,
+	// 왼쪽 버튼이면 드래그를 시작해 같은 종류 슬롯 위에서 놓으면 맞바꾼다.
+	// 그룹: 0 스킬(Q~F) / 1 아이템(F1,5~9) / 2 배틀아이템(1~4) / 3 기타(대시·기상 — 클릭만 막고 드래그 없음)
+
+	/** 커서 아래 HUD 슬롯 — 없으면 false. OutIndex는 그룹 안 순번(스킬은 곧 스킬 슬롯 번호) */
+	bool FindHUDSlotUnderCursor(int32& OutGroup, int32& OutIndex) const;
+
+	/** 마우스 버튼 입력이 HUD 슬롯에서 시작됐으면 true(게임 입력으로 쓰지 말 것). 왼쪽 버튼이면 드래그 준비 */
+	bool ConsumeHUDSlotPress();
+
+	void UpdateSlotDrag();
+	void FinishSlotDrag();
+	void SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB);
+	bool GetHUDSlotIconBrush(int32 Group, int32 Index, FSlateBrush& OutBrush) const;
+
+	bool bSlotPressActive = false;
+	bool bSlotDragging = false;
+	int32 SlotPressGroup = -1;
+	int32 SlotPressIndex = -1;
+	FVector2D SlotPressMouse = FVector2D::ZeroVector;
+
+	// 슬롯 위에서 시작된 기본공격 입력 — Held/Up도 같이 버린다
+	bool bBasicAttackSuppressed = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USlotDragVisualWidget> SlotDragVisual;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBossDialogueWidget> BossDialogueWidget;
 
 	FTimerHandle TimedNoticeTimer;
 

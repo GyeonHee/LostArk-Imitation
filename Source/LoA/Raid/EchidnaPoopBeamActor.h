@@ -7,6 +7,7 @@
 class UProceduralMeshComponent;
 class UMaterialInstanceDynamic;
 class ACharacter;
+class UNiagaraSystem;
 
 UENUM()
 enum class EEchidnaPoopBeamPhase : uint8
@@ -73,6 +74,19 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Timing")
 	float TrackingRotationSpeed = 8.f;
 
+	// 따라잡기 — 장판과 플레이어 사이 각도가 벌어질수록 빨리 돈다. 각도 차가 TrackingCatchUpStartAngle 이하면 기본 각속도,
+	// TrackingCatchUpFullAngle 이상이면 TrackingCatchUpSpeed(도/초), 그 사이는 부드럽게 보간.
+	// 거울 가까이 있으면 조금만 움직여도 각도가 크게 벌어져 장판이 반대쪽에 남는데, 초당 8도로는 반대쪽에서 따라오는 데 20초 넘게 걸렸음.
+	// 가까이 따라붙은 뒤엔 기본 속도라 여전히 걸어서 빠져나갈 수 있다 (거울 패턴과 똥장판 추적 장판이 같은 값)
+	UPROPERTY(EditDefaultsOnly, Category = "PoopBeam|Timing", meta = (ClampMin = "0.0"))
+	float TrackingCatchUpSpeed = 70.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PoopBeam|Timing", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float TrackingCatchUpStartAngle = 25.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PoopBeam|Timing", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float TrackingCatchUpFullAngle = 100.f;
+
 	// 직사각형을 몇 칸으로 나눠 순차 폭발시킬지
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Timing")
 	int32 ExplosionSegmentCount = 8;
@@ -102,6 +116,26 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Visual")
 	FName ColorParameterName = TEXT("Base Color");
 
+	// ── 폭발 연출: 예고(배경 + 차오르는 게이지)만 메시로, 실제 폭발은 Niagara로만 (부채꼴 패턴과 같은 이펙트) ──
+
+	// 기본 NS_EchidnaRetreatFan(생성자). 원·직사각형 칸이 터질 때마다 그 영역을 격자로 채움
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|VFX")
+	TObjectPtr<UNiagaraSystem> ExplodeVFX;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|VFX", meta = (ClampMin = "30.0"))
+	float ExplodeVFXSpacing = 250.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|VFX", meta = (ClampMin = "0.05"))
+	float ExplodeVFXScale = 0.6f;
+
+	// 한 번(원 또는 직사각형 한 칸)에 깔 최대 개수 — 넘으면 간격을 넓힘
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|VFX", meta = (ClampMin = "1"))
+	int32 ExplodeVFXMaxCount = 40;
+
+	// 폭발 단계에서도 예전처럼 밝은 폭발 메시를 보여줄지 — 기본 false (ExplodeVFX가 비면 자동으로 메시)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|VFX")
+	bool bShowExplodeMesh = false;
+
 private:
 	enum : int32 { SectionBackground = 0, SectionFill = 1, SectionExplode = 2 };
 
@@ -114,6 +148,7 @@ private:
 	void ExplodeCircle();
 	void ExplodeSegment(int32 SegmentIndex);
 	void TryHit(ACharacter* Character);
+	bool ShouldShowExplodeMesh() const { return bShowExplodeMesh || !ExplodeVFX; }
 
 	TWeakObjectPtr<ACharacter> Target;
 	TWeakObjectPtr<AController> InstigatorController;

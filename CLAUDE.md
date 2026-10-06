@@ -152,6 +152,9 @@
   - 방향은 **카메라 Yaw 기준**(화면 위 = 미니맵 위). 보스가 숨김(`IsHidden`) 상태면 보스 아이콘도 숨김 — 그네·거울잇기에서 사라졌다 나타나는 위치가 바로 보임
   - `AddToViewport(5)` — 연기(-1)·HUD(0)보다 위, 스킬트리(10)보다 아래. 크기/여백/색은 `UMinimapWidget` 기본값(`MapSize` 220 등)
   - `UUserWidget`에 이미 `Padding` 멤버가 있어서 같은 이름 UPROPERTY는 UHT 에러(shadowing) — 그래서 `MapPadding`
+- **HUD 슬롯 클릭 차단 + 드래그 스왑 (2026-10-07, `ALoAPlayerController`)**: HUD 루트가 HitTestInvisible이라 슬롯이 마우스를 못 받아 슬롯 클릭이 기본공격·이동으로 넘어갔음 → 컨트롤러가 커서(`FSlateApplication::GetCursorPos`)와 WBP_HUD 슬롯 위젯(`GetWidgetFromName` + `GetCachedGeometry().IsUnderLocation`)을 직접 비교(`FindHUDSlotUnderCursor`). 슬롯 위에서 시작된 기본공격(`OnSkillKeyDown/Held/Up` 슬롯 8)·이동(`OnInputStarted`/`OnSetDestinationTriggered`) 입력은 버림(`ConsumeHUDSlotPress`)
+  - 그룹: 스킬 `Border_Q~F`(=슬롯 0~7) / 아이템 `Border_F1,5~9` / 배틀아이템 `Border_1~4` / 기타 `Border_Dash,GetUp`(클릭만 막음). **위젯 이름을 바꾸면 이 표(cpp 상단)도 바꿀 것**
+  - 왼쪽 버튼으로 6px 이상 끌면 `USlotDragVisualWidget`(C++ 트리, ZOrder 20) 아이콘이 커서를 따라오고, **같은 그룹** 슬롯 위에서 놓으면 스왑. 스킬은 `USkillManagerComponent::SwapSkillSlots`(인스턴스·쿨타임까지 교환, 시전/후딜 중 거부, **둘 중 하나라도 쿨타임 중이면 거부 — 쿨타임 중인 스킬은 드래그 시작도 안 됨**, 정비소 제한 없음), 아이템·배틀아이템은 아이템 시스템이 없어 `Img_*` 브러시·틴트만 교환
 - **HUD 위젯은 전부 루트 Visibility를 `HitTestInvisible`로 둘 것** — 클릭 이동 게임이라 바가 마우스 입력을 먹으면 그 영역을 클릭해도 캐릭터가 안 움직인다
 - ⚠️ **`BP_LoAPlayerController`의 위젯 클래스 프로퍼티는 반드시 에디터 Details 패널에서 직접 할당할 것.**
   MCP(`ObjectTools.set_properties`)로 CDO(`Default__BP_LoAPlayerController_C`)에 써서 저장하면 **에디터 조회로는 값이 보이고 `save_assets`도 true를 반환하는데, PIE 런타임에서는 null이다.** Live Coding 리인스턴싱을 거치면서 날아가는 것으로 보임.
@@ -284,7 +287,7 @@
 - `AHexArena::BeginPlay` → 타일 스폰 → **다음 틱**에 `SetupInitialLayout()` (플레이어 폰이 스폰된 뒤에 돌아야 폰이 선 타일을 뺄 수 있어서 한 틱 미룸)
 - **오염 장판 8칸**(`InitialPoopTileCount`)은 **비활성 상태로 깔린다 — 밟아도 매혹·데미지 없음**, 살짝 핑크빛. 나중에 특정 패턴이 `AHexArena::SetAllPoopTilesActive(true)`(또는 타일별 `SetPoopActive`)로 켜면 **빨간색 + 빨간 테두리**가 되고 그때부터 밟으면 매혹 스택 + 데미지
   - 폰(플레이어·보스)이 서 있는 타일만 제외(**파란 테두리 타일도 오염될 수 있음** — 비활성 오염이면 핑크 바닥 + 파란 테두리, 활성화되면 빨간 테두리가 우선), **시작부터 꽃이 피는 배치는 건너뜀**(후보를 넣었을 때 어떤 Normal 타일이 완전히 둘러싸이면 스킵)
-  - 타일은 타입과 무관하게 **위에 서 있는 캐릭터를 항상 기억**한다 → 서 있는 도중에 활성화돼도 즉시 틱 시작(`RefreshPoopTicking`)
+  - 타일은 타입과 무관하게 **위에 서 있는 캐릭터를 항상 기억**한다 → 서 있는 도중에 활성화되면 **`PoopActivateGraceTime`(0.5초) 유예 뒤** 첫 틱(`RefreshPoopTicking`, 2026-10-07). 예전엔 즉시 틱이라 비활성 장판 위에 있다가 패턴이 시작되면 피할 틈 없이 맞았음. 바닥은 활성화 순간 바로 빨개짐
   - `SetTileType`으로 PoopZone이 아니게 되면 활성 플래그도 꺼짐. 꽃 개화 판정은 활성 여부와 무관하게 PoopZone 타입 기준
 - **파란 테두리 2칸**(반정산 패턴용 정보): 외곽 링에서 랜덤 1칸 + 거기서 헥스 거리 `MarkerTileDistance`(2)인 **안쪽(외곽 아닌) 타일** 1칸. SideCount=4면 어느 외곽 타일에서 출발해도 후보가 3~4개 있음(검증). `MarkerTileCoords[0]`=외곽, `[1]`=안쪽
 - 테두리는 **타일 타입이 아니라 별도 표시** — `HighlightMesh`(PMC)가 헥스 외곽선을 따라 바닥 링 + 낮은 띠를 그림. 우선순위: **활성 오염(빨강 `ActivePoopBorderColor`) > 파란 테두리(`HighlightColor`) > 숨김** (`RefreshBorder`). 타일 액터가 TileYaw(30도) 돌아 있어서 로컬 꼭짓점은 0/60/120...도, 꼭짓점 반지름 = 내접원 반지름 × 2/√3. 높이는 `TileMesh->Bounds` 꼭대기 기준
@@ -315,8 +318,18 @@
   - 데미지: `LaserDamageTickInterval`(기본 1/3초)마다 반복 판정 — 맞는 순간 즉시 1틱 + 그 뒤 3틱 = 1초간 총 4틱. `MaxDamageTicks`는 `floor(FiringDuration/Interval)+1`로 계산 (아래 "넉다운 시스템" 참조, 예전엔 `round()`라 "즉시 1틱+반복" 구조와 안 맞았음)
   - 판정: `GetActorsInBeamBox()`로 박스 오버랩
   - 별도 넉백 시스템(`KnockbackTickInterval`/`KnockbackStrength` 등)은 **제거됨** — 대신 데미지 틱마다 `ALoACharacter::ApplyKnockdown()` 호출로 통합 (아래 "넉다운 시스템" 참조)
+  - **추적 속도 = 따라잡기 방식, 똥장판 추적 장판(`AEchidnaPoopBeamActor`)과 같은 규칙·값** (2026-10-07): 장판과 플레이어 사이 각도 차가 `TrackingCatchUpStartAngle`(25도) 이하면 기본 `TrackingRotationSpeed`(8도/초), `TrackingCatchUpFullAngle`(100도) 이상이면 `TrackingCatchUpSpeed`(70도/초), 사이는 SmoothStep. 순수 각속도만 쓸 땐 거울 가까이서 장판이 반대쪽에 남으면(180도) 20초 넘게 걸렸음. 따라붙은 뒤엔 8도/초라 여전히 걸어서 빠져나갈 수 있음. (거리 기반 `TrackingSweepSpeed`는 걸어서 못 피할 만큼 빨라서 기본 0으로 꺼둠)
   - `TrackingRotationSpeed` 기본값 60 → 100 → 80 → 50 → 15 → **8**도/초 (C++ 기본값 + `BP_EchidnaMirror` 둘 다). 걸어서 피할 수 있으려면 각속도×MaxRange(3000) < 걷기 600cm/s → 약 11도/초 이하
 - 완료 후 `LifeAfterBeam` 뒤 소멸
+- **레이저 판정은 번개 Niagara로만 표현 (2026-10-07)** — `LaserVFX` 기본값 `NS_EchidnaMirrorLaser`(`Pattern/VFX/`). `NS_Lightning_Strike` 복제 후 **번개 줄기(`Lightning`) 이미터만 남기고 나머지 13개는 끔**, 파랑→노랑. 생성자 ConstructorHelpers라 4거울·8거울·유도 거울 공용
+  - 원본 번개는 VelocityAligned 스프라이트(피벗이 아래 끝, 속도 방향으로 섬)라 `AddVelocity`를 로컬 (1,0,0)으로 바꿔 **이펙트 로컬 +X로 뻗게** 함. 크기 `User.BeamSize`(x=폭, y=길이)·수명 `User.BeamLife`를 Sprite Size Min/Max·Lifetime Min/Max에 링크. Collision·이벤트 모듈은 끔
+  - **줄기 반복은 C++가 직접** — 발사 동안(`StartLaserBeam` ~ `StopLaserBeam`) `LaserVFXRefreshInterval`(0.12초)마다 `SpawnLaserBeamPiece()`가 거울 루트에 붙은 1회 재생 줄기를 띄우고(수명 = 간격 × `LaserVFXLifeScale` 1.35라 겹침), `TickLaserBeam()`이 살아 있는 줄기 전부를 매 틱 거울 몸체 중심·판정 끝 방향으로 맞춤(`Lightning` 이미터는 로컬 공간·1회 재생·SpawnRate 모듈 끔). 4거울·8거울은 끝점 Z를 거울 높이로 맞춰 **수평**, 유도 거울은 공중 거울에서 플레이어 쪽 **사선** — 패턴 끝(`StopRepeating` → FinishFiring)까지 안 끊김
+  - **버그였던 것 2**: 컴포넌트 하나를 켜두고 이미터를 무한 반복시켰더니 유도 거울 레이저가 **1초 만에 꺼졌음**(원인 미확인 — 런타임 파티클 상태를 MCP로 볼 수 없었음). 반복을 나이아가라에 맡기지 않고 C++ 타이머로 바꿔 해결
+  - **버그였던 것**: 처음엔 데미지 틱마다 붙지 않은 월드 공간 줄기를 새로 스폰해서, 움직이는 유도 거울에서 방향이 다른 줄기 여러 개가 겹쳐 보였음
+  - 폭은 `LaserVFXWidth`(800, 번개 텍스처가 스프라이트 안에서 가늘어서 판정 폭보다 넓게) — 추정값이라 실제로 보고 BP에서 맞출 것
+  - (폐기) 처음엔 수직 번개를 장판 따라 줄지어 떨어뜨렸는데 "거울에서 수평으로 1개가 뻗어야 한다"고 해서 교체
+- 발사가 시작되면 예고 장판 메시를 숨김(`bShowFiringMesh` 기본 false, `LaserVFX`가 비면 예전처럼 `FiringColor` 메시). 유도 거울은 예고가 없어서 처음부터 메시 숨김
+- **8거울 대기 거울의 흰 장판 (2026-10-07 수정)**: 8거울은 나중 차례 4개를 미리 스폰만 하고 `Activate()`를 늦게 부르는데, 그동안 `ZoneMeshComp`(엔진 Plane + BasicShapeMaterial = 흰색)가 100x100 그대로 보였음 → `BeginPlay`에서 미활성이면 숨기고 `Activate()`에서 다시 켬
 - **8거울의 개인 유도레이저**(`FStateTreeTask_EchidnaEightMirrorPattern`): 패턴 시작 **`GuidedSpawnDelay`(2초) 뒤 보스 위치**에서 스폰돼 플레이어를 쫓아감 (2026-09-24 — 예전엔 시작 즉시 보스 오른쪽 500cm에 스폰돼서 그 자리 플레이어가 피할 틈 없이 맞았음. 이때 `GuidedHoverHeight` 필드를 삭제함)
 
 ### 비주얼 — 별도 에셋 없이도 즉시 보이게
@@ -353,7 +366,11 @@
 - 부채꼴 모양은 엔진 기본 메시로 표현이 안 돼서(Cone을 눕혀 스케일로 흉내냈던 첫 버전은 탑다운 카메라에서 옆면이 둥글게 보여 폐기) `FanMeshComp`(`UProceduralMeshComponent`)로 런타임에 `CreateMeshSection()`으로 직접 지오메트리 생성 — `HexArena` 벽과 동일한 방식(모듈 의존성도 이미 있음)
 - `ArcSegments`(기본 24)개의 사다리꼴 쿼드를 이어붙여 부채꼴을 구성 — 조각 하나당 로컬 +X(정면) 기준 각도 A/B에서 `FanInnerRadius`~(그 시점) 바깥 반지름 사이 안쪽변/바깥변 4점으로 쿼드 생성. 쿼드 생성은 `HexArena.cpp`의 `AddQuad` 헬퍼와 동일한 패턴(로컬 anonymous namespace `AddFanQuad`) — 감김 방향을 앞/뒤 양쪽 다 추가해서 PMC의 front-face 방향에 상관없이 항상 양면이 보이게 함
 - `FanInnerRadius`(기본 60cm) — 0이면 뾰족한 삼각형, 0보다 크면 안쪽이 잘린 사다리꼴 형태 (레퍼런스 이미지의 "살짝 사다리꼴" 모양). 첫 고리도 이 반지름부터 시작하므로 데미지 판정도 동일하게 안쪽 한계선으로 적용됨
-- **VFX 없이 색상 하나로만 표현** — 예고는 `TelegraphColor`, 고리 확장은 `FanColor`를 `ColorParameterName`/`FanOpacity`와 함께 MID로 주입 (`ApplyMeshColor()`). Niagara는 전부 제거함. 커스텀 머티리얼 쓸 경우 `ColorParameterName`에 해당 이름의 Vector Parameter + Translucent Blend Mode 필요 (거울 패턴과 동일한 MID 주입 방식)
+- **판정은 Niagara로만 표현 (2026-10-06)** — 예고 단계만 PMC 메시(반투명 빨강 `TelegraphOpacity` 0.35)로 보이고, 고리 확장이 시작되면(`BeginRingExpansion`) 메시를 **숨긴다**. 실제 피격 범위는 `RingVFX`로만 보임. `bShowHitMesh`(기본 false)를 켜거나 `RingVFX`가 비어 있으면 예전처럼 `FanColor` 메시가 나옴
+  - `RingVFX` 기본값 = **`NS_EchidnaRetreatFan`**(`/Game/LostArk/Raid/Echidna/Pattern/VFX/`, 생성자 ConstructorHelpers) → **이 액터를 쓰는 4개 패턴 전부 공용**(좌우장판·끌고간후·두번긋고도넛·정면리본). NS_Blaze 복제본이라 원본 블레이즈 스킬과 독립. 핑크(User.Color_*) + 약 1초(REF 수명 0.35, 자식 수명 0.6, Loop Duration 1) + 생성량 약 40%(Sparks1 20/Smoke 15/Trace 12)
+  - 고리가 열릴 때마다 `SpawnRingVFX()`가 그 고리 영역을 `RingVFXSpacing`(250) 간격 격자(반지름 줄 × 호 길이 비례 칸, 칸 **중심**에 배치 → 경계에서 반 칸 안쪽)로 채운다. 각 인스턴스는 바깥(반지름) 방향을 바라봄 → 부채꼴·도넛·호 모양을 그대로 따라감. 고리당 `RingVFXMaxPerRing`(80)개를 넘으면 간격을 자동으로 넓힘(큰 도넛 대비). 액터에 안 붙이고 월드 스폰(bAutoDestroy)
+  - RetreatFan Task에도 `RingVFX`/`RingVFXSpacing`/`RingVFXScale` 오버라이드가 있음(처음 테스트용 — 비우거나 0 이하면 BP 값)
+- 색은 MID 주입 — 예고는 `TelegraphColor`, (bShowHitMesh일 때) 고리 확장은 `FanColor`를 `ColorParameterName`/`FanOpacity`와 함께 MID로 주입 (`ApplyMeshColor()`). Niagara는 전부 제거함. 커스텀 머티리얼 쓸 경우 `ColorParameterName`에 해당 이름의 Vector Parameter + Translucent Blend Mode 필요 (거울 패턴과 동일한 MID 주입 방식)
 
 ### FStateTreeTask_EchidnaRetreatFanPattern — 제자리 캐스팅 + 판정 순간 후방 홉 (2026-08-06 재설계)
 - **변천사**: 처음엔 "AIController->MoveToLocation()으로 걸어서 후퇴 → 도착하면 캐스팅"을 캐스팅마다 반복하는 구조였는데, 걸어서 물러나는 느낌이 아니라 "멈춰서 캐스팅하다가 터지는 순간 점프하듯 뒤로 홉"하는 느낌을 원해서 나브메시 이동을 걷어내고 `LaunchCharacter` 기반으로 교체
@@ -394,6 +411,12 @@
 - **안전장치**: `PullMaxHoldTime`(기본 8초) 타이머가 `ReleasePull()`을 강제 호출한다. 이게 없으면 패턴이 비정상 종료될 때 플레이어가 영구히 못 움직인다 — 패턴 전체 길이보다 넉넉하게 잡을 것
 - `bIsPulled`가 `IsActionLocked()`에 포함되어 멈춤·드래그·속박 내내 조작 불가. 연출 훅은 `OnPullVisualChanged(bool)` (경직/기절과 동일 패턴)
 - **`PullStrength`의 의미가 바뀌었다** — 임펄스 세기가 아니라 **끌려가는 속도(cm/s)**. StateTree 인스턴스 데이터 레이아웃을 건드리면 배치된 Task가 Live Coding에서 크래시 나므로 필드를 지우지 않고 의미만 재해석한 것(`GuidedHoverHeight`와 같은 선례)
+
+### 판정 연출 — 핑크 줄기가 뻗었다가 빨려 들어감 (2026-10-07)
+- 예고(`SnapDelay`) 동안은 반투명 빨간 장판(`ZoneMeshComp`), **판정 순간(`PerformSnap`) 예고 장판을 숨기고** `StrikeMeshComp`(엔진 Plane, 판정 박스와 같은 폭 `TetherHalfWidth*2`)가 원점(보스 쪽)에서 `TetherRange`까지 뻗음 → 머묾 → 원점으로 빨려 들어감
+  - 시간: `StrikeExtendDuration`(0.12, ease-out) / `StrikeHoldDuration`(0.25) / `StrikeRetractDuration`(0.35, ease-in). 뿌리는 원점 고정, 끝만 움직임. Tick은 이 연출 동안만 켬(광폭화 배율 자동 적용)
+  - 색: `StrikeColor`(HDR 핑크 2.0/0.35/1.1, 블룸) + `StrikeOpacity` 0.9 — `M_MirrorLaser` MID. 예전 `SnapColor`/`SnapOpacity`는 미사용
+  - 리본(`BP_EchidnaRibbon`)도 같은 액터라 똑같이 적용됨. 판정 직후 끝나는 경우 `FinishSnap`이 줄기 연출이 끝날 때까지 소멸을 미룸
 
 ### 타이밍 — 끌려오는 중에 장판이 터지지 않도록
 - `AEchidnaTetherActor::IsFinished()`는 예전엔 판정 즉시 true였는데, 그러면 아직 끌려오는 중에 다음 단계 장판이 터진다
@@ -615,6 +638,7 @@
 3. `BeamSpawnDelay`(4초) 뒤 보스 발밑에서 **추적 장판**(`AEchidnaPoopBeamActor`) — 직사각형(보스→플레이어) + 보스 중심 원
    - `TrackDuration`(3초) 동안 `TrackingRotationSpeed`(**8도/초** — 90→45→20→8. 장판이 플레이어를 휩쓰는 속도 = 각속도×거리라, 걷기 600cm/s로 맵 끝 4000cm에서도 피하려면 ω < 약 8.6도/초) 제한으로 플레이어를 따라 회전, 안쪽이 **보스 쪽부터 게이지처럼 차오름**(직사각형은 길이, 원은 반지름이 같은 비율) → 언제 터지는지 보임
    - 꽉 차면 **원이 먼저 터지고**, 직사각형은 `ExplosionSegmentCount`(8)칸으로 나뉘어 **보스 쪽부터 `ExplosionSegmentInterval`(0.07초) 간격으로 순차 폭발**(블레이즈처럼 앞으로 뻗어나감)
+   - **폭발은 Niagara로만 (2026-10-07)**: 꽉 차는 순간 예고(배경·게이지) 메시를 걷고, 원·직사각형 칸이 터질 때마다 `PatternVFX::SpawnFanArea`/`SpawnRectArea`(`Raid/PatternVFXUtil` — 부채꼴 장판과 공용)로 그 영역을 `ExplodeVFX`(기본 `NS_EchidnaRetreatFan`) 격자로 채움(`ExplodeVFXSpacing` 250, `ExplodeVFXScale` 0.6, 한 번에 최대 `ExplodeVFXMaxCount` 40). `bShowExplodeMesh`를 켜면 예전 밝은 폭발 메시도 나옴
    - 한 캐릭터는 원+직사각형 통틀어 **한 번만** 맞음(원 안이면 `CircleDamage`, 아니면 `BeamDamage`), `bApplyKnockdownOnHit`(기본 true)
 4. 게이지·장판 둘 다 끝나면 Succeeded. `ExitState`에서 카메라 복구 + 오염 장판 비활성화 + 중간에 끊겼으면 남은 액터 정리
 - `BeamLength` 기본 4000 — 2400이었을 땐 보스와 플레이어가 맵 끝과 끝에 있으면 안 닿았음(타일 중심 간 최대 3180cm)
@@ -649,6 +673,16 @@
    - 먹힘 = **최대 HP × `EatDamageRatio`(0.9)** 데미지 + **패턴이 끝날 때까지 붙잡힘**(`ALoACharacter::SetHeldByPattern(true)` → `IsActionLocked`). 이미 붙잡힌 사람은 다시 먹지 않음(데미지 중복 방지)
 5. 마무리 조건: 더 깔 게 없음(5개 다 깔았거나 / 플레이어가 붙잡혔거나 / 장판 단계 `MaxRoundsDuration` 15초 초과 — 계속 움직여서 안 깔리는 경우 대비) **그리고** 깔린 것들이 전부 꽃까지 나옴 → `EndDelay`(1.5초) 후 Succeeded
 6. `ExitState`(중간에 끊겨도): **꽃 전부 `Dismiss()`(가라앉아 사라짐)**, **붙잡힌 플레이어 해제**, 연기 걷힘, 오염 장판 비활성, 시간 패턴 잠금 해제
+
+### 시작 대사 (2026-10-07)
+- 진입 즉시 대사창(`ShowPatternDialogue` → `ALoAPlayerController::ShowBossDialogue`) — 화자는 NPC라 기본 초상화 없음(`DialoguePortrait` 비움 → 초상화 숨김). `max(FogDelay, DialogueDuration)`(3초) 뒤 연기가 깔리는 순간 대사창을 내림. 카메라 변경 없음
+- 화자 「렌」, 대사 「조심해! 발 밑에서... 지독한 향이... / 맙소사, 꽃이 피어나고 있어!」 — Task의 `Pattern|Intro`에서 수정 가능
+
+### 작은 연꽃 폭탄 (2026-10-07)
+- **연기가 깔린 순간 딱 한 번**(`ScheduleLotus`): `LotusCountMin~Max`(10~15)개를 타일을 섞어 서로 다른 타일에 하나씩(타일 안 150cm 흩뿌림) 배치 → 맵 전체에 골고루 퍼지고 이웃 타일끼리 뭉치기도 함. 각각 `LotusSpawnDelayMin~Max`(1~2초) 뒤 작은 연꽃이 핌. 다 터지면 끝(반복 없음 — 예전 웨이브 반복 방식은 폐기) → `LotusFuseTime`(2초) 뒤 원형 폭발(반지름 = 연꽃 크기 `LotusRadius` 110, `LotusDamage` 5000 + **경직(`ApplyStagger`) + 매혹 1스택**, 넉다운 없음)
+- 연꽃 비주얼 = `AEchidnaBigFlowerActor`를 deferred 스폰으로 `PetalLength = LotusRadius`, `LeafCount = 0`. 폭발 = `AEchidnaFanZoneActor`를 `FanAngle 360 / Inner 0 / Range LotusRadius / RingCount 1 / TelegraphDuration = 퓨즈 / TelegraphOpacity 0`(예고 메시 안 보임 — 연꽃 자체가 예고)으로 재사용 → 판정 + `NS_EchidnaRetreatFan` 연출이 그대로 따라옴. 터지는 순간 연꽃은 사라짐
+- 마무리(Ending)는 예약·피어 있는 연꽃이 다 터진 뒤에 끝남. `ExitState`에서 남은 연꽃·장판 정리
+- 설정은 Task의 `Pattern|Lotus`
 
 ### "붙잡힘" 상태 (`ALoACharacter::bIsHeld`)
 - 기절(`ApplyStun`)과 같은 방식(캐스팅·사거리 이동 취소 + 제자리 정지)이지만 **시간 제한이 없다** — 건 쪽이 반드시 풀어야 함(랜잡은 `ExitState`에서 월드의 모든 `ALoACharacter`를 해제). 연출 훅 `OnHeldVisualChanged(bool)`
@@ -685,6 +719,9 @@
 - 비주얼은 전부 에셋 없이 `M_MirrorLaser` 색 주입(장판 PMC 고리, 사슬 Cylinder, 나비 PMC 날개 — 날개 폭 Y 스케일을 흔들어 날갯짓)
 - 파훼 성공 보상(무력화 등)은 아직 없음 — 결과만 로그(`[SwingChain] 사슬 끊음 — 파훼`)
 
+### 시작 대사 (2026-10-07)
+- 진입하면 대사창만 띄우고 보스는 제자리(`bIntroDone` false 동안 Tick이 바로 Running 반환). `DialogueDuration`(3초) 뒤 대사창을 내리고 보스가 사라지며 기존 흐름(Vanished → Appeared …) 시작. 카메라 변경 없음. 초상화 `T_EchidnaPortrait`
+
 ### StateTree 배치 (에디터 수동) — 랜잡과 동일
 - Root 자식으로 State `Swing`, Task `Echidna Swing Pattern` 하나(Boss/AIController 바인딩)
 - **Root에 On Tick Transition → Swing**, Condition `Boss Enrage Time Reached`(RemainingSeconds **220** = 3분 40초, PatternName `SwingPattern` 또는 State 이름 `Swing`)
@@ -696,9 +733,10 @@
 ### 흐름 (`FStateTreeTask_EchidnaMirrorLinkPattern`)
 1. 진입: 발동 표시(`Settlement50`) + `SetActiveTimedPattern`(시간 패턴과 서로 안 끊게), 보스 **사라짐**(`SetActorHiddenInGame` + 충돌 끔)
 2. `VanishDuration`(1초) 뒤 **레이드 시작 때 깔린 파란 테두리 2칸**에 동시 등장 — 거울은 외곽(`MarkerTileCoords[0]`), 보스는 안쪽(`[1]`) 타일 윗면에 거울을 바라보고 선다(패턴 내내 매 틱 그 자리 고정)
-3. 거울(`AEchidnaLinkMirrorActor`): `TrackDuration`(5초) 동안 노란 빛줄기로 플레이어 추적(`TrackingRotationSpeed` 45도/초, 거울 원반도 같이 회전) → 끝나면 **플레이어 강제 정지**(`SetHeldByPattern(true)`) + 거울 정면으로 빛 덩어리 직진
-4. 빛 덩어리가 플레이어에 닿으면(2D 거리 ≤ `OrbHitRadius` + 캡슐 반지름) 플레이어 타일 **노란 테두리**(`AHexTile::SetLinkHighlighted`) → 그 타일과 보스 타일이 **헥스 거리 1**이면 보스에게 날아가 **성공**
-5. **실패**: 플레이어에 못 닿고 `MaxTravelDistance`(5000) 초과(맵 밖), 또는 플레이어는 맞았지만 옆 칸에 보스가 없음(유저가 명시 안 해서 실패로 처리) → **전 타일 빨간 점멸**(`AHexArena::SetAllTilesDangerFlash` — 바닥 `ActivePoopMaterial` + 빨간 테두리, 타일 타입은 안 바뀜) + 모든 플레이어에게 **최대 HP × `FailDamageRatio`(10)** → `FailFlashDuration`(2초) 뒤 점멸 해제
+0. **시작 연출 (2026-10-07)**: 진입 즉시 보스 사라짐 + **대사창**(`ALoAPlayerController::ShowBossDialogue` → `UBossDialogueWidget`, 하단 중앙: `T_EchidnaPortrait` 초상화 + 붉은 이름 + 대사, C++ 트리, ZOrder 7, 페이드) + **시점 확대**(`CameraArmLength` 1700). `DialogueDuration`(4초, `VanishDuration`보다 길면 이게 기준)이 지나면 대사창을 내리고 거울·보스 등장. 대사 문구는 Task의 `DialogueSpeaker`/`DialogueLine`. `ExitState`에서 시점 복구 + 대사창 내림
+3. 거울(`AEchidnaLinkMirrorActor`): `TrackDuration`(5초) 동안 노란 빛줄기로 플레이어 추적(`TrackingRotationSpeed` 45도/초, 거울 원반도 같이 회전) → 끝나면 **플레이어 강제 정지**(`SetHeldByPattern(true)`) + 빛 덩어리 발사
+4. **빛은 타일 한 칸씩만 이동 (2026-10-07 규칙 변경)**: 1칸째 = 거울 타일의 이웃 중 거울 정면과 가장 맞는 타일(±30도 안에 없으면 허공으로 한 칸 나가 실패). **그 타일에 플레이어가 서 있어야 함**(= 거울과 플레이어가 헥스 거리 1 + 정면) → 도착하면 노란 테두리(`AHexTile::SetLinkHighlighted`) → 2칸째 = 보스 타일(플레이어 타일과 **헥스 거리 1**이어야 함) → 도착하면 **성공**
+5. **실패**: 첫 칸에 플레이어가 없음(2칸 이상 떨어짐/정면 아님), 또는 플레이어 옆 칸에 보스가 없음 — 빛은 그 칸까지만 가고 멈춤. (예전엔 빛이 직선으로 날아가 플레이어에 닿기만 하면 돼서 2칸 떨어져도 이어졌음. `MaxTravelDistance`/`OrbHitRadius`는 이제 미사용) → **전 타일 빨간 점멸**(`AHexArena::SetAllTilesDangerFlash` — 바닥 `ActivePoopMaterial` + 빨간 테두리, 타일 타입은 안 바뀜) + 모든 플레이어에게 **최대 HP × `FailDamageRatio`(10)** → `FailFlashDuration`(2초) 뒤 점멸 해제
 6. `EndDelay`(1초) 후 Succeeded. `ExitState`(끊겨도): **보스 다시 보이게**, 붙잡힘 해제, 노란 테두리·점멸 해제, 거울 제거, 잠금 해제
 - 성공했을 때의 보상(무력화 등)은 아직 없음 — 결과만 로그(`[LinkMirror] ... 성공`)
 - 테두리 우선순위: 위험 점멸·활성 오염(빨강) > 거울잇기(노랑) > 파란 테두리
@@ -734,14 +772,24 @@
 3. 모든 줄이 나오고 불길까지 다 꺼지면 `EndDelay` 후 Succeeded. `ExitState`(끊겨도): 카운터 결과 집계 로그(`파훼 성공/실패 — 카운터 N / 4`) → 줄 전부 파괴 → 보스 보이게, 카메라 줌·각도 복구, 큰 패턴 잠금 해제
 - **파훼 보상(무력화 등)과 실패 페널티는 아직 없음** — 결과 로그만. 레퍼런스의 "카운터 거울이 아닌 거울을 3번 치면 갈급" 디버프도 미구현
 
+### 시작 시네마틱 + 양쪽 거울 기둥 (2026-10-07)
+- `bPlayIntro`면 진입 직후(보스 사라짐·카메라 오버라이드는 그대로) **시네마틱이 끝나야 첫 줄 타이머(`Elapsed`)가 돈다**:
+  1. `ACameraActor`를 첫 줄이 나올 시작선 정면 `IntroCameraDistance`(650)·높이 `IntroCameraHeight`(200)에 스폰 → `SetViewTargetWithBlend`(`IntroBlendInTime` 0.5) 줌인. 플레이어 붙잡힘
+  2. 첫 줄이 나올 변의 **맵 안쪽**(외곽선에서 `IntroRowInset` 350 안 — 실제 줄 출발점은 맵 밖이라 바닥이 없음)에 연출용 줄(`AEchidnaMirrorWallActor::SetupDisplayRow` — 판정·불길·카운터 없음, 땅속에 숨김) → `PlayAppear`: 거울이 인덱스 순으로(`IntroAppearStagger` 0.12) **땅에서 돌면서 솟아오름**(`IntroRiseDuration` 0.7, `IntroSpinTurns` 1바퀴) → `IntroHoldTime`(0.6) 정지
+  3. 플레이어로 `SetViewTargetWithBlend`(`IntroZoomOutTime` 0.6, EaseInOut) **빠른 줌아웃** + 동시에 `PlayExit`: 정면 기준 **오른쪽(로컬 -Y, 인덱스 0)부터 차례로** 오른쪽으로 미끄러지며 작아져 사라짐
+  4. `FinishIntro`: 연출 줄 파괴, 카메라 `SetLifeSpan(0.5)`, 붙잡힘 해제, **양쪽 세로 거울 기둥**(`SpawnSideColumns`) → 패턴 시작
+- **세로 기둥**: 줄 양 끝 바깥(`RowWidth/2 + SideColumnGap` 60)에 진행 방향을 따라 출발 변~반대 변 길이만큼, 줄과 같은 간격으로 거의 맞닿게. 안쪽(통로)을 바라봄. 장식 전용(판정 없음), **상반신 없는 투명 유리 거울**(`SetupDisplayRow`의 `bGlass` → `GlassMirrorColor` 알파 0.22, 초상화·그림자 없음), 빠르게 솟아오른 뒤 패턴 끝(`ExitState`)에 파괴
+- 줄이 나오는 변 기하는 `ComputeRowGeometry()`로 공용화(SpawnWave·시네마틱·기둥이 같은 값)
+- `ExitState`가 중간에 끊겨도 연출 줄·카메라·기둥·붙잡힘을 정리
+
 ### AEchidnaMirrorWallActor — 한 웨이브
 - 액터 위치 = 시작선 중심(지면), +X = 진행 방향. 거울 줄은 `RowRoot`를 +X로 밀어 이동(`MoveSpeed` 350cm/s), 판정은 전부 액터 로컬 좌표(X = 진행 거리, Y = 좌우)
-- 거울 `MirrorCount`(7)개, 폭 `MirrorWidth`(180). **줄 폭 = 아레나 한 변 길이**(`SideCount × D` = 타일 4칸, 2120cm)에서 양쪽 `RowEdgeInset`(100)씩 뺀 값 → Task가 `Activate(..., RowWidth)`로 넘기면 `MirrorSpacing`을 그 폭에 맞춰 재계산(기본 약 290). 예전엔 간격 520으로 줄이 변보다 넓어서, 끝 거울이 카운터일 때 벽 너머(플레이어가 못 가는 곳)로 밀려와 칠 수 없었음. 줄은 변과 평행하게 중심선을 따라 가고 육각형은 가운데가 더 넓으므로 변 길이에 맞추면 끝까지 맵 안에 있다. 엔진 Cylinder를 Pitch 90으로 세운 얇은 타원판 + `M_MirrorLaser` 색. 그중 랜덤 1개가 **카운터 거울**(`CounterMirrorColor` HDR 청백색)
+- 거울 `MirrorCount`(7)개, 폭 `MirrorWidth`(**260**, 높이 `MirrorHeight` **380** — 2026-10-07 레퍼런스처럼 거의 맞닿게 키움, 예전 180/320). **줄 폭 = 아레나 한 변 길이**(`SideCount × D` = 타일 4칸, 2120cm)에서 양쪽 `RowEdgeInset`(100)씩 뺀 값 → Task가 `Activate(..., RowWidth)`로 넘기면 `MirrorSpacing`을 그 폭에 맞춰 재계산(기본 약 290). 예전엔 간격 520으로 줄이 변보다 넓어서, 끝 거울이 카운터일 때 벽 너머(플레이어가 못 가는 곳)로 밀려와 칠 수 없었음. 줄은 변과 평행하게 중심선을 따라 가고 육각형은 가운데가 더 넓으므로 변 길이에 맞추면 끝까지 맵 안에 있다. 엔진 Cylinder를 Pitch 90으로 세운 얇은 타원판 + `M_MirrorLaser` 색. 그중 랜덤 1개가 **카운터 거울**(`CounterMirrorColor` HDR 청백색)
 - 거울 메시 콜리전: `QueryOnly` + ObjectType `WorldDynamic` + **채널 응답 전부 Ignore** — 토네이도의 오브젝트 타입 오버랩(`AllDynamicObjects`)에만 잡히고 플레이어를 밀거나 클릭 트레이스를 가로채지 않음
 - **거울 속 에키드나 상반신**: 거울 앞면에 타원 팬 PMC(`CreatePortrait`)를 붙여 `M_EchidnaMirrorPortrait`(MCP로 생성 — Unlit·양면, `Portrait` 텍스처 × `Tint` → Emissive)를 입힘. 일반 거울 = `fx_l_mirror_sden_01_cl`, **카운터 거울만 좌우 반전본 `fx_l_mirror_sden_02_cl`**(반대 방향을 봄) + `CounterPortraitTint`로 청백색 발광. 텍스처 위치: `EchidnaModling/other/Mirror/materials/textures/fx/` (`sden_03`은 거울 테두리 장식, `mn_sdsm_00_mirror*`는 거울 프롭 재질). 타원이라 테두리 밖으로 안 삐져나오고, UV는 세로 반지름 기준으로 나눠 텍스처 비율 유지(가로는 가운데만 잘라 씀). 받침(Pivot)에 붙어 있어 쓰러질 때 같이 눕는다
 - **카운터**: 카운터 거울 컴포넌트를 맞았고, 그 거울에서 시전자 방향이 +X 기준 `CounterHalfAngle`(60) 이내면 성공 → 파란 `Counter!`(보스의 `SpawnCounterText`를 거울 위치로) + 줄 정지 + 거울 전부 뒤로 쓰러짐(받침 Pitch 0→90, `FallDuration`) → `FallenLingerDuration` 뒤 숨김
 - **거울 몸통**: 전진하는 줄에 닿으면 1회 `MirrorHitDamage`(10000) + 진행 방향으로 넉다운
-- **불길**: 외곽선(`FireStartDistance`)~현재 줄 × 줄 전체 폭 직사각형(PMC, `FireColor`). `FireTickInterval`(0.5초)마다 `FireTickDamage`(3000). **거울과 수명이 같다** — 거울이 사라지는 순간(쓰러진 뒤 `FallDuration + FallenLingerDuration` / 반대편 도착 즉시) `VanishRow()`가 거울 숨김 + 불길 끔 + Done을 한 번에 처리. (예전 `FireLingerDuration`·`Burning` 단계는 삭제) 빨리 카운터칠수록 불길이 좁다
+- **불길**: 외곽선(`FireStartDistance`)~현재 줄 × 줄 전체 폭 직사각형. **연출은 Niagara(2026-10-07)** — `FireVFX`(기본 `NS_EchidnaRetreatFan`)를 `FireVFXRefreshInterval`(0.8초, 이펙트 수명 약 1초보다 짧게)마다 `PatternVFX::SpawnRectArea`로 불길 영역 전체에 다시 깔아 계속 타오름(`FireVFXSpacing` 320, 최대 `FireVFXMaxCount` 50). 예전 PMC 메시(`FireColor`)는 `bShowFireMesh` 켤 때만. **카운터로 쓰러지는 순간 불길(데미지·연출) 꺼짐**, 반대편 도착 시 거울과 함께 꺼짐. `FireTickInterval`(0.5초)마다 `FireTickDamage`(3000). **거울과 수명이 같다** — 거울이 사라지는 순간(쓰러진 뒤 `FallDuration + FallenLingerDuration` / 반대편 도착 즉시) `VanishRow()`가 거울 숨김 + 불길 끔 + Done을 한 번에 처리. (예전 `FireLingerDuration`·`Burning` 단계는 삭제) 빨리 카운터칠수록 불길이 좁다
   - **여러 줄의 불길이 겹쳐도 중첩 안 됨**: `ALoACharacter::TryConsumeTickDamage(Source, Interval)` — 종류(`"MirrorWallFire"`)별 마지막 피격 시각을 캐릭터가 들고 있어 Interval(실제 시간, 광폭화 배율로 나눔)당 한 번만 통과. 같은 줄의 다음 틱을 프레임 오차로 놓치지 않게 90%만 요구. 다른 장판에도 Source 이름만 달리 해서 쓸 수 있음
 - 반대편까지 가면(카운터 실패) 거울과 불길이 함께 사라짐
 - **스스로 소멸하지 않는다** — Task가 결과를 센 뒤 파괴. 광폭화 규칙 준수(BeginPlay `CustomTimeDilation`, 전부 Tick 기반)
@@ -821,6 +869,10 @@
 - **매혹 상태는 `CharmedDuration`(5초)만 지속**: 3스택 도달 → `bIsCharmed=true` + `OnCharmedChanged(true)` 브로드캐스트 + 스택 감소 타이머 정지 + 5초 타이머 시작 → `EndCharm()`이 `bIsCharmed=false` 브로드캐스트하고 **스택을 0으로 통째 초기화**
   - 매혹 중 `AddCharmGauge()`는 **맨 앞에서 그냥 return** — 재히트로 5초가 연장되면 "매혹은 5초만"이 깨지고, 스택도 이미 최대라 할 일이 없음
 - `FOnCharmedChanged` 델리게이트는 3스택에 "도달하는 그 순간"과 `EndCharm()`에서만 브로드캐스트되므로 중복 호출이 없음
+
+### 매혹 상태 화면 연기 (2026-10-07)
+- 매혹 3스택 → `OnPlayerCharmedChanged(true)`에서 `SetScreenFogSource("Charm", true, 0.5)`, 끝나면(`EndCharm`·사망 모두 false 브로드캐스트) 끔. 랜잡·그네 연기와 같은 `UScreenFogWidget`
+- **연기는 출처별로 관리** — `ScreenFogSources`(TSet<FName>)에 하나라도 남아 있으면 연기 유지. 패턴은 기존 `SetScreenFog()`(= "Pattern" 출처), 매혹은 "Charm" 출처라 랜잡 도중 매혹이 풀려도 패턴 연기가 꺼지지 않음
 
 ### 매혹 상태 — "조종 불가 + 무작위 이동/스킬 사용" (`ALoAPlayerController::OnPlayerCharmedChanged`)
 - 넉다운/경직/기절과 달리 **완전히 멈추는 게 아니라 캐릭터가 제멋대로 움직이고 스킬을 씀** — 그래서 `IsActionLocked()`(Tick 맨 위에서 이동 처리 자체를 건너뛰는 조건)에는 **일부러 안 넣음**. 매혹 중에도 Tick의 `bAutoMoving` 처리 경로는 정상 작동해야 무작위 이동이 먹히기 때문
@@ -1028,6 +1080,7 @@
 ## 자주 쓰는 빌드 명령
 - 에디터 시작 시 "Asset Manager settings do not include an entry for assets of type GameFeatureData" 에러: MCP용 `AllToolsets` 플러그인이 `GameFeatures` 플러그인을 끌어와서 생김(게임 동작과 무관). `DefaultGame.ini` `[/Script/Engine.AssetManagerSettings]`에 `GameFeatureData` 스캔 항목(`/Game/Unused`)을 넣어 해결(2026-09-28)
 - ⚠️ **유니티 빌드 이름 충돌**: 여러 cpp를 한 덩어리로 합쳐 컴파일하므로 **익명 네임스페이스 헬퍼도 파일 간에 이름이 겹치면 C2084(이미 본문이 있음)**. 평소엔 다른 덩어리라 멀쩡하다가 새 파일을 추가해 묶음 조합이 바뀌는 순간 터진다(2026-09-28 `GetCapsuleRadius`가 PoopBeam·MirrorWall에 둘 다 있어서 발생 → 파일별 이름으로 변경). 헬퍼는 `GetPoopBeamCapsuleRadius`처럼 파일 고유 접두어를 붙일 것
+- ⚠️ **패키징 시 맵 목록**: 레벨 이동이 전부 `TSoftObjectPtr<UWorld>`(소프트 참조)라 쿡이 따라가지 않는다 → `DefaultGame.ini` `[/Script/UnrealEd.ProjectPackagingSettings]`의 `+MapsToCook`에 로비·보스 맵을 명시함(2026-10-06, 빠져 있어서 패키징 빌드에서 보스 맵 이동 실패). **새 레벨을 추가하면 여기에도 추가할 것**. 같은 이유로 C++ 생성자(ConstructorHelpers)·StateTree 소프트 경로로만 참조되는 패턴 VFX 폴더(`/Game/LostArk/Raid/Echidna/Pattern/VFX`)는 `+DirectoriesToAlwaysCook`에 넣음(2026-10-07) — **코드에서만 참조하는 새 에셋은 이 폴더에 두거나 여기 추가할 것**. `/Game/LostArk/UI`도 항상 쿡 — `T_PinkFog`(TSoftObjectPtr 기본값)가 빠져서 패키징 빌드의 랜잡·그네 연기가 연기 텍스처 대신 `FallbackColor` 핑크 단색 반투명으로 나왔음(정산 정지 흑백 초상화 `T_EchidnaPortrait_Gray`도 같은 이유로 빠져 있었음). **패키징 전 점검법**: `Source/LoA`의 `TEXT("/Game/...")` 경로를 전부 `ReferencedSet.txt`와 대조 쿡 결과는 `Saved/Cooked/Windows/LoA/Metadata/ReferencedSet.txt`로 확인
 - Bash에서 Build.bat을 부르면 경로 공백 때문에 실패 → PowerShell에서 `&`로 실행
 - `LoA.Build.cs`에 **`SlateCore`** 의존성 추가함(2026-09-24) — `FSlateBrush` 등 SlateCore 타입을 멤버로 들고 있으면 LNK2019(`FSlateBrush::FSlateBrush`)가 난다
 ```

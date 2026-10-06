@@ -95,6 +95,25 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
 	float TrackingRotationSpeed = 8.f;
 
+	// 추적 속도를 "플레이어 위치에서 장판이 쓸고 지나가는 속도"(cm/초)로도 보장 — 실제 각속도는
+	// max(TrackingRotationSpeed, TrackingSweepSpeed / 플레이어까지 거리). 기본 0 = 각속도만 사용(똥장판 추적 장판과 같은 방식·속도).
+	// 450으로 써봤더니 걸어서는 못 피할 만큼 빨라서 똥장판과 똑같이 맞춤(2026-10-07)
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror", meta = (ClampMin = "0.0"))
+	float TrackingSweepSpeed = 0.f;
+
+	// 따라잡기 — 장판과 플레이어 사이 각도가 벌어질수록 빨리 돈다. 각도 차가 TrackingCatchUpStartAngle 이하면 기본 각속도,
+	// TrackingCatchUpFullAngle 이상이면 TrackingCatchUpSpeed(도/초), 그 사이는 부드럽게 보간.
+	// 거울 가까이 있으면 조금만 움직여도 각도가 크게 벌어져 장판이 반대쪽에 남는데, 초당 8도로는 반대쪽에서 따라오는 데 20초 넘게 걸렸음.
+	// 가까이 따라붙은 뒤엔 기본 속도라 여전히 걸어서 빠져나갈 수 있다 (거울 패턴과 똥장판 추적 장판이 같은 값)
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror", meta = (ClampMin = "0.0"))
+	float TrackingCatchUpSpeed = 70.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float TrackingCatchUpStartAngle = 25.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float TrackingCatchUpFullAngle = 100.f;
+
 	// 방향 고정 후 레이저를 계속 유지/판정하는 시간 (초)
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
 	float FiringDuration = 1.0f;
@@ -153,6 +172,34 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "VFX")
 	TObjectPtr<UNiagaraSystem> BeamStartVFXSystem;
 
+	// 실제 레이저(판정) 연출 — 기본 NS_EchidnaMirrorLaser(NS_Lightning_Strike의 번개 줄기 이미터만 남겨 노랗게 바꾼 것).
+	// 발사 동안 C++가 LaserVFXRefreshInterval마다 거울에 붙은 짧은 줄기(1회 재생)를 새로 띄우고, 살아 있는 줄기 전부를
+	// 매 틱 거울 몸체 위치·조준 방향으로 맞춘다 — 겹쳐서 항상 거울과 이어진 한 줄기로 보이고, 패턴이 끝날 때까지(StopLaserBeam) 안 끊긴다.
+	// (나이아가라 무한 반복에 맡겼을 땐 유도 거울 레이저가 1초 만에 꺼졌음 — 원인 미확인이라 반복은 C++가 직접 담당)
+	// 이펙트 로컬 +X가 뻗는 방향, 길이·폭은 User.BeamSize(x=폭, y=길이), 수명 User.BeamLife.
+	// 4거울·8거울은 수평으로 사거리 끝까지, bSkyGuidedMode(유도 거울)는 공중의 거울에서 플레이어 쪽으로 사선으로.
+	// 비워두면 예전처럼 FiringColor 장판 메시로 표현
+	UPROPERTY(EditDefaultsOnly, Category = "VFX")
+	TObjectPtr<UNiagaraSystem> LaserVFX;
+
+	// 번개 줄기 스프라이트 폭 (cm) — 번개 텍스처는 스프라이트 안에서 가늘게 그려지므로 판정 폭(BeamHalfWidth*2)보다 넓게 잡는다.
+	// 원본 이펙트는 폭=길이(3000)인 정사각 스프라이트였음. 너무 가늘거나 두꺼워 보이면 이것만 조절
+	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "10.0"))
+	float LaserVFXWidth = 800.f;
+
+	// 줄기 하나를 새로 그리는 간격 (초) — 번개가 지지직 바뀌는 속도
+	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "0.02"))
+	float LaserVFXRefreshInterval = 0.12f;
+
+	// 줄기 수명 = LaserVFXRefreshInterval × 이 값 — 1보다 커야 다음 줄기가 나오기 전에 안 끊김
+	UPROPERTY(EditDefaultsOnly, Category = "VFX", meta = (ClampMin = "0.1"))
+	float LaserVFXLifeScale = 1.35f;
+
+	// 발사(판정) 중에도 FiringColor 장판 메시를 보여줄지 — 기본 false: 예고(반투명)만 메시, 판정은 LaserVFX로만.
+	// LaserVFX가 비어 있으면 자동으로 메시를 보여준다
+	UPROPERTY(EditDefaultsOnly, Category = "VFX")
+	bool bShowFiringMesh = false;
+
 	// StateTree Task가 "이 거울이 발사를 시작했는지" 폴링할 때 사용
 	bool HasFired() const { return Phase != EEchidnaMirrorPhase::Tracking; }
 
@@ -164,6 +211,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 
 private:
@@ -189,6 +237,19 @@ private:
 	FTimerHandle StopFiringTimerHandle;
 
 	float GetEffectiveBeamRange() const { return bSkyGuidedMode ? SkyGuidedBeamRange : MaxRange; }
+	// 지금 살아 있는 줄기들 — 매 틱 위치·방향을 맞추고, 끝난 것은 정리
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UNiagaraComponent>> LaserBeamComps;
+
+	bool bLaserBeamOn = false;
+	float LaserRefreshElapsed = 0.f;
+
+	bool ShouldShowFiringMesh() const { return bShowFiringMesh || !LaserVFX; }
+	void StartLaserBeam();
+	void TickLaserBeam(float DeltaTime);
+	void SpawnLaserBeamPiece();
+	bool ComputeLaserBeam(FVector& OutStart, FRotator& OutRotation, float& OutLength) const;
+	void StopLaserBeam();
 	void UpdateZoneTransform(float CurrentDistance);
 	void UpdateMirrorBodyRotation();
 	void BeginFiring();

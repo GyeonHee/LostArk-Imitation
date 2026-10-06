@@ -11,7 +11,9 @@
 
 AEchidnaTetherActor::AEchidnaTetherActor()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 판정 순간의 줄기 연출(뻗기 → 빨려 들어가기)에만 틱을 쓴다 — 평소엔 꺼둠
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
@@ -27,6 +29,15 @@ AEchidnaTetherActor::AEchidnaTetherActor()
 	ZoneMeshComp->SetCastShadow(false);
 	if (PlaneMeshFinder.Succeeded()) ZoneMeshComp->SetStaticMesh(PlaneMeshFinder.Object);
 	if (DefaultMatFinder.Succeeded()) ZoneMeshComp->SetMaterial(0, DefaultMatFinder.Object);
+
+	StrikeMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StrikeMeshComp"));
+	StrikeMeshComp->SetupAttachment(Root);
+	StrikeMeshComp->SetRelativeLocation(FVector(0.f, 0.f, 6.f));
+	StrikeMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StrikeMeshComp->SetCastShadow(false);
+	StrikeMeshComp->SetVisibility(false);
+	if (PlaneMeshFinder.Succeeded()) StrikeMeshComp->SetStaticMesh(PlaneMeshFinder.Object);
+	if (DefaultMatFinder.Succeeded()) StrikeMeshComp->SetMaterial(0, DefaultMatFinder.Object);
 }
 
 void AEchidnaTetherActor::BeginPlay()
@@ -68,8 +79,24 @@ void AEchidnaTetherActor::Activate(const FVector& InPullTarget, float InPullStre
 
 void AEchidnaTetherActor::PerformSnap()
 {
-	// 판정이 실제로 발동하는 순간 — 예상 범위(반투명)에서 실제 실행 범위(완전 불투명)로 전환
-	ApplyMeshColor(SnapColor, SnapOpacity);
+	// 판정이 실제로 발동하는 순간 — 예고 장판은 숨기고 핑크 줄기가 판정 길이만큼 뻗어 나간다
+	if (ZoneMeshComp)
+	{
+		ZoneMeshComp->SetVisibility(false);
+	}
+	if (StrikeMeshComp)
+	{
+		if (UMaterialInterface* Source = StrikeMeshComp->GetMaterial(0))
+		{
+			if (UMaterialInstanceDynamic* MID = StrikeMeshComp->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Source))
+			{
+				MID->SetVectorParameterValue(ColorParameterName, FLinearColor(StrikeColor.R, StrikeColor.G, StrikeColor.B, StrikeOpacity));
+			}
+		}
+		StrikeElapsed = 0.f;
+		SetStrikeLength(0.f);
+		SetActorTickEnabled(true);
+	}
 
 	UWorld* World = GetWorld();
 	if (World)
@@ -151,7 +178,59 @@ void AEchidnaTetherActor::FinishSnap()
 
 	// 불투명하게 바뀐 실행 범위를 LifeAfterSnap 동안 그대로 보여준 뒤 소멸.
 	// StateTree가 DidHit()을 읽기 전에 사라지면 "아무도 안 맞음"으로 오판하므로 소멸은 여기서야 예약한다
-	SetLifeSpan(LifeAfterSnap);
+	// 줄기가 아직 빨려 들어가는 중이면 그게 끝날 때까지는 남아 있어야 한다 (리본처럼 판정 직후 바로 끝나는 경우)
+	const float RemainingStrike = StrikeElapsed >= 0.f ? FMath::Max(GetStrikeTotalDuration() - StrikeElapsed, 0.f) / FMath::Max(CustomTimeDilation, 0.01f) : 0.f;
+	SetLifeSpan(FMath::Max(LifeAfterSnap, RemainingStrike + 0.05f));
+}
+
+void AEchidnaTetherActor::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	if (StrikeElapsed < 0.f) return;
+
+	// DeltaTime은 CustomTimeDilation(광폭화)이 이미 곱해진 값 — 연출도 같이 빨라진다
+	StrikeElapsed += DeltaTime;
+
+	float Alpha;
+	if (StrikeElapsed < StrikeExtendDuration)
+	{
+		// 뻗기 — 빠르게 튀어나갔다가 끝에서 감속 (ease-out)
+		Alpha = FMath::InterpEaseOut(0.f, 1.f, StrikeElapsed / StrikeExtendDuration, 2.f);
+	}
+	else if (StrikeElapsed < StrikeExtendDuration + StrikeHoldDuration)
+	{
+		Alpha = 1.f;
+	}
+	else
+	{
+		// 빨려 들어가기 — 처음엔 천천히, 갈수록 빠르게 (ease-in)
+		const float T = StrikeRetractDuration > 0.f ? (StrikeElapsed - StrikeExtendDuration - StrikeHoldDuration) / StrikeRetractDuration : 1.f;
+		Alpha = 1.f - FMath::InterpEaseIn(0.f, 1.f, FMath::Clamp(T, 0.f, 1.f), 2.f);
+	}
+
+	SetStrikeLength(TetherRange * Alpha);
+
+	if (StrikeElapsed >= GetStrikeTotalDuration())
+	{
+		SetStrikeLength(0.f);
+		StrikeElapsed = -1.f;
+		SetActorTickEnabled(false);
+	}
+}
+
+void AEchidnaTetherActor::SetStrikeLength(float Length)
+{
+	if (!StrikeMeshComp) return;
+
+	// 뿌리는 항상 원점(보스 쪽)에 고정하고 끝만 움직인다 — Plane은 100x100(cm) 중심 기준이라 길이 절반만큼 앞으로
+	if (Length < 1.f)
+	{
+		StrikeMeshComp->SetVisibility(false);
+		return;
+	}
+	StrikeMeshComp->SetVisibility(true);
+	StrikeMeshComp->SetRelativeLocation(FVector(Length * 0.5f, 0.f, 6.f));
+	StrikeMeshComp->SetRelativeScale3D(FVector(Length / 100.f, (TetherHalfWidth * 2.f) / 100.f, 1.f));
 }
 
 void AEchidnaTetherActor::ApplyMeshColor(const FLinearColor& Color, float Opacity)

@@ -2,6 +2,10 @@
 
 #include "LoAPlayerController.h"
 #include "UI/ScreenFogWidget.h"
+#include "UI/BossDialogueWidget.h"
+#include "UI/SlotDragVisualWidget.h"
+#include "Components/Image.h"
+#include "Framework/Application/SlateApplication.h"
 #include "UI/ZoneNoticeWidget.h"
 #include "UI/CinematicOverlayWidget.h"
 #include "UI/DefeatWidget.h"
@@ -646,6 +650,21 @@ void ALoAPlayerController::OnBossHPChanged(double NewHP, double NewMaxHP)
 
 void ALoAPlayerController::SetScreenFog(bool bEnable, float FadeTime)
 {
+	SetScreenFogSource(TEXT("Pattern"), bEnable, FadeTime);
+}
+
+void ALoAPlayerController::SetScreenFogSource(FName Source, bool bEnable, float FadeTime)
+{
+	if (bEnable)
+	{
+		ScreenFogSources.Add(Source);
+	}
+	else
+	{
+		ScreenFogSources.Remove(Source);
+	}
+	bEnable = ScreenFogSources.Num() > 0;
+
 	if (bEnable && !ScreenFogWidget && IsLocalController())
 	{
 		ScreenFogWidget = CreateWidget<UScreenFogWidget>(this, UScreenFogWidget::StaticClass());
@@ -660,6 +679,33 @@ void ALoAPlayerController::SetScreenFog(bool bEnable, float FadeTime)
 
 	FogTargetOpacity = bEnable ? 1.f : 0.f;
 	FogFadeSpeed = FadeTime > 0.f ? 1.f / FadeTime : 1000.f;
+}
+
+void ALoAPlayerController::ShowBossDialogue(const FText& Speaker, const FText& Line, UTexture2D* Portrait)
+{
+	if (!IsLocalController()) return;
+
+	if (!BossDialogueWidget)
+	{
+		BossDialogueWidget = CreateWidget<UBossDialogueWidget>(this, UBossDialogueWidget::StaticClass());
+		if (!BossDialogueWidget) return;
+	}
+	// HUD(0)·미니맵(5)보다 위, 알림 띠(8)보다 아래
+	if (!BossDialogueWidget->IsInViewport())
+	{
+		BossDialogueWidget->AddToViewport(7);
+	}
+	BossDialogueWidget->SetDialogue(Speaker, Line);
+	BossDialogueWidget->SetPortrait(Portrait);
+	BossDialogueWidget->FadeIn();
+}
+
+void ALoAPlayerController::HideBossDialogue()
+{
+	if (BossDialogueWidget)
+	{
+		BossDialogueWidget->FadeOut();
+	}
 }
 
 void ALoAPlayerController::ShowTimedNotice(const FText& Title, const FText& Message, float Duration)
@@ -870,9 +916,13 @@ void ALoAPlayerController::OnPlayerCharmedChanged(bool bCharmed)
 
 		PerformRandomCharmAction();
 		GetWorldTimerManager().SetTimer(CharmConfusionTimerHandle, this, &ALoAPlayerController::PerformRandomCharmAction, CharmActionInterval, true);
+
+		// 매혹 중엔 화면에 핑크 연기 — 패턴 연기와 출처를 나눠서 서로 끄지 않게
+		SetScreenFogSource(TEXT("Charm"), true, 0.5f);
 	}
 	else
 	{
+		SetScreenFogSource(TEXT("Charm"), false, 0.5f);
 		GetWorldTimerManager().ClearTimer(CharmConfusionTimerHandle);
 		GetWorldTimerManager().ClearTimer(CharmSkillReleaseTimerHandle);
 
@@ -1022,6 +1072,9 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// HUD 슬롯 드래그 — 조작 불가 상태여도 놓는 처리는 돼야 하므로 맨 앞
+	UpdateSlotDrag();
+
 	// 폰 체크보다 앞 — 인트로는 폰이 빙의되기 전부터 카메라를 움직여야 한다
 	UpdateRaidIntro(DeltaSeconds);
 	UpdateDefeat(DeltaSeconds);
@@ -1121,6 +1174,12 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 void ALoAPlayerController::OnInputStarted()
 {
+	// HUD 슬롯 위 클릭은 이동으로 쓰지 않는다 (드래그 스왑 시작)
+	if (ConsumeHUDSlotPress())
+	{
+		return;
+	}
+
 	// 매혹 중엔 IsActionLocked()에 안 걸려도(진짜 조종불능이 아니라 "무작위 대신 행동"이라 Tick의 이동 처리는
 	// 그대로 둬야 함) 실제 플레이어 클릭 입력만은 씹혀야 함 — 그래서 여기 입력 핸들러들에서만 별도 체크
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
@@ -1154,6 +1213,11 @@ void ALoAPlayerController::OnInputStarted()
 
 void ALoAPlayerController::OnSetDestinationTriggered()
 {
+	if (bSlotPressActive)
+	{
+		return;
+	}
+
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
@@ -1283,6 +1347,16 @@ void ALoAPlayerController::OnDashInput()
 
 void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 {
+	// 기본공격(마우스)이 HUD 슬롯 위에서 눌렸으면 공격하지 않는다 — 슬롯 클릭·드래그 스왑으로 처리
+	if (SlotIndex == USkillManagerComponent::BasicAttackSlotIndex)
+	{
+		bBasicAttackSuppressed = ConsumeHUDSlotPress();
+		if (bBasicAttackSuppressed)
+		{
+			return;
+		}
+	}
+
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
@@ -1310,6 +1384,11 @@ void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)
 
 void ALoAPlayerController::OnSkillKeyHeld(int32 SlotIndex)
 {
+	if (SlotIndex == USkillManagerComponent::BasicAttackSlotIndex && bBasicAttackSuppressed)
+	{
+		return;
+	}
+
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
 	{
 		return;
@@ -1323,6 +1402,12 @@ void ALoAPlayerController::OnSkillKeyHeld(int32 SlotIndex)
 
 void ALoAPlayerController::OnSkillKeyUp(int32 SlotIndex)
 {
+	if (SlotIndex == USkillManagerComponent::BasicAttackSlotIndex && bBasicAttackSuppressed)
+	{
+		bBasicAttackSuppressed = false;
+		return;
+	}
+
 	if (USkillManagerComponent* SM = GetSkillManager())
 	{
 		SM->HandleKeyUp(SlotIndex);
@@ -1336,4 +1421,212 @@ USkillManagerComponent* ALoAPlayerController::GetSkillManager() const
 		return Char->SkillManager;
 	}
 	return nullptr;
+}
+
+// ─── HUD 슬롯 클릭·드래그 스왑 ──────────────────────────────────────────────
+
+namespace
+{
+	// 그룹별 슬롯 위젯 이름 (WBP_HUD) — 스킬은 순번이 곧 스킬 슬롯 번호(0=Q ... 7=F)
+	const TCHAR* const HUDSkillBorders[] = { TEXT("Border_Q"), TEXT("Border_W"), TEXT("Border_E"), TEXT("Border_R"),
+		TEXT("Border_A"), TEXT("Border_S"), TEXT("Border_D"), TEXT("Border_F") };
+	const TCHAR* const HUDSkillImages[] = { TEXT("Img_Q"), TEXT("Img_W"), TEXT("Img_E"), TEXT("Img_R"),
+		TEXT("Img_A"), TEXT("Img_S"), TEXT("Img_D"), TEXT("Img_F") };
+	const TCHAR* const HUDItemBorders[] = { TEXT("Border_F1"), TEXT("Border_5"), TEXT("Border_6"), TEXT("Border_7"), TEXT("Border_8"), TEXT("Border_9") };
+	const TCHAR* const HUDItemImages[] = { TEXT("Img_F1"), TEXT("Img_5"), TEXT("Img_6"), TEXT("Img_7"), TEXT("Img_8"), TEXT("Img_9") };
+	const TCHAR* const HUDBattleBorders[] = { TEXT("Border_1"), TEXT("Border_2"), TEXT("Border_3"), TEXT("Border_4") };
+	const TCHAR* const HUDBattleImages[] = { TEXT("Img_1"), TEXT("Img_2"), TEXT("Img_3"), TEXT("Img_4") };
+	const TCHAR* const HUDOtherBorders[] = { TEXT("Border_Dash"), TEXT("Border_GetUp") };
+
+	constexpr int32 HUDGroupSkill = 0;
+	constexpr int32 HUDGroupItem = 1;
+	constexpr int32 HUDGroupBattle = 2;
+	constexpr int32 HUDGroupOther = 3;
+
+	// 드래그로 인정하는 최소 이동 (화면 픽셀) — 그보다 짧으면 그냥 클릭
+	constexpr float HUDSlotDragThreshold = 6.f;
+
+	const TCHAR* GetHUDSlotImageName(int32 Group, int32 Index)
+	{
+		switch (Group)
+		{
+		case HUDGroupSkill:  return Index >= 0 && Index < UE_ARRAY_COUNT(HUDSkillImages) ? HUDSkillImages[Index] : nullptr;
+		case HUDGroupItem:   return Index >= 0 && Index < UE_ARRAY_COUNT(HUDItemImages) ? HUDItemImages[Index] : nullptr;
+		case HUDGroupBattle: return Index >= 0 && Index < UE_ARRAY_COUNT(HUDBattleImages) ? HUDBattleImages[Index] : nullptr;
+		default:             return nullptr;
+		}
+	}
+}
+
+bool ALoAPlayerController::FindHUDSlotUnderCursor(int32& OutGroup, int32& OutIndex) const
+{
+	if (!HUDWidget || !HUDWidget->IsInViewport() || !FSlateApplication::IsInitialized()) return false;
+
+	// Geometry는 데스크톱 절대 좌표 — 커서도 같은 공간으로 비교
+	const FVector2D Cursor = FSlateApplication::Get().GetCursorPos();
+
+	auto TestGroup = [&](const TCHAR* const* Names, int32 Count, int32 Group) -> bool
+	{
+		for (int32 i = 0; i < Count; ++i)
+		{
+			const UWidget* Widget = HUDWidget->GetWidgetFromName(FName(Names[i]));
+			if (!Widget || !Widget->IsVisible()) continue;
+			if (Widget->GetCachedGeometry().IsUnderLocation(Cursor))
+			{
+				OutGroup = Group;
+				OutIndex = i;
+				return true;
+			}
+		}
+		return false;
+	};
+
+	return TestGroup(HUDSkillBorders, UE_ARRAY_COUNT(HUDSkillBorders), HUDGroupSkill)
+		|| TestGroup(HUDItemBorders, UE_ARRAY_COUNT(HUDItemBorders), HUDGroupItem)
+		|| TestGroup(HUDBattleBorders, UE_ARRAY_COUNT(HUDBattleBorders), HUDGroupBattle)
+		|| TestGroup(HUDOtherBorders, UE_ARRAY_COUNT(HUDOtherBorders), HUDGroupOther);
+}
+
+bool ALoAPlayerController::ConsumeHUDSlotPress()
+{
+	// 이미 같은 클릭을 처리 중 (이동·기본공격이 같은 버튼일 때 두 번 불림)
+	if (bSlotPressActive) return true;
+
+	int32 Group = -1, Index = -1;
+	if (!FindHUDSlotUnderCursor(Group, Index)) return false;
+
+	// 드래그는 왼쪽 버튼으로만. 다른 버튼은 클릭만 먹고 끝
+	if (IsInputKeyDown(EKeys::LeftMouseButton) && Group != HUDGroupOther)
+	{
+		bSlotPressActive = true;
+		bSlotDragging = false;
+		SlotPressGroup = Group;
+		SlotPressIndex = Index;
+		float X = 0.f, Y = 0.f;
+		GetMousePosition(X, Y);
+		SlotPressMouse = FVector2D(X, Y);
+	}
+	return true;
+}
+
+bool ALoAPlayerController::GetHUDSlotIconBrush(int32 Group, int32 Index, FSlateBrush& OutBrush) const
+{
+	const TCHAR* ImageName = GetHUDSlotImageName(Group, Index);
+	const UImage* Image = (HUDWidget && ImageName) ? Cast<UImage>(HUDWidget->GetWidgetFromName(FName(ImageName))) : nullptr;
+	if (!Image) return false;
+	OutBrush = Image->GetBrush();
+	return OutBrush.GetResourceObject() != nullptr;
+}
+
+void ALoAPlayerController::UpdateSlotDrag()
+{
+	if (!bSlotPressActive) return;
+
+	float X = 0.f, Y = 0.f;
+	const bool bHasMouse = GetMousePosition(X, Y);
+	const FVector2D Mouse(X, Y);
+
+	if (!IsInputKeyDown(EKeys::LeftMouseButton))
+	{
+		FinishSlotDrag();
+		return;
+	}
+
+	if (!bSlotDragging && bHasMouse && FVector2D::Distance(Mouse, SlotPressMouse) >= HUDSlotDragThreshold)
+	{
+		// 빈 슬롯은 끌 게 없다
+		FSlateBrush Brush;
+		if (!GetHUDSlotIconBrush(SlotPressGroup, SlotPressIndex, Brush))
+		{
+			return;
+		}
+
+		// 쿨타임 중인 스킬은 집어 들 수도 없다
+		if (SlotPressGroup == HUDGroupSkill)
+		{
+			const USkillManagerComponent* SM = GetSkillManager();
+			if (SM && SM->IsSlotOnCooldown(SlotPressIndex))
+			{
+				return;
+			}
+		}
+
+		bSlotDragging = true;
+		if (!SlotDragVisual)
+		{
+			SlotDragVisual = CreateWidget<USlotDragVisualWidget>(this, USlotDragVisualWidget::StaticClass());
+		}
+		if (SlotDragVisual)
+		{
+			SlotDragVisual->SetIconBrush(Brush);
+			if (!SlotDragVisual->IsInViewport())
+			{
+				// 스킬트리(10)·알림(11)보다 위
+				SlotDragVisual->AddToViewport(20);
+			}
+			SlotDragVisual->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
+		}
+	}
+
+	if (bSlotDragging && SlotDragVisual && bHasMouse)
+	{
+		SlotDragVisual->SetPositionInViewport(Mouse, true);
+	}
+}
+
+void ALoAPlayerController::FinishSlotDrag()
+{
+	if (bSlotDragging)
+	{
+		int32 Group = -1, Index = -1;
+		// 같은 종류 슬롯 위에서 놓았을 때만 스왑 — 스킬은 스킬끼리, 아이템은 아이템끼리, 배틀아이템은 배틀아이템끼리
+		if (FindHUDSlotUnderCursor(Group, Index) && Group == SlotPressGroup && Index != SlotPressIndex)
+		{
+			SwapHUDSlots(Group, SlotPressIndex, Index);
+		}
+	}
+
+	if (SlotDragVisual)
+	{
+		SlotDragVisual->RemoveFromParent();
+	}
+	bSlotPressActive = false;
+	bSlotDragging = false;
+	SlotPressGroup = -1;
+	SlotPressIndex = -1;
+}
+
+void ALoAPlayerController::SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB)
+{
+	if (Group == HUDGroupSkill)
+	{
+		// 스킬은 실제 슬롯(인스턴스·쿨타임)을 맞바꾸고, 아이콘은 OnSkillSlotChanged로 HUD가 갱신
+		if (USkillManagerComponent* SM = GetSkillManager())
+		{
+			const bool bOnCooldown = SM->IsSlotOnCooldown(IndexA) || SM->IsSlotOnCooldown(IndexB);
+			if (!SM->SwapSkillSlots(IndexA, IndexB))
+			{
+				ShowTimedNotice(FText::FromString(bOnCooldown
+					? TEXT("재사용 대기 중인 스킬은 옮길 수 없습니다.")
+					: TEXT("스킬 사용 중에는 슬롯을 바꿀 수 없습니다.")), FText::GetEmpty(), 1.5f);
+			}
+		}
+		return;
+	}
+
+	// 아이템·배틀아이템은 아직 아이템 시스템이 없어 아이콘(브러시)만 맞바꾼다
+	const TCHAR* NameA = GetHUDSlotImageName(Group, IndexA);
+	const TCHAR* NameB = GetHUDSlotImageName(Group, IndexB);
+	UImage* ImageA = (HUDWidget && NameA) ? Cast<UImage>(HUDWidget->GetWidgetFromName(FName(NameA))) : nullptr;
+	UImage* ImageB = (HUDWidget && NameB) ? Cast<UImage>(HUDWidget->GetWidgetFromName(FName(NameB))) : nullptr;
+	if (!ImageA || !ImageB) return;
+
+	const FSlateBrush BrushA = ImageA->GetBrush();
+	const FSlateBrush BrushB = ImageB->GetBrush();
+	const FLinearColor TintA = ImageA->GetColorAndOpacity();
+	const FLinearColor TintB = ImageB->GetColorAndOpacity();
+	ImageA->SetBrush(BrushB);
+	ImageB->SetBrush(BrushA);
+	ImageA->SetColorAndOpacity(TintB);
+	ImageB->SetColorAndOpacity(TintA);
 }

@@ -5,6 +5,8 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 #include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/OverlapResult.h"
 #include "DrawDebugHelpers.h"
@@ -12,6 +14,17 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "LoACharacter.h"
 #include "LoA.h"
+
+namespace
+{
+	// 따라잡기 각속도 — 각도 차가 클수록 빠르게 (거울·똥장판 추적 장판 공용 규칙)
+	float GetMirrorCatchUpSpeed(float BaseSpeed, float CatchUpSpeed, float StartAngle, float FullAngle, const FRotator& Current, const FRotator& Target)
+	{
+		const float Diff = FMath::Abs(FRotator::NormalizeAxis(Target.Yaw - Current.Yaw));
+		const float Alpha = FMath::SmoothStep(StartAngle, FMath::Max(StartAngle + 1.f, FullAngle), Diff);
+		return FMath::Max(BaseSpeed, FMath::Lerp(BaseSpeed, CatchUpSpeed, Alpha));
+	}
+}
 
 AEchidnaMirrorActor::AEchidnaMirrorActor()
 {
@@ -46,6 +59,10 @@ AEchidnaMirrorActor::AEchidnaMirrorActor()
 	ZoneMeshComp->SetCastShadow(false);
 	if (PlaneMeshFinder.Succeeded()) ZoneMeshComp->SetStaticMesh(PlaneMeshFinder.Object);
 	if (DefaultMatFinder.Succeeded()) ZoneMeshComp->SetMaterial(0, DefaultMatFinder.Object);
+
+	// 레이저 판정 연출 (NS_Lightning_Strike 복제 → 노랑) — 4거울·8거울·유도 거울 공용
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> LaserVFXFinder(TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaMirrorLaser.NS_EchidnaMirrorLaser"));
+	if (LaserVFXFinder.Succeeded()) LaserVFX = LaserVFXFinder.Object;
 }
 
 void AEchidnaMirrorActor::BeginPlay()
@@ -55,6 +72,18 @@ void AEchidnaMirrorActor::BeginPlay()
 	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
 	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
 	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
+
+	// 8거울은 나중 차례 거울을 미리 스폰만 해두고 Activate()를 늦게 부른다 — 그 전엔 장판(엔진 Plane 기본 흰색)이 보이면 안 됨
+	if (!bActivated && ZoneMeshComp)
+	{
+		ZoneMeshComp->SetVisibility(false);
+	}
+}
+
+void AEchidnaMirrorActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	StopLaserBeam();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator)
@@ -75,6 +104,12 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 		Phase = EEchidnaMirrorPhase::Firing;
 		ApplyPhaseVisuals(FiringZoneMaterial, FiringColor, FiringOpacity);
 		UpdateZoneTransform(SkyGuidedBeamRange);
+		if (ZoneMeshComp)
+		{
+			// 유도 거울은 예고 단계가 없음 — 판정은 거울에서 이어진 번개 줄기로만 보인다
+			ZoneMeshComp->SetVisibility(ShouldShowFiringMesh());
+		}
+		StartLaserBeam();
 		UpdateMirrorBodyRotation();
 
 		ApplyLaserDamageTick();
@@ -89,6 +124,10 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 	}
 
 	Phase = EEchidnaMirrorPhase::Tracking;
+	if (ZoneMeshComp)
+	{
+		ZoneMeshComp->SetVisibility(true);
+	}
 	ApplyPhaseVisuals(TrackingZoneMaterial, TrackingColor, ZoneOpacity);
 
 	if (bLockDirectionOnSpawn)
@@ -163,11 +202,13 @@ void AEchidnaMirrorActor::Tick(float DeltaTime)
 
 		// 몸체 회전은 지연/이동 여부와 무관하게 매 틱 갱신 — 스폰 직후 대기 중에도 이미 플레이어를 쳐다보고 있음
 		UpdateMirrorBodyRotation();
+		TickLaserBeam(DeltaTime);
 		return;
 	}
 
 	if (Phase != EEchidnaMirrorPhase::Tracking)
 	{
+		TickLaserBeam(DeltaTime);
 		return;
 	}
 
@@ -179,9 +220,15 @@ void AEchidnaMirrorActor::Tick(float DeltaTime)
 			ToPlayer.Z = 0.f;
 			if (!ToPlayer.IsNearlyZero())
 			{
-				// 즉시 스냅하지 않고 일정 각속도로 따라가게 — 대시 같은 순간이동에도 즉시 안 꺾임
+				// 즉시 스냅하지 않고 일정 속도로 따라가게 — 대시 같은 순간이동에도 즉시 안 꺾임.
+				// 플레이어 위치에서의 쓸고 지나가는 속도(TrackingSweepSpeed cm/s)를 각속도로 환산해, 가까이 있을수록 빨리 돈다
+				const float Distance = FMath::Max(ToPlayer.Size(), 100.f);
+				const float SweepDegPerSec = FMath::RadiansToDegrees(TrackingSweepSpeed / Distance);
 				const FRotator TargetRotation = ToPlayer.GetSafeNormal().Rotation();
-				SetActorRotation(FMath::RInterpConstantTo(GetActorRotation(), TargetRotation, DeltaTime, TrackingRotationSpeed));
+				const float CatchUp = GetMirrorCatchUpSpeed(TrackingRotationSpeed, TrackingCatchUpSpeed,
+					TrackingCatchUpStartAngle, TrackingCatchUpFullAngle, GetActorRotation(), TargetRotation);
+				const float RotationSpeed = FMath::Max(CatchUp, SweepDegPerSec);
+				SetActorRotation(FMath::RInterpConstantTo(GetActorRotation(), TargetRotation, DeltaTime, RotationSpeed));
 			}
 			UpdateZoneTransform(FMath::Min(ToPlayer.Size(), MaxRange));
 			UpdateMirrorBodyRotation();
@@ -245,6 +292,13 @@ void AEchidnaMirrorActor::BeginFiring()
 	UpdateZoneTransform(GetEffectiveBeamRange());
 
 	ApplyPhaseVisuals(FiringZoneMaterial, FiringColor, FiringOpacity);
+
+	// 판정은 번개 이펙트로만 — 예고 장판(반투명)은 여기서 숨긴다
+	if (ZoneMeshComp && !ShouldShowFiringMesh())
+	{
+		ZoneMeshComp->SetVisibility(false);
+	}
+	StartLaserBeam();
 
 	if (BeamStartVFXSystem)
 	{
@@ -342,6 +396,7 @@ void AEchidnaMirrorActor::ApplyLaserDamageTick()
 	// 하늘 유도 모드는 틱 수 제한 없이 StopRepeating()이 불릴 때까지 무한 반복 발사
 	if (bSkyGuidedMode)
 	{
+
 		if (bStopRequested)
 		{
 			FinishFiring();
@@ -360,6 +415,7 @@ void AEchidnaMirrorActor::FinishFiring()
 	GetWorldTimerManager().ClearTimer(DamageTimerHandle);
 
 	Phase = EEchidnaMirrorPhase::Done;
+	StopLaserBeam();
 
 	if (ZoneMeshComp)
 	{
@@ -394,4 +450,93 @@ void AEchidnaMirrorActor::ApplyPhaseVisuals(UMaterialInterface* BaseMaterial, co
 	{
 		MID->SetVectorParameterValue(ColorParameterName, FLinearColor(Color.R, Color.G, Color.B, InZoneOpacity));
 	}
+}
+
+void AEchidnaMirrorActor::StartLaserBeam()
+{
+	if (!LaserVFX) return;
+	bLaserBeamOn = true;
+	LaserRefreshElapsed = 0.f;
+	SpawnLaserBeamPiece();
+}
+
+void AEchidnaMirrorActor::TickLaserBeam(float DeltaTime)
+{
+	// 끝난 줄기 정리 (bAutoDestroy라 재생이 끝나면 스스로 파괴됨)
+	LaserBeamComps.RemoveAll([](const TObjectPtr<UNiagaraComponent>& Comp) { return !IsValid(Comp) || Comp->IsComplete(); });
+
+	if (bLaserBeamOn)
+	{
+		// DeltaTime은 CustomTimeDilation(광폭화)이 곱해진 값 — 갱신도 같이 빨라진다
+		LaserRefreshElapsed += DeltaTime;
+		const float Interval = FMath::Max(LaserVFXRefreshInterval, 0.02f);
+		if (LaserRefreshElapsed >= Interval)
+		{
+			LaserRefreshElapsed = FMath::Fmod(LaserRefreshElapsed, Interval);
+			SpawnLaserBeamPiece();
+		}
+	}
+
+	// 살아 있는 줄기는 전부 지금 거울 위치·조준 방향으로 — 유도 거울이 움직이고 돌아도 항상 거울과 이어져 있음
+	FVector Start;
+	FRotator Rotation;
+	float Length;
+	if (LaserBeamComps.Num() > 0 && ComputeLaserBeam(Start, Rotation, Length))
+	{
+		for (UNiagaraComponent* Comp : LaserBeamComps)
+		{
+			Comp->SetWorldLocationAndRotation(Start, Rotation);
+		}
+	}
+}
+
+bool AEchidnaMirrorActor::ComputeLaserBeam(FVector& OutStart, FRotator& OutRotation, float& OutLength) const
+{
+	const FVector ActorLoc = GetActorLocation();
+
+	// 시작점은 거울 몸체 중심(액터보다 위에 떠 있음), 끝점은 판정 박스의 끝
+	OutStart = MirrorMeshComp ? MirrorMeshComp->GetComponentLocation() : ActorLoc;
+	FVector End = ActorLoc + GetActorForwardVector() * GetEffectiveBeamRange();
+	if (!bSkyGuidedMode)
+	{
+		// 4거울·8거울은 바닥과 평행한 수평 레이저 — 거울 높이 그대로 사거리 끝까지
+		End.Z = OutStart.Z;
+	}
+
+	const FVector ToEnd = End - OutStart;
+	OutLength = ToEnd.Size();
+	if (OutLength < KINDA_SMALL_NUMBER) return false;
+	OutRotation = ToEnd.Rotation();
+	return true;
+}
+
+void AEchidnaMirrorActor::SpawnLaserBeamPiece()
+{
+	if (!LaserVFX || !RootComponent) return;
+
+	FVector Start;
+	FRotator Rotation;
+	float Length;
+	if (!ComputeLaserBeam(Start, Rotation, Length)) return;
+
+	// 거울에 붙여서(이미터도 로컬 공간) 거울이 움직이면 줄기가 같이 따라감. 1회 재생 후 스스로 파괴
+	UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		LaserVFX, RootComponent, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
+		EAttachLocation::KeepRelativeOffset, true, false);
+	if (!Comp) return;
+
+	// 광폭화 중이면 줄기 수명도 같이 짧아지게 (Niagara는 액터 CustomTimeDilation을 안 따름)
+	const float Life = FMath::Max(LaserVFXRefreshInterval, 0.02f) * LaserVFXLifeScale / FMath::Max(CustomTimeDilation, 0.01f);
+	Comp->SetWorldLocationAndRotation(Start, Rotation);
+	Comp->SetVariableVec2(TEXT("User.BeamSize"), FVector2D(LaserVFXWidth, Length));
+	Comp->SetVariableFloat(TEXT("User.BeamLife"), Life);
+	Comp->SetVariableFloat(TEXT("User.Loop Duration"), Life);
+	Comp->Activate(true);
+	LaserBeamComps.Add(Comp);
+}
+
+void AEchidnaMirrorActor::StopLaserBeam()
+{
+	// 새 줄기만 멈춘다 — 이미 띄운 줄기는 수명(약 0.16초)대로 사라짐
+	bLaserBeamOn = false;
 }

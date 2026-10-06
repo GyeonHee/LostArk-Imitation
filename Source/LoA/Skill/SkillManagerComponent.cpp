@@ -643,6 +643,37 @@ void USkillManagerComponent::ClearSlotInternal(int32 SlotIndex, bool bBroadcast)
     if (bBroadcast) OnSkillSlotChanged.Broadcast(SlotIndex, NAME_None);
 }
 
+bool USkillManagerComponent::SwapSkillSlots(int32 SlotA, int32 SlotB)
+{
+    if (SlotA == SlotB || SlotA < 0 || SlotA >= 8 || SlotB < 0 || SlotB >= 8) return false;
+
+    // 시전 중에 슬롯이 바뀌면 진행 중인 스킬의 입력(HandleKeyHeld/Up)이 엉뚱한 슬롯으로 간다
+    if (IsSkillLocked()) return false;
+
+    // 쿨타임 중인 스킬은 옮길 수 없다 (어느 쪽이든)
+    if (IsOnCooldown(SlotA) || IsOnCooldown(SlotB)) return false;
+
+    if (SlotClasses.Num() < 8) SlotClasses.SetNum(8);
+    SlotClasses.Swap(SlotA, SlotB);
+    SlotInstances.Swap(SlotA, SlotB);
+    CooldownEndTimes.Swap(SlotA, SlotB);
+    if (CooldownDurations.IsValidIndex(SlotA) && CooldownDurations.IsValidIndex(SlotB))
+    {
+        CooldownDurations.Swap(SlotA, SlotB);
+    }
+
+    // 슬롯 번호를 기억하는 상태는 비운다
+    ResetCombo();
+    if (QueuedSkillSlot == SlotA || QueuedSkillSlot == SlotB) QueuedSkillSlot = -1;
+
+    // HUD 아이콘 갱신 (RefreshingSlot)
+    OnSkillSlotChanged.Broadcast(SlotA, SlotInstances[SlotA] ? SlotInstances[SlotA]->SkillRowName : NAME_None);
+    OnSkillSlotChanged.Broadcast(SlotB, SlotInstances[SlotB] ? SlotInstances[SlotB]->SkillRowName : NAME_None);
+
+    UE_LOG(LogTemp, Log, TEXT("[SkillSlot] 슬롯 %d <-> %d 스왑"), SlotA, SlotB);
+    return true;
+}
+
 bool USkillManagerComponent::AssignSkillToSlotInternal(FName RowName, int32 SlotIndex, bool bBroadcast)
 {
     if (SlotIndex < 0 || SlotIndex >= 8) return false;
