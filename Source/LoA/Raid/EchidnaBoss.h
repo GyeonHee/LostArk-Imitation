@@ -323,6 +323,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Counter")
 	bool IsGroggy() const { return bGroggy; }
 
+	/** 그로기(무력화) 시작 — Duration초 뒤 자동 해제, 이미 그로기면 시간만 갱신. 이동만 멈추고 AI는 건드리지 않으므로
+	 *  보스가 실제로 가만히 있으려면 부른 쪽 Task가 IsGroggy() 동안 Running으로 버텨야 한다 (카운터 패턴·거울 카운터) */
+	UFUNCTION(BlueprintCallable, Category = "Counter")
+	void StartGroggy(float Duration);
+
+	// 그로기 남은 시간 / 이번 그로기 전체 시간 (초) — 보스 HP 바의 무력화 게이지용. 그로기가 아니면 0
+	UFUNCTION(BlueprintPure, Category = "Counter")
+	float GetGroggyRemainingTime() const;
+
+	UFUNCTION(BlueprintPure, Category = "Counter")
+	float GetGroggyTotalDuration() const { return bGroggy ? GroggyTotalDuration : 0.f; }
+
 	FOnBossCountered OnCountered;
 
 	// 연출 훅 — 카운터 창 열림/닫힘 (발광 VFX·사운드 등을 BP에서 추가하고 싶을 때)
@@ -338,6 +350,7 @@ private:
 	bool bGroggy = false;
 
 	FTimerHandle GroggyTimerHandle;
+	float GroggyTotalDuration = 0.f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> CounterGlowMID;

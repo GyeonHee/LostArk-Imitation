@@ -8,6 +8,7 @@ class UProgressBar;
 class UTextBlock;
 class UImage;
 class UTexture2D;
+class USizeBox;
 
 /**
  * 보스 HP 바 — 로스트아크식 "줄" 표시.
@@ -44,7 +45,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BossHP")
 	void SetSettlementPaused(bool bPaused);
 
+	/** HP 바 아래 무력화(그로기) 게이지 — 남은 시간만큼 줄어드는 노란 바 + "무력화  2.4s".
+	 *  Total <= 0(그로기 아님)이면 숨김. 컨트롤러가 매 Tick 호출 */
+	UFUNCTION(BlueprintCallable, Category = "BossHP")
+	void SetGroggy(float Remaining, float Total);
+
 protected:
+	virtual void NativeConstruct() override;
+
+	// 무력화 게이지 — WBP에 안 만들고 NativeConstruct에서 BossHPRoot(VerticalBox) 맨 아래에 C++로 붙인다
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP|Groggy")
+	FLinearColor GroggyFillColor = FLinearColor(1.f, 0.78f, 0.15f, 1.f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP|Groggy")
+	FLinearColor GroggyBackgroundColor = FLinearColor(0.f, 0.f, 0.f, 0.6f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP|Groggy")
+	float GroggyBarWidth = 420.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP|Groggy")
+	float GroggyBarHeight = 20.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "BossHP|Groggy")
+	FText GroggyLabel = FText::FromString(TEXT("무력화"));
+
 	/** 줄마다 돌아가며 쓰는 색 — 줄 L의 색은 LineColors[(L-1) % Num].
 	 *  인접한 줄이 같은 색이 되지 않도록 최소 2개, 되도록 3개 이상 넣을 것 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BossHP")
@@ -108,4 +132,18 @@ private:
 	FSlateColor OriginalSettlementTextColor;
 	float LastShownSettlement = -1.f;
 	bool bLastShownEnraged = false;
+
+	void BuildGroggyRow();
+
+	UPROPERTY(Transient)
+	TObjectPtr<USizeBox> GroggyRow;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProgressBar> GroggyBar;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> GroggyText;
+
+	// 표시 중인 남은 시간(0.1초 단위) — 바뀔 때만 텍스트 갱신. -1 = 숨김 상태
+	int32 LastShownGroggyTenths = -1;
 };

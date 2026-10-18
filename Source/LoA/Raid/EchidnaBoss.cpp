@@ -426,15 +426,41 @@ bool AEchidnaBoss::TryCounter(AActor* Attacker)
 
 	CloseCounterWindow();
 
-	bGroggy = true;
-	GetWorldTimerManager().SetTimer(GroggyTimerHandle, this, &AEchidnaBoss::EndGroggy, FMath::Max(0.01f, CounterGroggyDuration), false);
-
-	UE_LOG(LogLoA, Warning, TEXT("[Counter] 카운터 성공 — 그로기 %.1f초"), CounterGroggyDuration);
+	UE_LOG(LogLoA, Warning, TEXT("[Counter] 카운터 성공"));
 	SpawnCounterText(GetActorLocation() + FVector(0.f, 0.f, CounterTextHeight));
 
-	OnGroggyVisualChanged(true);
+	StartGroggy(CounterGroggyDuration);
 	OnCountered.Broadcast(Attacker);
 	return true;
+}
+
+void AEchidnaBoss::StartGroggy(float Duration)
+{
+	if (bDefeated) return;
+
+	// 이미 그로기면 시간만 갱신 (연출 훅은 다시 안 쏨)
+	const bool bWasGroggy = bGroggy;
+	bGroggy = true;
+	GroggyTotalDuration = FMath::Max(0.01f, Duration);
+	GetWorldTimerManager().SetTimer(GroggyTimerHandle, this, &AEchidnaBoss::EndGroggy, GroggyTotalDuration, false);
+
+	if (AAIController* AI = Cast<AAIController>(GetController()))
+	{
+		AI->StopMovement();
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+
+	UE_LOG(LogLoA, Warning, TEXT("[Groggy] 그로기 %.1f초"), Duration);
+	if (!bWasGroggy)
+	{
+		OnGroggyVisualChanged(true);
+	}
+}
+
+float AEchidnaBoss::GetGroggyRemainingTime() const
+{
+	if (!bGroggy) return 0.f;
+	return FMath::Max(0.f, GetWorldTimerManager().GetTimerRemaining(GroggyTimerHandle));
 }
 
 void AEchidnaBoss::EndGroggy()

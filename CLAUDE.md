@@ -133,6 +133,7 @@
   - **줄마다 색이 바뀌는 로아식 바**: `HPBar`의 Percent는 전체 HP가 아니라 **현재 줄 안의 잔량**이고, 색은 `LineColors[(현재줄-1) % Num]`. 뒤에 깔린 `NextLineImage`는 **한 줄 아래**의 색이라, 현재 줄이 비어갈수록 다음 줄 색이 드러난다. 마지막 1줄에서는 `GetLineColor(0)`이 투명을 반환해 빈 칸이 보임
   - 이게 성립하려면 **`HPBar`의 `WidgetStyle.BackgroundImage` 틴트 알파가 0**이어야 한다(기본값은 흰색 불투명이라 뒤를 가림). `NextLineImage`는 텍스처 없이도 확실히 그려지도록 브러시를 `RoundedBox`(cornerRadii 0 = 단색 사각형)로 설정해둠
   - `LineColors`는 `EditDefaultsOnly`라 WBP Class Defaults에서 색/개수 조절 가능 (기본 5색 순환)
+  - **무력화(그로기) 게이지** (2026-10-18): WBP에 없고 `NativeConstruct`의 `BuildGroggyRow()`가 `BossHPRoot`(VerticalBox) 맨 아래에 C++로 붙인다 — `GroggyRow`(SizeBox 420x20) → Overlay → 노란 ProgressBar + 가운데 `무력화  2.4s`. 컨트롤러 `UpdateEnrageTimer()`가 매 Tick `SetGroggy(GetGroggyRemainingTime(), GetGroggyTotalDuration())` → 남은 시간만큼 바가 줄고 0이면 Collapsed. 보스 처치 후엔 숨김. 색·크기·라벨은 WBP Class Defaults `BossHP|Groggy`. **`BossHPRoot` 이름을 바꾸면 게이지가 안 붙는다**(경고 로그)
 - `WBP_CastBar` (`/Game/LostArk/UI/`) — 캐스팅/차지 진행바. `UCastBarWidget`(C++) 상속 + `BindWidget` (보스 HP와 동일 방식)
   - 트리: `RootCanvas` → `CastBarRoot`(Overlay, 하단 중앙 앵커 400x28, 바닥에서 200px 위) → `CastBar`(ProgressBar) + `CastTimeText`(TextBlock, 바 우측 하단에 작게 얹힘, 11pt + 그림자)
   - 진행도 조회 경로: `USkillBase::GetCastProgress()`(virtual, 기본 false) → `USkillCast`/`USkillCharge`가 오버라이드 → `USkillManagerComponent::GetActiveCastProgress()`가 슬롯을 훑어 진행 중인 첫 스킬 반환 → `ALoAPlayerController::UpdateCastBar()`가 Tick에서 폴링
@@ -154,7 +155,28 @@
   - `UUserWidget`에 이미 `Padding` 멤버가 있어서 같은 이름 UPROPERTY는 UHT 에러(shadowing) — 그래서 `MapPadding`
 - **HUD 슬롯 클릭 차단 + 드래그 스왑 (2026-10-07, `ALoAPlayerController`)**: HUD 루트가 HitTestInvisible이라 슬롯이 마우스를 못 받아 슬롯 클릭이 기본공격·이동으로 넘어갔음 → 컨트롤러가 커서(`FSlateApplication::GetCursorPos`)와 WBP_HUD 슬롯 위젯(`GetWidgetFromName` + `GetCachedGeometry().IsUnderLocation`)을 직접 비교(`FindHUDSlotUnderCursor`). 슬롯 위에서 시작된 기본공격(`OnSkillKeyDown/Held/Up` 슬롯 8)·이동(`OnInputStarted`/`OnSetDestinationTriggered`) 입력은 버림(`ConsumeHUDSlotPress`)
   - 그룹: 스킬 `Border_Q~F`(=슬롯 0~7) / 아이템 `Border_F1,5~9` / 배틀아이템 `Border_1~4` / 기타 `Border_Dash,GetUp`(클릭만 막음). **위젯 이름을 바꾸면 이 표(cpp 상단)도 바꿀 것**
-  - 왼쪽 버튼으로 6px 이상 끌면 `USlotDragVisualWidget`(C++ 트리, ZOrder 20) 아이콘이 커서를 따라오고, **같은 그룹** 슬롯 위에서 놓으면 스왑. 스킬은 `USkillManagerComponent::SwapSkillSlots`(인스턴스·쿨타임까지 교환, 시전/후딜 중 거부, **둘 중 하나라도 쿨타임 중이면 거부 — 쿨타임 중인 스킬은 드래그 시작도 안 됨**, 정비소 제한 없음), 아이템·배틀아이템은 아이템 시스템이 없어 `Img_*` 브러시·틴트만 교환
+  - 왼쪽 버튼으로 6px 이상 끌면 `USlotDragVisualWidget`(C++ 트리, ZOrder 20) 아이콘이 커서를 따라오고, **같은 그룹** 슬롯 위에서 놓으면 스왑. 스킬은 `USkillManagerComponent::SwapSkillSlots`(인스턴스·쿨타임까지 교환, 시전/후딜 중 거부, **둘 중 하나라도 쿨타임 중이면 거부 — 쿨타임 중인 스킬은 드래그 시작도 안 됨**, 정비소 제한 없음), 아이템은 아이템 시스템이 없어 `Img_*` 브러시·틴트만 교환, **배틀아이템은 `UBattleItemComponent::SwapSlots`로 칸(아이템·개수·쿨타임) 자체를 교환**(아래 "배틀아이템" 참조)
+- **배틀아이템 칸 (2026-10-19 개편, `Item/BattleItemComponent`)**: 칸 4개(키 1~4 = HUD `Border_1~4`). **처음엔 비어 있고 소지품에서 드래그해 등록**한다(예전 기본 배치 회복약은 삭제)
+  - 등록(`EquipFromInventory`) = 그 인벤토리 칸에서 최대 `BattleEquipMax`(회복약 7)개를 꺼내 배틀 칸에 담음. 칸에 다른 아이템이 있으면 인벤토리로 돌려보내고, 같은 아이템이 다른 배틀 칸에 있으면 그 칸은 비움. 배틀아이템(`bIsBattleItem`)만 등록 가능
+  - 해제 = HUD 배틀 칸을 끌어 소지품 창 위에 놓기(`Unequip` → 남은 개수 인벤토리로)
+  - 사용: 개수 0 / 쿨타임 중 / `IsActionLocked()` / 매혹이면 불가. **다 써도 칸에서 안 빠지고** 아이콘이 `BattleItemDepletedTint`(빨간 반투명)
+  - 정비소 진입 시 `TopUpFromInventory` — 등록된 칸을 인벤토리에서 최대치까지 채움 + 쿨타임 초기화
+  - 쿨타임은 칸이 아니라 **아이템 종류별**(`CooldownEndTimes` 맵) — 뺐다 껴서 쿨타임을 초기화하는 꼼수 방지
+  - 칸 배치·개수는 `ULoAGameInstance`(`BattleItemSlotIds/Counts`) + SaveGame으로 유지
+  - HUD는 WBP 수정 없이 `BuildBattleItemHUD()`가 `Border_N` 안을 Overlay[`Img_N`, 원형 쿨타임(`M_CooldownRadial` MID `CooldownRatio`=남은 비율), 쿨타임 초, 개수]로 바꿔 끼우고 `UpdateBattleItemHUD()`(Tick)가 갱신
+  - 키 1~4·I는 입력 액션 에셋 없이 `SetupInputComponent`에서 `FInputKeyBinding`으로 직접 바인딩
+- **소지품(인벤토리) (2026-10-19, `Item/InventoryComponent`, `Item/ItemTypes.h`, `Item/ItemRegistry.cpp`, `UI/InventoryWidget`·`InventorySlotWidget`·`InventoryDragOperation`)** — I키로 여닫음, 화면 오른쪽, 10x10
+  - **자료구조**: 칸 = 크기 100 고정 배열 `TArray<FInventorySlot>`(인덱스 = 행*10+열 = 화면 위치) → 조회·스왑·잠금 O(1). 칸은 `ItemId`·`Count`·`bLocked`만, 이름·아이콘·수치는 정의 해시맵 `LoAItems::Find()`(플라이웨이트, O(1)). **아이템 정의는 지금 C++ 표(`ItemRegistry.cpp`)** — 아이템이 늘면 DataTable로 옮길 것
+  - **정렬**(`SortItems`, 헤더 오른쪽 네모 4개 버튼): 잠기지 않은 칸 위치만 모으고 그 안의 아이템을 종류별로 합친 뒤(TMap) (카테고리 enum 순 → `SortOrder` → 이름)으로 정렬, 잠기지 않은 칸에 앞에서부터 `MaxStack` 단위로 채움. **잠긴 칸은 자리 그대로**, 정렬된 아이템은 잠긴 칸을 건너뛰며 채워진다. O(n + k log k)
+  - **잠금**: Ctrl+우클릭 토글, 파란 테두리(2px). 잠금은 칸이 아니라 아이템에 붙어 **드래그하면 같이 움직인다**. 칸이 비면 잠금도 풀림
+  - **드래그**: UMG 드래그 앤 드랍(`UInventoryDragOperation`). 다른 칸에 놓으면 `MoveOrSwap`(같은 아이템이면 합치기, 아니면 잠금 포함 통째로 스왑). 창 밖에 놓으면(`DragCancelled`) 컨트롤러가 커서 아래 HUD 배틀 칸을 찾아 등록 — **HUD가 HitTestInvisible이라 UMG 드랍을 못 받아서** 이렇게 우회
+  - **UI 갱신**: 칸 위젯 100개는 한 번만 만들고, `OnSlotChanged(Index)`(INDEX_NONE=전체)로 **바뀐 칸만** 다시 그림. 매 Tick 훑지 않음
+  - 창 루트는 `SelfHitTestInvisible`, 창(Panel)만 Visible — 창 밖 클릭은 클릭 이동으로. 창 안 클릭은 위젯이 Handled로 먹고, 컨트롤러 `ConsumeHUDSlotPress`도 `IsCursorOverPanel`이면 이동·기본공격으로 안 씀
+  - **창 이동**: 헤더(제목 줄)를 좌클릭으로 끌면 창이 따라온다(마우스 캡처, 화면 밖으로 못 나가게 클램프). 위치는 위젯이 살아 있는 동안(그 레벨) 유지
+  - **버그였던 것 (슬롯을 빠르게 두 번 누르면 맵 클릭 이동)**: 두 번째 클릭은 `MouseButtonDown`이 아니라 `MouseButtonDoubleClick`으로 오는데 위젯이 안 먹어서 게임으로 샜고, 컨트롤러는 시작(`OnInputStarted`)만 막고 누르는 중(Triggered)·뗄 때(Released) 이동은 막지 않았음 → 칸·창 위젯이 DoubleClick도 Handled + 컨트롤러 `bMovePressSuppressed`(UI 위에서 시작된 클릭이면 Triggered·Released 이동도 무시). **C++ 트리 위젯에서 클릭을 막을 땐 `NativeOnMouseButtonDoubleClick`도 오버라이드할 것**
+  - 저장: `ULoAGameInstance::InventorySlots` + SaveGame(`LoA.sav`). 첫 실행(저장 없음)엔 `StartingItems` = 정령의 회복약 30개. **초기화하려면 `Saved/SaveGames/LoA.sav` 삭제**
+  - 테스트 콘솔: `LoAGiveItem SpiritRecoveryPotion 50`, `LoAInvTest`(회복약 묶음 8개를 빈 칸에 흩뿌림 — 정렬·잠금 확인용)
+  - **실링(은화, 2026-10-19)**: 칸을 차지하지 않는 화폐 — `UInventoryComponent::Silling`(int64), `AddSilling`/`SpendSilling`(모자라면 false, 상점 구매용 — 상점은 아직 없음)/`OnSillingChanged`. 창 맨 아래 어두운 띠에 은화 아이콘(`/Game/LostArk/UI/Item/T_Silling` — PIL로 만든 임시 아이콘) + `LoAItems::FormatWithCommas`(언어 설정과 무관하게 세 자리 쉼표, 100,000,000). 첫 지급 `StartingSilling` 1억 — 소지품과 **별도 플래그 `bHasSilling`**이라 실링 전 저장 파일에도 한 번 지급됨. GameInstance·SaveGame 유지. 치트 `LoAGiveSilling 5000`(음수면 차감)
 - **HUD 위젯은 전부 루트 Visibility를 `HitTestInvisible`로 둘 것** — 클릭 이동 게임이라 바가 마우스 입력을 먹으면 그 영역을 클릭해도 캐릭터가 안 움직인다
 - ⚠️ **`BP_LoAPlayerController`의 위젯 클래스 프로퍼티는 반드시 에디터 Details 패널에서 직접 할당할 것.**
   MCP(`ObjectTools.set_properties`)로 CDO(`Default__BP_LoAPlayerController_C`)에 써서 저장하면 **에디터 조회로는 값이 보이고 `save_assets`도 true를 반환하는데, PIE 런타임에서는 null이다.** Live Coding 리인스턴싱을 거치면서 날아가는 것으로 보임.
@@ -737,7 +759,7 @@
 3. 거울(`AEchidnaLinkMirrorActor`): `TrackDuration`(5초) 동안 노란 빛줄기로 플레이어 추적(`TrackingRotationSpeed` 45도/초, 거울 원반도 같이 회전) → 끝나면 **플레이어 강제 정지**(`SetHeldByPattern(true)`) + 빛 덩어리 발사
 4. **빛은 타일 한 칸씩만 이동 (2026-10-07 규칙 변경)**: 1칸째 = 거울 타일의 이웃 중 거울 정면과 가장 맞는 타일(±30도 안에 없으면 허공으로 한 칸 나가 실패). **그 타일에 플레이어가 서 있어야 함**(= 거울과 플레이어가 헥스 거리 1 + 정면) → 도착하면 노란 테두리(`AHexTile::SetLinkHighlighted`) → 2칸째 = 보스 타일(플레이어 타일과 **헥스 거리 1**이어야 함) → 도착하면 **성공**
 5. **실패**: 첫 칸에 플레이어가 없음(2칸 이상 떨어짐/정면 아님), 또는 플레이어 옆 칸에 보스가 없음 — 빛은 그 칸까지만 가고 멈춤. (예전엔 빛이 직선으로 날아가 플레이어에 닿기만 하면 돼서 2칸 떨어져도 이어졌음. `MaxTravelDistance`/`OrbHitRadius`는 이제 미사용) → **전 타일 빨간 점멸**(`AHexArena::SetAllTilesDangerFlash` — 바닥 `ActivePoopMaterial` + 빨간 테두리, 타일 타입은 안 바뀜) + 모든 플레이어에게 **최대 HP × `FailDamageRatio`(10)** → `FailFlashDuration`(2초) 뒤 점멸 해제
-6. `EndDelay`(1초) 후 Succeeded. `ExitState`(끊겨도): **보스 다시 보이게**, 붙잡힘 해제, 노란 테두리·점멸 해제, 거울 제거, 잠금 해제
+6. `EndDelay`(1초) 후 Succeeded. `ExitState`(끊겨도): **보스 다시 보이게**, 붙잡힘 해제, 노란 테두리·점멸 해제, 거울 제거, 잠금 해제, **파란 테두리 2칸 다시 뽑기**(`AHexArena::RerollMarkerTiles(true)` — 규칙은 레이드 시작과 같고, 직전 외곽 타일은 후보에서 뺌 → 50%와 100% 거울잇기가 다른 자리에서 나옴, 2026-10-18)
 - 성공했을 때의 보상(무력화 등)은 아직 없음 — 결과만 로그(`[LinkMirror] ... 성공`)
 - 테두리 우선순위: 위험 점멸·활성 오염(빨강) > 거울잇기(노랑) > 파란 테두리
 
@@ -770,7 +792,9 @@
    - **4웨이브 전부 같은 변에서 나온다** — 진입 시 1회 결정(`SpawnSide`, -1이면 6변 중 랜덤). 변의 바깥 법선 = 아레나 Yaw + 30 + 60k (꼭짓점이 축 방향 타일 Yaw 0/60/...에 있어서). 외곽선보다 `OutsideMargin`(250) 바깥에서 출발해 반대편 바깥까지
    - **시점 전환은 진입 시 한 번만**: `ALoACharacter::SetCameraRotationOverride(Pitch -30, Yaw = 그 변의 바깥 법선)` — 위에서 내려보던 -60도 시점이 내려와 비스듬해지고 플레이어 뒤에서 거울 줄을 마주보는 구도. 패턴이 끝나면(`ExitState`) 원래 시점으로 복구. (처음엔 웨이브마다 다른 변 + 카메라 회전이었는데 유저 요청으로 변경)
 3. 모든 줄이 나오고 불길까지 다 꺼지면 `EndDelay` 후 Succeeded. `ExitState`(끊겨도): 카운터 결과 집계 로그(`파훼 성공/실패 — 카운터 N / 4`) → 줄 전부 파괴 → 보스 보이게, 카메라 줌·각도 복구, 큰 패턴 잠금 해제
-- **파훼 보상(무력화 등)과 실패 페널티는 아직 없음** — 결과 로그만. 레퍼런스의 "카운터 거울이 아닌 거울을 3번 치면 갈급" 디버프도 미구현
+- **마무리 그로기 (2026-10-18)**: `EndDelay` 뒤 `CleanupPattern()`(줄·기둥 파괴, 보스 다시 보이게, 카메라·카운터 쿨타임 복구, 결과 로그 — 한 번만 실행)을 먼저 하고 `AEchidnaBoss::StartGroggy(GroggyDuration=3)` → 그로기가 끝날 때까지 Task가 Running(보스 정지), 끝나면 Succeeded. 큰 패턴 잠금(`ClearActiveTimedPattern`)은 `ExitState`에서 풀어 그로기 중 다른 큰 패턴이 안 끼어듦. `bGroggyOnlyOnSuccess`를 켜면 4줄 전부 카운터쳤을 때만
+- **그로기 자체는 효과가 없다** — `StartGroggy`는 `bGroggy` 플래그 + 이동 정지 + `OnGroggyVisualChanged`뿐이고 AI를 멈추지 않는다. 보스가 가만히 있는 건 부른 Task가 `IsGroggy()` 동안 Running으로 버티기 때문(보스 본체 카운터 패턴도 같은 방식). 받는 피해 증가 등은 아직 없음
+- **실패 페널티는 아직 없음** — 결과 로그만. 레퍼런스의 "카운터 거울이 아닌 거울을 3번 치면 갈급" 디버프도 미구현
 
 ### 시작 시네마틱 + 양쪽 거울 기둥 (2026-10-07)
 - `bPlayIntro`면 진입 직후(보스 사라짐·카메라 오버라이드는 그대로) **시네마틱이 끝나야 첫 줄 타이머(`Elapsed`)가 돈다**:
@@ -822,6 +846,18 @@
 - **레벨 이동 시 스킬 배치 유지 — `ULoAGameInstance`**(`DefaultEngine.ini` `GameInstanceClass=/Script/LoA.LoAGameInstance`): OpenLevel로 캐릭터·컴포넌트는 새로 만들어지지만 GameInstance는 게임 내내 산다. `USkillManagerComponent::EndPlay`가 슬롯 0~7 행 이름·`SkillLevels`·`AvailableSkillPoints`를 저장하고, `BeginPlay` 끝에서 복원(`bHasSkillLoadout` 전엔 BP 기본 배치). 복원은 등록 제한을 거치지 않는 `AssignSkillToSlotInternal`/`ClearSlotInternal`로. 로그 `[SkillLoadout] 저장/복원`
   - ⚠️ **버그였던 것 (레벨 이동 후 WBP_HUD `RefreshingSlot`에서 Accessed None 16개)**: 복원이 슬롯마다 `OnSkillSlotChanged`를 쐈는데, 복원은 캐릭터 `BeginPlay`(같은 프레임)에서 돌고 WBP_HUD의 `Slot Images` 배열은 Construct의 `Delay` 뒤에 채워져서 `Array Get`이 None → `SetBrushFromTexture`/`SetColorAndOpacity` 에러. 복원 땐 브로드캐스트 안 함(`bBroadcast=false`) — 아이콘은 HUD 초기화 루프가 `GetSlotIcon`으로 복원된 값을 읽어간다. **BeginPlay 시점에 HUD 바인딩 이벤트를 쏘지 말 것**
 - **BP**: `/Game/LostArk/Lobby/BP_RepairStation`(ZoneRadius **450**) / `BP_RaidEntrance`(ZoneRadius **420**) — 레벨엔 이 BP들이 배치돼 있다(2026-09-28 C++ 액터에서 교체). 크기·색·카운트다운 등은 BP Class Defaults에서 조절. C++ 클래스는 콘텐츠 브라우저 `C++ Classes/LoA/Lobby`
+- **상점 NPC (2026-10-19, `Lobby/ShopNPCActor`, `UI/ShopWidget`(상점 창·판매 칸·구매 목록 칸·하단 대화창), `UI/NPCWorldWidgets`(이름표·[G] 대화하기), `UI/WindowDragHelper.h`)** — 캐릭터 에셋이 없어 엔진 마네킹(`SKM_Quinn_Simple` + `MM_Idle`, 생성자 ConstructorHelpers)
+  - 상호작용: 컨트롤러 `UpdateNPCInteraction()`(Tick)가 `InteractRadius`(300) 안 가장 가까운 NPC에 [G] 대화하기(WidgetComponent Screen, 몸 왼쪽) + 테두리 발광, 커서를 올린 NPC(`GetHitResultUnderCursor` Visibility — 캡슐이 Visibility Block)도 발광. 발광 = `SetOverlayMaterial(M_NPCHighlight)`(`/Game/LostArk/UI/NPC/`, MCP로 만든 Fresnel × `Color` × `Intensity` → Emissive, Fresnel → Opacity, Translucent+Unlit)
+  - 열기: 거리 안에서 **G** 또는 그 NPC를 **우클릭(= 이동 버튼, `OnInputStarted`에서 가로챔 — 걷지 않음)**. 거리 밖 우클릭은 그냥 이동
+  - 상점 중: 캐릭터 붙잡힘(`SetHeldByPattern`) + NPC 쪽으로 회전, 카메라 `ShopCameraArmLength`(650)·`ShopCameraPitch`(-30)·Yaw = NPC 방향 - 90(NPC가 화면 오른쪽), HUD 숨김, K 스킬창 차단, `ConsumeHUDSlotPress`가 모든 클릭을 게임 입력에서 뺌. 하단 대화창(이름·`GreetingLine`·[나가기] → `CloseShop`), 화면 가운데 기준 왼쪽 상점 창 + 오른쪽 소지품(`InventoryWidget::SetPanelPlacement`, 닫을 때 `ResetPanelPlacement`). 두 창 다 헤더를 끌어 따로 이동(`FLoAWindowDrag` — 앵커와 무관하게 화면 밖으로 못 나가게 클램프)
+  - 상점 창: [구매]/[판매] 탭, [물약], 2열 × 6줄 판매 칸(`ShopItems` — 기본 정령의 회복약 1실링, 페이지 넘김은 아직 없음), 구매 목록 10칸, 구매 금액 / 구매 후 잔액(모자라면 빨강), [구매][비우기]
+    - 판매 칸 우클릭 = 1개 담기(빠른 연타의 DoubleClick도 1개), **Shift+우클릭 = "묶음 구매" 팝업**(창 안 오버레이: 수량 입력(숫자만, 1~`CartSlotMaxCount`) + ▲▼ + 확인/취소, Enter = 확인). 담기는 같은 아이템 칸부터 칸당 `CartSlotMaxCount`(99)까지, 넘치면 빈 칸에. 구매 목록 칸 우클릭 = 그 칸 빼기
+    - 구매: 실링 부족 / 소지품 공간 부족(`UInventoryComponent::CanAddItems` — 칸 복사본에 AddItem 규칙으로 채워 봄)이면 안내만, 아니면 `SpendSilling` + `AddItem` 후 목록 비움
+  - **판매 탭 (2026-10-19)**: [구매]/[판매] 탭 버튼(재구매 탭은 없앰). 판매 탭은 분류·구매 목록 칸을 Hidden(창 크기 유지), 합계 라벨 "판매 금액 / 판매 후 잔액"(잔액 = 실링 + 판매 금액), 버튼 [판매][비우기]. 잡동사니 버튼은 안 만듦
+    - 상점이 열린 동안 **소지품 칸 우클릭 = 1개씩 판매 목록에**(같은 칸에서 또 누르면 같은 줄에 합쳐짐), **Shift+우클릭 = "묶음 판매" 팝업**(기본값 = 칸 개수 전부, 최대도 칸 개수). 구매 탭이었으면 판매 탭으로 자동 전환. 판매 목록 줄 우클릭 = 소지품으로 되돌림. 잠긴 아이템·`SellPrice` 0은 거절(안내)
+    - 데이터는 **`UInventoryComponent::SellReserve`**(최대 `MaxSellReserve` 12줄) — 올리면 소지품 칸에서 실제로 빠지고(`ReserveForSell`), 비우기·**상점 닫기(`UShopWidget::CloseShop`)·인벤토리 `EndPlay`(저장 전)**에 원래 칸으로 돌아감(`UnreserveSell` — 원래 칸이 비었거나 같은 아이템이면 거기, 아니면 빈 칸). 판매 = `SellReserved()`(실링 지급 + 목록 비움). 판매 칸 표시 = 아이콘 왼쪽 위 개수 + 개수 × 판매가
+    - 판매가 = `FItemDefinition::SellPrice`(정령의 회복약 1)
+  - **배치**: 로비 오른쪽 벽(+Y, 카메라 Yaw 0이라 화면 오른쪽 = +Y) 앞 — `BP_ShopNPC`(`/Game/LostArk/Lobby/`)
 - 배치: PlayerStart (-1300,0) → 정비소 (-300,0) → 입장 구역 (1300,0) 일직선. 참고: `BP_Sorceress`의 기본 메시는 원래 `SKM_Quinn_Simple`(마네킹)이다 — 로비 문제 아님
 - MCP 테스트 팁: `StartPIE`의 `startTransform`으로 구역 안에 바로 스폰 가능, PIE 중엔 `find_actors`가 PIE 월드(`UEDPIE_0_...`) 액터를 돌려주므로 `set_actor_transform`으로 폰을 옮겨 이탈 테스트도 가능
 - 로비엔 `AHexArena`/`AEchidnaBoss`가 없으므로 미니맵·보스 HP 위젯은 컨트롤러가 알아서 안 만든다(HUD·스킬창은 정상)

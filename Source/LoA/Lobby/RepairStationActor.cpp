@@ -1,6 +1,7 @@
 #include "Lobby/RepairStationActor.h"
 #include "LoACharacter.h"
 #include "Skill/SkillManagerComponent.h"
+#include "Item/BattleItemComponent.h"
 #include "TimerManager.h"
 
 ARepairStationActor::ARepairStationActor()
@@ -21,6 +22,10 @@ void ARepairStationActor::OnPlayerEnterZone(APawn* Pawn)
 	if (!Player) return;
 
 	Player->RestoreFullStatus();
+	if (UBattleItemComponent* Items = Player->FindComponentByClass<UBattleItemComponent>())
+	{
+		Items->TopUpFromInventory();
+	}
 	if (USkillManagerComponent* SkillManager = Player->FindComponentByClass<USkillManagerComponent>())
 	{
 		SkillManager->SetSlotEditAllowed(true);

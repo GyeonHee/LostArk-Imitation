@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
+#include "Item/ItemTypes.h"
 #include "LoASaveGame.generated.h"
 
 /**
@@ -32,4 +33,28 @@ public:
 
 	UPROPERTY()
 	int32 ClearCount = 0;
+
+	// 소지품 100칸
+	UPROPERTY()
+	bool bHasInventory = false;
+
+	UPROPERTY()
+	TArray<FInventorySlot> InventorySlots;
+
+	// 실링(은화)
+	UPROPERTY()
+	bool bHasSilling = false;
+
+	UPROPERTY()
+	int64 Silling = 0;
+
+	// 배틀아이템 칸 1~4
+	UPROPERTY()
+	bool bHasBattleItemLoadout = false;
+
+	UPROPERTY()
+	TArray<FName> BattleItemSlotIds;
+
+	UPROPERTY()
+	TArray<int32> BattleItemSlotCounts;
 };

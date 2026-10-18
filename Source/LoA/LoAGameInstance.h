@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
+#include "Item/ItemTypes.h"
 #include "LoAGameInstance.generated.h"
 
 /**
@@ -32,6 +33,30 @@ public:
 
 	UPROPERTY(Transient)
 	int32 AvailableSkillPoints = 0;
+
+	// 배틀아이템 칸 1~4 — 아이템 ID(빈 칸 NAME_None)와 칸에 든 개수
+	UPROPERTY(Transient)
+	bool bHasBattleItemLoadout = false;
+
+	UPROPERTY(Transient)
+	TArray<FName> BattleItemSlotIds;
+
+	UPROPERTY(Transient)
+	TArray<int32> BattleItemSlotCounts;
+
+	// 소지품 100칸 (UInventoryComponent가 EndPlay에서 저장, BeginPlay에서 복원)
+	UPROPERTY(Transient)
+	bool bHasInventory = false;
+
+	UPROPERTY(Transient)
+	TArray<FInventorySlot> InventorySlots;
+
+	// 실링(은화)
+	UPROPERTY(Transient)
+	bool bHasSilling = false;
+
+	UPROPERTY(Transient)
+	int64 Silling = 0;
 
 	// 보스 맵에서 사망·클리어해 대기 지역으로 돌아가는 중 — 대기 지역에서 캐릭터가 빙의되면 PlayerStart 대신 정비소 위치로 옮기고 끈다
 	UPROPERTY(Transient)

@@ -964,6 +964,9 @@ void FStateTreeTask_EchidnaMirrorLinkPattern::ExitState(FStateTreeExecutionConte
 	{
 		InstanceData.Arena->ClearAllLinkHighlights();
 		InstanceData.Arena->SetAllTilesDangerFlash(false);
+
+		// 다음 거울잇기(50%/100%)는 다른 자리에서 — 파란 테두리 2칸 다시 뽑기
+		InstanceData.Arena->RerollMarkerTiles(true);
 	}
 
 	if (IsValid(InstanceData.Mirror))
@@ -3549,6 +3552,8 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::EnterState(FStat
 	InstanceData.IntroRow = nullptr;
 	InstanceData.IntroCamera = nullptr;
 	InstanceData.SideColumns.Reset();
+	InstanceData.bCleanedUp = false;
+	InstanceData.bGroggyStarted = false;
 
 	AEchidnaBoss* Boss = InstanceData.Boss;
 	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
@@ -3648,6 +3653,12 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::Tick(FStateTreeE
 
 	Boss->GetCharacterMovement()->StopMovementImmediately();
 
+	// 마무리 그로기 — 끝날 때까지 State에 머물러 보스가 다음 행동(패트롤·패턴)을 못 하게
+	if (InstanceData.bGroggyStarted)
+	{
+		return Boss->IsGroggy() ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Succeeded;
+	}
+
 	// 시네마틱이 끝나야 패턴(줄 타이머) 시작
 	if (!InstanceData.bIntroDone)
 	{
@@ -3683,7 +3694,21 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::Tick(FStateTreeE
 	}
 
 	InstanceData.EndElapsed += DeltaTime;
-	return InstanceData.EndElapsed >= InstanceData.EndDelay ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Running;
+	if (InstanceData.EndElapsed < InstanceData.EndDelay)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 패턴 끝 — 줄·카메라를 먼저 정리해 보스가 나타난 상태로 그로기에 들어간다
+	const int32 Countered = CleanupPattern(InstanceData);
+	const bool bSuccess = Countered >= InstanceData.WaveCount;
+	if (InstanceData.GroggyDuration > 0.f && (bSuccess || !InstanceData.bGroggyOnlyOnSuccess))
+	{
+		Boss->StartGroggy(InstanceData.GroggyDuration);
+		InstanceData.bGroggyStarted = true;
+		return EStateTreeRunStatus::Running;
+	}
+	return EStateTreeRunStatus::Succeeded;
 }
 
 bool FStateTreeTask_EchidnaMirrorCounterPattern::ComputeRowGeometry(const FInstanceDataType& InstanceData, FVector& OutCenter, FVector& OutTravelDir,
@@ -3886,6 +3911,23 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnSideColumns(FInstanceDataT
 void FStateTreeTask_EchidnaMirrorCounterPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	// 그로기 단계에서 끝났으면 이미 정리됨 — 중간에 끊겼을 때만 여기서 정리
+	CleanupPattern(InstanceData);
+
+	// 큰 패턴 잠금은 그로기까지 끝난 뒤에 푼다 (그로기 도중 다른 큰 패턴이 끼어들지 않게)
+	if (AEchidnaBoss* Boss = InstanceData.Boss)
+	{
+		Boss->ClearActiveTimedPattern();
+	}
+	InstanceData.Arena = nullptr;
+}
+
+int32 FStateTreeTask_EchidnaMirrorCounterPattern::CleanupPattern(FInstanceDataType& InstanceData) const
+{
+	if (InstanceData.bCleanedUp) return -1;
+	InstanceData.bCleanedUp = true;
+
 	AEchidnaBoss* Boss = InstanceData.Boss;
 
 	// 줄은 스스로 소멸하지 않으므로 여기서 결과를 센 뒤 파괴 (중간에 끊겨도 남은 줄·불길 정리)
@@ -3931,7 +3973,6 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::ExitState(FStateTreeExecutionCo
 	if (Boss)
 	{
 		SetBossVanished(Boss, false);
-		Boss->ClearActiveTimedPattern();
 
 		if (ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0)))
 		{
@@ -3954,7 +3995,7 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::ExitState(FStateTreeExecutionCo
 	{
 		UE_LOG(LogLoA, Warning, TEXT("[EchidnaMirrorCounter] 파훼 실패 — 카운터 %d / %d"), Countered, Total);
 	}
-	InstanceData.Arena = nullptr;
+	return Countered;
 }
 
 #if WITH_EDITOR

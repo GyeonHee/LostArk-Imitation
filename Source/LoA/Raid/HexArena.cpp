@@ -316,22 +316,28 @@ void AHexArena::SetAllPoopTilesActive(bool bActive)
 	}
 }
 
-void AHexArena::SetupInitialLayout()
+void AHexArena::RerollMarkerTiles(bool bAvoidPrevious)
 {
 	if (TileMap.Num() == 0) return;
 
 	const int32 R = SideCount - 1;
+	const TArray<FIntPoint> Previous = MarkerTileCoords;
 
-	// 이전 배치 정리 (BP에서 다시 호출하는 경우 대비)
+	// 이전 배치 정리
 	for (const FIntPoint& Old : MarkerTileCoords)
 	{
 		if (AHexTile* Tile = GetTile(Old)) Tile->SetHighlighted(false);
 	}
 	MarkerTileCoords.Reset();
 
-	// ── 1) 파란 테두리 타일 2개 — 외곽 1칸 + 거기서 MarkerTileDistance만큼 떨어진 안쪽(외곽 아님) 1칸.
+	// 외곽 1칸 + 거기서 MarkerTileDistance만큼 떨어진 안쪽(외곽 아님) 1칸.
 	// SideCount=4 기준 어느 외곽 타일에서 출발해도 조건을 만족하는 안쪽 타일이 3~4개 있음(검증함)
-	const TArray<FIntPoint> Ring = GetOuterRingCoords();
+	TArray<FIntPoint> Ring = GetOuterRingCoords();
+	if (bAvoidPrevious && Previous.Num() > 0 && Ring.Num() > 1)
+	{
+		// 같은 외곽 타일이 다시 뽑히지 않게 (안쪽 타일은 우연히 겹칠 수 있음)
+		Ring.Remove(Previous[0]);
+	}
 	if (Ring.Num() > 0)
 	{
 		const FIntPoint Outer = Ring[FMath::RandRange(0, Ring.Num() - 1)];
@@ -355,6 +361,22 @@ void AHexArena::SetupInitialLayout()
 	{
 		if (AHexTile* Tile = GetTile(C)) Tile->SetHighlighted(true);
 	}
+
+	if (MarkerTileCoords.Num() >= 2)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HexArena] 파란 테두리 배치 — 외곽 (%d,%d) / 안쪽 (%d,%d)"),
+			MarkerTileCoords[0].X, MarkerTileCoords[0].Y, MarkerTileCoords[1].X, MarkerTileCoords[1].Y);
+	}
+}
+
+void AHexArena::SetupInitialLayout()
+{
+	if (TileMap.Num() == 0) return;
+
+	const int32 R = SideCount - 1;
+
+	// ── 1) 파란 테두리 타일 2개
+	RerollMarkerTiles(false);
 
 	// ── 2) 오염 장판 후보 — 폰(플레이어·보스)이 서 있는 타일만 제외. 파란 테두리 타일도 오염될 수 있다
 	TSet<FIntPoint> Excluded;

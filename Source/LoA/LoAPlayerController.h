@@ -108,6 +108,14 @@ protected:
 	/** Tick에서 매 프레임 호출 — SkillManager를 폴링해 진행바를 갱신하거나 숨긴다 */
 	void UpdateCastBar();
 
+	// 배틀아이템 원형 쿨타임 — 스킬 칸과 같은 머티리얼(CooldownRatio = 남은 비율)
+	UPROPERTY(EditDefaultsOnly, Category = "UI|BattleItem")
+	TSoftObjectPtr<class UMaterialInterface> BattleItemCooldownMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/LostArk/Material/M_CooldownRadial.M_CooldownRadial")));
+
+	// 다 쓴 아이템 아이콘 색 (빨간 반투명)
+	UPROPERTY(EditDefaultsOnly, Category = "UI|BattleItem")
+	FLinearColor BattleItemDepletedTint = FLinearColor(1.f, 0.12f, 0.12f, 0.5f);
+
 	// ── 미니맵 ──
 	UPROPERTY(Transient)
 	TObjectPtr<class UMinimapWidget> MinimapWidget;
@@ -162,6 +170,28 @@ private:
 	void SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB);
 	bool GetHUDSlotIconBrush(int32 Group, int32 Index, FSlateBrush& OutBrush) const;
 
+	// ── 배틀아이템 칸 1~4 (키 1~4, HUD Border_1~4) ──
+	void OnBattleItemKey(int32 SlotIndex);
+
+	/** WBP_HUD의 Border_1~4 안(Img_1~4 하나뿐)을 C++로 Overlay[아이콘, 원형 쿨타임, 쿨타임 초, 개수]로 감싼다 — WBP 수정 불필요 */
+	void BuildBattleItemHUD();
+	void UpdateBattleItemHUD();
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UImage>> BattleItemIcons;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UImage>> BattleItemCooldownImages;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UMaterialInstanceDynamic>> BattleItemCooldownMIDs;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UTextBlock>> BattleItemCooldownTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UTextBlock>> BattleItemCountTexts;
+
 	bool bSlotPressActive = false;
 	bool bSlotDragging = false;
 	int32 SlotPressGroup = -1;
@@ -170,6 +200,9 @@ private:
 
 	// 슬롯 위에서 시작된 기본공격 입력 — Held/Up도 같이 버린다
 	bool bBasicAttackSuppressed = false;
+
+	// 이동 클릭이 HUD 슬롯·소지품 창 위에서 시작됨 — 누르고 있는 동안(Triggered)·뗄 때(Released) 이동도 하지 않는다
+	bool bMovePressSuppressed = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class USlotDragVisualWidget> SlotDragVisual;
@@ -310,6 +343,35 @@ public:
 	UFUNCTION(Exec)
 	void LoAKillSelf();
 
+	/** 테스트용 콘솔 명령 — 소지품에 아이템 추가. 예) LoAGiveItem SpiritRecoveryPotion 50 */
+	UFUNCTION(Exec)
+	void LoAGiveItem(FName ItemId, int32 Count);
+
+	/** 테스트용 콘솔 명령 — 회복약 묶음 여러 개를 빈 칸 아무 데나 흩뿌림(정렬·잠금 확인용) */
+	UFUNCTION(Exec)
+	void LoAInvTest();
+
+	/** 테스트용 콘솔 명령 — 실링 추가(음수면 차감). 예) LoAGiveSilling 5000 */
+	UFUNCTION(Exec)
+	void LoAGiveSilling(int64 Amount);
+
+	// ── 소지품 창 (I키) ──
+	void SetInventoryOpen(bool bOpen);
+	bool IsInventoryOpen() const;
+
+	/** 소지품 칸을 창 밖에 놓았을 때(UInventoryWidget) — 커서가 HUD 배틀아이템 칸 위면 그 칸에 등록 */
+	void HandleInventoryDropOutside(int32 InventoryIndex);
+
+	// ── 상점 NPC (대기 지역) ──
+	/** 상점 열기 — 카메라 줌인, 하단 대화창, 왼쪽 상점 창 + 오른쪽 소지품. 캐릭터는 닫을 때까지 붙잡힘 */
+	void OpenShop(class AShopNPCActor* NPC);
+	/** 상점 닫기 (대화창 [나가기]) — 카메라·HUD 원래대로 */
+	void CloseShop();
+	bool IsShopOpen() const { return bShopOpen; }
+
+	/** 소지품 칸 우클릭 — 상점이 열려 있으면 판매 목록에 올림(Shift = 묶음 판매). 상점 밖에선 아직 아무것도 안 함 */
+	void HandleInventorySlotRightClick(int32 InventoryIndex, bool bShift);
+
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Travel")
 	float TravelFadeOutTime = 0.5f;
@@ -344,6 +406,12 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UUserWidget> SkillTreeWidget;
+
+	// 소지품 창 — WBP 없이 C++ 클래스로 생성 (ZOrder 9: 알림(8) 위, 스킬창(10) 아래)
+	UPROPERTY(Transient)
+	TObjectPtr<class UInventoryWidget> InventoryWidget;
+
+	void OnInventoryToggle();
 
 	UPROPERTY(BlueprintReadOnly, Category="UI")
 	TObjectPtr<USkillTree_ViewModel> SkillTreeViewModel;
@@ -449,6 +517,22 @@ protected:
 
 	UFUNCTION(BlueprintCallable, Category="UI")
 	void OnSkillTreeToggle();
+
+	// 상점 NPC — 거리 안의 NPC에 [G] 대화하기 + 테두리, 커서를 올린 NPC도 테두리 (Tick)
+	void UpdateNPCInteraction();
+	void OnInteractKey();
+
+	TWeakObjectPtr<class AShopNPCActor> InRangeNPC;   // 상호작용 거리 안 가장 가까운 NPC
+	TWeakObjectPtr<class AShopNPCActor> HoveredNPC;   // 커서 아래 NPC
+	TWeakObjectPtr<class AShopNPCActor> ActiveShopNPC;
+	bool bShopOpen = false;
+	uint8 HUDVisibilityBeforeShop = 0;  // ESlateVisibility (헤더에 UMG 타입 include 안 하려고 정수로)
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UShopWidget> ShopWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UShopDialogueWidget> ShopDialogueWidget;
 
 	void OnPlayerHPChanged(float NewHP);
 	void OnPlayerMPChanged(float NewMP);

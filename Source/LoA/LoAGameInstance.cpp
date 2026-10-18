@@ -31,6 +31,13 @@ void ULoAGameInstance::LoadFromDisk()
 	AvailableSkillPoints = Save->AvailableSkillPoints;
 	BestClearTime = Save->BestClearTime;
 	ClearCount = Save->ClearCount;
+	bHasInventory = Save->bHasInventory;
+	InventorySlots = Save->InventorySlots;
+	bHasSilling = Save->bHasSilling;
+	Silling = Save->Silling;
+	bHasBattleItemLoadout = Save->bHasBattleItemLoadout;
+	BattleItemSlotIds = Save->BattleItemSlotIds;
+	BattleItemSlotCounts = Save->BattleItemSlotCounts;
 	UE_LOG(LogTemp, Log, TEXT("[Save] 불러옴 — 스킬 배치 %s, 최고 기록 %.1f초, 클리어 %d회"),
 		bHasSkillLoadout ? TEXT("있음") : TEXT("없음"), BestClearTime, ClearCount);
 }
@@ -46,6 +53,13 @@ void ULoAGameInstance::SaveToDisk()
 	Save->AvailableSkillPoints = AvailableSkillPoints;
 	Save->BestClearTime = BestClearTime;
 	Save->ClearCount = ClearCount;
+	Save->bHasInventory = bHasInventory;
+	Save->InventorySlots = InventorySlots;
+	Save->bHasSilling = bHasSilling;
+	Save->Silling = Silling;
+	Save->bHasBattleItemLoadout = bHasBattleItemLoadout;
+	Save->BattleItemSlotIds = BattleItemSlotIds;
+	Save->BattleItemSlotCounts = BattleItemSlotCounts;
 
 	if (!UGameplayStatics::SaveGameToSlot(Save, SaveSlotName, 0))
 	{

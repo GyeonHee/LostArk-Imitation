@@ -13,6 +13,8 @@
 #include "Engine/World.h"
 #include "Components/WidgetComponent.h"
 #include "UI/CharmGaugeWidget.h"
+#include "Item/BattleItemComponent.h"
+#include "Item/InventoryComponent.h"
 
 ALoACharacter::ALoACharacter()
 {
@@ -38,6 +40,9 @@ ALoACharacter::ALoACharacter()
 
 	// Create the skill manager component
 	SkillManager = CreateDefaultSubobject<USkillManagerComponent>(TEXT("SkillManager"));
+
+	BattleItems = CreateDefaultSubobject<UBattleItemComponent>(TEXT("BattleItems"));
+	Inventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("Inventory"));
 
 	// Create the camera boom component
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -258,6 +263,13 @@ void ALoACharacter::RestoreFullStatus()
 	OnHPChanged.Broadcast(HP);
 	MP = MaxMP;
 	OnMPChanged.Broadcast(MP);
+}
+
+void ALoACharacter::Heal(float Amount)
+{
+	if (bIsDead || Amount <= 0.f) return;
+	HP = FMath::Min(MaxHP, HP + Amount);
+	OnHPChanged.Broadcast(HP);
 }
 
 void ALoACharacter::AddCharmGauge(int32 Amount)

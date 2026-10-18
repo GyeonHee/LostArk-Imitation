@@ -82,6 +82,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Hex Tile|Initial Layout")
 	void SetupInitialLayout();
 
+	// 파란 테두리 2칸을 새로 뽑는다 (외곽 1 + MarkerTileDistance 떨어진 안쪽 1).
+	// bAvoidPrevious면 직전 외곽 타일은 후보에서 뺌 — 거울잇기가 끝날 때마다 호출
+	UFUNCTION(BlueprintCallable, Category = "Hex Tile|Initial Layout")
+	void RerollMarkerTiles(bool bAvoidPrevious = true);
+
 	// 외곽 링 좌표를 링을 따라 순서대로 (인접한 원소끼리 실제로 이웃)
 	UFUNCTION(BlueprintCallable, Category = "Hex Tile")
 	TArray<FIntPoint> GetOuterRingCoords() const;

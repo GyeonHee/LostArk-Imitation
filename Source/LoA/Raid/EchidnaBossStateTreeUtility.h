@@ -2116,6 +2116,14 @@ struct FStateTreeEchidnaMirrorCounterPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float EndDelay = 1.f;
 
+	// 패턴이 끝나면(EndDelay 뒤) 보스가 다시 나타나 이 시간 동안 그로기 — 0이면 그로기 없이 바로 종료
+	UPROPERTY(EditAnywhere, Category = "Groggy", meta = (ClampMin = "0.0"))
+	float GroggyDuration = 3.f;
+
+	// 켜면 4줄 전부 카운터쳤을 때(파훼)만 그로기
+	UPROPERTY(EditAnywhere, Category = "Groggy")
+	bool bGroggyOnlyOnSuccess = false;
+
 	// 시점 — 위에서 내려보던(-60) 카메라가 내려와 비스듬히 보도록
 	UPROPERTY(EditAnywhere, Category = "Camera")
 	float CameraPitch = -30.f;
@@ -2217,6 +2225,13 @@ struct FStateTreeEchidnaMirrorCounterPatternInstanceData
 
 	UPROPERTY()
 	float OutwardYaw = 0.f;
+
+	// 줄·카메라 등 패턴 정리를 이미 했는지 (그로기 시작 때 한 번, ExitState에서 중복 방지)
+	UPROPERTY(Transient)
+	bool bCleanedUp = false;
+
+	UPROPERTY(Transient)
+	bool bGroggyStarted = false;
 };
 
 /**
@@ -2254,4 +2269,8 @@ private:
 	bool TickIntro(FInstanceDataType& InstanceData, float DeltaTime) const;
 	void FinishIntro(FInstanceDataType& InstanceData) const;
 	void SpawnSideColumns(FInstanceDataType& InstanceData) const;
+
+	// 결과 집계(로그) + 줄·시네마틱·기둥 파괴 + 보스 다시 보이게 + 카메라·쿨타임 복구. 두 번째 호출부턴 아무것도 안 함.
+	// 반환값 = 카운터친 줄 수 (이미 정리됐으면 -1)
+	int32 CleanupPattern(FInstanceDataType& InstanceData) const;
 };

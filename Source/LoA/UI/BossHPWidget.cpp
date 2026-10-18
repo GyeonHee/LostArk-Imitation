@@ -3,6 +3,12 @@
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/SizeBox.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 
 UBossHPWidget::UBossHPWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -144,5 +150,96 @@ void UBossHPWidget::SetSettlementPaused(bool bPaused)
 	if (SettlementText)
 	{
 		SettlementText->SetColorAndOpacity(bPaused ? FSlateColor(SettlementPausedColor) : OriginalSettlementTextColor);
+	}
+}
+
+void UBossHPWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	BuildGroggyRow();
+}
+
+void UBossHPWidget::BuildGroggyRow()
+{
+	if (GroggyRow || !WidgetTree) return;
+
+	UVerticalBox* Root = Cast<UVerticalBox>(GetWidgetFromName(TEXT("BossHPRoot")));
+	if (!Root)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BossHP] BossHPRoot(VerticalBox) 없음 — 무력화 게이지 생략"));
+		return;
+	}
+
+	// SizeBox(고정 크기) → Overlay → [ProgressBar, 가운데 글자]
+	GroggyRow = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("GroggyRow"));
+	GroggyRow->SetWidthOverride(GroggyBarWidth);
+	GroggyRow->SetHeightOverride(GroggyBarHeight);
+
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("GroggyOverlay"));
+	GroggyRow->AddChild(Overlay);
+
+	GroggyBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("GroggyBar"));
+	FProgressBarStyle Style = GroggyBar->GetWidgetStyle();
+	Style.BackgroundImage.TintColor = FSlateColor(GroggyBackgroundColor);
+	GroggyBar->SetWidgetStyle(Style);
+	GroggyBar->SetFillColorAndOpacity(GroggyFillColor);
+	GroggyBar->SetPercent(1.f);
+	if (UOverlaySlot* BarSlot = Overlay->AddChildToOverlay(GroggyBar))
+	{
+		BarSlot->SetHorizontalAlignment(HAlign_Fill);
+		BarSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	GroggyText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("GroggyText"));
+	FSlateFontInfo Font = GroggyText->GetFont();
+	Font.Size = 12;
+	Font.OutlineSettings.OutlineSize = 1;
+	Font.OutlineSettings.OutlineColor = FLinearColor(0.f, 0.f, 0.f, 0.9f);
+	GroggyText->SetFont(Font);
+	GroggyText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	if (UOverlaySlot* TextSlot = Overlay->AddChildToOverlay(GroggyText))
+	{
+		TextSlot->SetHorizontalAlignment(HAlign_Center);
+		TextSlot->SetVerticalAlignment(VAlign_Center);
+	}
+
+	if (UVerticalBoxSlot* RowSlot = Root->AddChildToVerticalBox(GroggyRow))
+	{
+		RowSlot->SetHorizontalAlignment(HAlign_Center);
+		RowSlot->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
+	}
+
+	GroggyRow->SetVisibility(ESlateVisibility::Collapsed);
+	LastShownGroggyTenths = -1;
+}
+
+void UBossHPWidget::SetGroggy(float Remaining, float Total)
+{
+	if (!GroggyRow) return;
+
+	if (Total <= 0.f)
+	{
+		if (LastShownGroggyTenths != -1)
+		{
+			LastShownGroggyTenths = -1;
+			GroggyRow->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		return;
+	}
+
+	if (LastShownGroggyTenths == -1)
+	{
+		GroggyRow->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	// 바는 매 Tick 부드럽게, 글자는 0.1초 단위가 바뀔 때만
+	GroggyBar->SetPercent(FMath::Clamp(Remaining / Total, 0.f, 1.f));
+
+	const int32 Tenths = FMath::Max(0, FMath::CeilToInt(Remaining * 10.f));
+	if (Tenths != LastShownGroggyTenths)
+	{
+		LastShownGroggyTenths = Tenths;
+		GroggyText->SetText(FText::Format(FText::FromString(TEXT("{0}  {1}s")),
+			GroggyLabel, FText::FromString(FString::Printf(TEXT("%.1f"), Tenths / 10.f))));
 	}
 }

@@ -11,6 +11,8 @@
 class UCameraComponent;
 class USpringArmComponent;
 class UWidgetComponent;
+class UBattleItemComponent;
+class UInventoryComponent;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHPChanged, float /*NewHP*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMPChanged, float /*NewMP*/);
@@ -111,6 +113,14 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Skills")
 	TObjectPtr<USkillManagerComponent> SkillManager;
+
+	// 배틀아이템 칸 1~4 (회복약 등) — 인벤토리에서 드래그해 등록
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Items")
+	TObjectPtr<UBattleItemComponent> BattleItems;
+
+	// 소지품 10x10 (I키)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Items")
+	TObjectPtr<UInventoryComponent> Inventory;
 
 	// 에디터에서 DA_Sorceress 등 할당 — BeginPlay에서 스탯 초기화에 사용
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Data")
@@ -295,6 +305,10 @@ public:
 	// HP·MP를 최대치로 — 대기 지역 정비소가 호출
 	UFUNCTION(BlueprintCallable, Category="Stats")
 	void RestoreFullStatus();
+
+	// HP 회복 (최대치에서 클램프) — 사망 중엔 무시. 회복약이 호출
+	UFUNCTION(BlueprintCallable, Category="Stats")
+	void Heal(float Amount);
 
 	/** 매혹 게이지 스택 추가 (MaxCharmGauge에서 클램프) — 호출될 때마다 스택 감소 타이머가 CharmGaugeStackDuration으로
 	 * 다시 갱신됨. MaxCharmGauge에 도달하면 IsCharmed()가 true로 바뀌고 OnCharmedChanged가 브로드캐스트되며,

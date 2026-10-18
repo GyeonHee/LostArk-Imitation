@@ -13,6 +13,9 @@
 #include "UI/AbandonRaidWidget.h"
 #include "LoAGameInstance.h"
 #include "Lobby/RepairStationActor.h"
+#include "Lobby/ShopNPCActor.h"
+#include "UI/ShopWidget.h"
+#include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraActor.h"
 #include "Camera/PlayerCameraManager.h"
@@ -41,6 +44,18 @@
 #include "UI/SkillTree_ViewModel.h"
 #include "Blueprint/UserWidget.h"
 #include "View/MVVMView.h"
+#include "Item/BattleItemComponent.h"
+#include "Item/InventoryComponent.h"
+#include "Item/ItemTypes.h"
+#include "UI/InventoryWidget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
+#include "Components/Image.h"
+#include "Components/TextBlock.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Texture2D.h"
 
 ALoAPlayerController::ALoAPlayerController()
 {
@@ -79,6 +94,7 @@ void ALoAPlayerController::BeginPlay()
 		if (HUDWidget)
 		{
 			HUDWidget->AddToViewport();
+			BuildBattleItemHUD();
 			if (UMVVMView* View = HUDWidget->GetExtension<UMVVMView>())
 			{
 				bool bOk = View->SetViewModel(FName("HUD_ViewModel"), HUDViewModel);
@@ -108,6 +124,16 @@ void ALoAPlayerController::BeginPlay()
 		if (Char->SkillManager && SkillTreeViewModel)
 		{
 			SkillTreeViewModel->Initialize(Char->SkillManager);
+		}
+	}
+
+	if (IsLocalController())
+	{
+		InventoryWidget = CreateWidget<UInventoryWidget>(this, UInventoryWidget::StaticClass());
+		if (InventoryWidget)
+		{
+			InventoryWidget->AddToViewport(9);
+			InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
 
@@ -308,6 +334,9 @@ void ALoAPlayerController::OnPlayerDied()
 		AbandonWidget->CloseConfirm();
 		AbandonWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
+
+	CloseShop();
+	SetInventoryOpen(false);
 
 	// 스킬창이 열려 있었으면 닫고 입력 모드를 게임으로 되돌린다
 	if (SkillTreeWidget && SkillTreeWidget->GetVisibility() != ESlateVisibility::Collapsed)
@@ -748,6 +777,9 @@ void ALoAPlayerController::UpdateEnrageTimer()
 	BossHPWidget->SetEnrageTime(TrackedBoss->GetEnrageRemainingTime(), TrackedBoss->IsEnraged());
 	BossHPWidget->SetSettlementGauge(TrackedBoss->SettlementGauge);
 	BossHPWidget->SetSettlementPaused(TrackedBoss->IsSettlementPaused());
+	// 처치된 뒤엔 남은 그로기가 있어도 숨김
+	const bool bShowGroggy = !TrackedBoss->IsDefeated();
+	BossHPWidget->SetGroggy(TrackedBoss->GetGroggyRemainingTime(), bShowGroggy ? TrackedBoss->GetGroggyTotalDuration() : 0.f);
 }
 
 void ALoAPlayerController::UpdateCastBar()
@@ -844,8 +876,8 @@ void ALoAPlayerController::OnSkillTreeToggle()
 {
 	if (!SkillTreeWidget) return;
 
-	// 보스 맵 진입 연출 중·사망 후엔 스킬창도 못 연다
-	if (bRaidIntroActive || bDefeatActive) return;
+	// 보스 맵 진입 연출 중·사망 후·상점 중엔 스킬창도 못 연다
+	if (bRaidIntroActive || bDefeatActive || bShopOpen) return;
 
 	// 0.3초 내 중복 호출 무시 (SetWidgetToFocus 시 Enhanced Input 재평가로 인한 이중 발동 방지)
 	const float Now = GetWorld()->GetTimeSeconds();
@@ -1060,6 +1092,29 @@ void ALoAPlayerController::SetupInputComponent()
 				EnhancedInputComponent->BindAction(BasicAttackAction, ETriggerEvent::Completed, this, &ALoAPlayerController::OnSkillKeyUp,   USkillManagerComponent::BasicAttackSlotIndex);
 			}
 
+			// 배틀아이템 1~4 — 입력 액션 에셋 없이 키를 직접 바인딩
+			const FKey BattleItemKeys[] = { EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four };
+			for (int32 i = 0; i < UE_ARRAY_COUNT(BattleItemKeys); ++i)
+			{
+				FInputKeyBinding Binding(FInputChord(BattleItemKeys[i]), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnBattleItemKey, i);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
+			// 소지품 (I)
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::I), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnInventoryToggle);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
+			// NPC 대화 (G)
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::G), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnInteractKey);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
 		}
 		else
 		{
@@ -1088,6 +1143,13 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 	// 행동불능 체크보다 먼저 — 캐스팅 도중 기절/넉다운으로 스킬이 끊겼을 때도 바가 남지 않고 사라져야 한다
 	UpdateCastBar();
+	UpdateBattleItemHUD();
+	UpdateNPCInteraction();
+	if (InventoryWidget && IsInventoryOpen())
+	{
+		const ALoACharacter* InvChar = Cast<ALoACharacter>(ControlledPawn);
+		InventoryWidget->SetInventory(InvChar ? InvChar->Inventory.Get() : nullptr);
+	}
 	UpdateEnrageTimer();
 	UpdateScreenFog(DeltaSeconds);
 
@@ -1174,8 +1236,24 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 void ALoAPlayerController::OnInputStarted()
 {
-	// HUD 슬롯 위 클릭은 이동으로 쓰지 않는다 (드래그 스왑 시작)
-	if (ConsumeHUDSlotPress())
+	// 거리 안의 NPC를 우클릭(= 이동 버튼) — 걷지 않고 대화(상점)
+	if (!bShopOpen)
+	{
+		AShopNPCActor* NPC = HoveredNPC.Get();
+		if (NPC && NPC == InRangeNPC.Get())
+		{
+			OpenShop(NPC);
+			if (bShopOpen)
+			{
+				bMovePressSuppressed = true;
+				return;
+			}
+		}
+	}
+
+	// HUD 슬롯·소지품 창 위 클릭은 이동으로 쓰지 않는다 (드래그 스왑 시작) — 누르고 있는 동안·뗄 때도
+	bMovePressSuppressed = ConsumeHUDSlotPress();
+	if (bMovePressSuppressed)
 	{
 		return;
 	}
@@ -1213,7 +1291,7 @@ void ALoAPlayerController::OnInputStarted()
 
 void ALoAPlayerController::OnSetDestinationTriggered()
 {
-	if (bSlotPressActive)
+	if (bSlotPressActive || bMovePressSuppressed)
 	{
 		return;
 	}
@@ -1238,6 +1316,14 @@ void ALoAPlayerController::OnSetDestinationTriggered()
 void ALoAPlayerController::OnSetDestinationReleased()
 {
 	bHoldMoving = false;
+
+	// UI 위에서 시작된 클릭 — 짧게 눌렀다 떼도 자동이동을 시작하지 않는다
+	if (bMovePressSuppressed)
+	{
+		bMovePressSuppressed = false;
+		FollowTime = 0.f;
+		return;
+	}
 
 	// 짧게 눌렀다 떼도 기본공격으로 멈춘 뒤라면 자동이동을 시작하지 않는다
 	if (bMoveHaltedByAttack)
@@ -1492,6 +1578,12 @@ bool ALoAPlayerController::ConsumeHUDSlotPress()
 	// 이미 같은 클릭을 처리 중 (이동·기본공격이 같은 버튼일 때 두 번 불림)
 	if (bSlotPressActive) return true;
 
+	// 상점 중 — 캐릭터는 붙잡혀 있고, 어떤 클릭도 이동·기본공격으로 쓰지 않는다
+	if (bShopOpen) return true;
+
+	// 소지품 창 위 — 보통은 UMG가 먼저 먹지만 혹시 새어 들어와도 이동·기본공격으로 쓰지 않는다
+	if (InventoryWidget && InventoryWidget->IsCursorOverPanel()) return true;
+
 	int32 Group = -1, Index = -1;
 	if (!FindHUDSlotUnderCursor(Group, Index)) return false;
 
@@ -1576,7 +1668,18 @@ void ALoAPlayerController::UpdateSlotDrag()
 
 void ALoAPlayerController::FinishSlotDrag()
 {
-	if (bSlotDragging)
+	if (bSlotDragging && SlotPressGroup == HUDGroupBattle && InventoryWidget && InventoryWidget->IsCursorOverPanel())
+	{
+		if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->BattleItems)
+		{
+			FText Reason;
+			if (!Char->BattleItems->Unequip(SlotPressIndex, Reason) && !Reason.IsEmpty())
+			{
+				ShowTimedNotice(Reason, FText::GetEmpty(), 1.5f);
+			}
+		}
+	}
+	else if (bSlotDragging)
 	{
 		int32 Group = -1, Index = -1;
 		// 같은 종류 슬롯 위에서 놓았을 때만 스왑 — 스킬은 스킬끼리, 아이템은 아이템끼리, 배틀아이템은 배틀아이템끼리
@@ -1614,7 +1717,17 @@ void ALoAPlayerController::SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB)
 		return;
 	}
 
-	// 아이템·배틀아이템은 아직 아이템 시스템이 없어 아이콘(브러시)만 맞바꾼다
+	// 배틀아이템은 실제 칸(아이템·개수·쿨타임)을 맞바꾸고, 아이콘은 UpdateBattleItemHUD가 매 Tick 다시 그린다
+	if (Group == HUDGroupBattle)
+	{
+		if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && Char->BattleItems)
+		{
+			Char->BattleItems->SwapSlots(IndexA, IndexB);
+			return;
+		}
+	}
+
+	// 아이템은 아직 아이템 시스템이 없어 아이콘(브러시)만 맞바꾼다
 	const TCHAR* NameA = GetHUDSlotImageName(Group, IndexA);
 	const TCHAR* NameB = GetHUDSlotImageName(Group, IndexB);
 	UImage* ImageA = (HUDWidget && NameA) ? Cast<UImage>(HUDWidget->GetWidgetFromName(FName(NameA))) : nullptr;
@@ -1629,4 +1742,427 @@ void ALoAPlayerController::SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB)
 	ImageB->SetBrush(BrushA);
 	ImageA->SetColorAndOpacity(TintB);
 	ImageB->SetColorAndOpacity(TintA);
+}
+
+// ─── 배틀아이템 (1~4) ───────────────────────────────────────────────────────
+
+void ALoAPlayerController::OnBattleItemKey(int32 SlotIndex)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->BattleItems) return;
+
+	// 조종 불가(매혹)·행동불능(CC·사망·붙잡힘) 중엔 못 씀 — 컴포넌트도 같은 검사를 한다
+	if (Char->IsCharmed() || Char->IsActionLocked()) return;
+
+	Char->BattleItems->UseItem(SlotIndex);
+}
+
+void ALoAPlayerController::BuildBattleItemHUD()
+{
+	BattleItemIcons.Reset();
+	BattleItemCooldownImages.Reset();
+	BattleItemCooldownMIDs.Reset();
+	BattleItemCooldownTexts.Reset();
+	BattleItemCountTexts.Reset();
+
+	if (!HUDWidget || !HUDWidget->WidgetTree) return;
+	UWidgetTree* Tree = HUDWidget->WidgetTree;
+	UMaterialInterface* CooldownMaterial = BattleItemCooldownMaterial.LoadSynchronous();
+
+	auto MakeText = [Tree](const FString& Name, int32 Size) -> UTextBlock*
+	{
+		UTextBlock* Text = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), FName(*Name));
+		FSlateFontInfo Font = Text->GetFont();
+		Font.Size = Size;
+		Font.OutlineSettings.OutlineSize = 1;
+		Font.OutlineSettings.OutlineColor = FLinearColor(0.f, 0.f, 0.f, 0.9f);
+		Text->SetFont(Font);
+		Text->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		Text->SetVisibility(ESlateVisibility::Collapsed);
+		return Text;
+	};
+
+	for (int32 i = 0; i < UE_ARRAY_COUNT(HUDBattleBorders); ++i)
+	{
+		UBorder* Border = Cast<UBorder>(HUDWidget->GetWidgetFromName(FName(HUDBattleBorders[i])));
+		UImage* Icon = Cast<UImage>(HUDWidget->GetWidgetFromName(FName(HUDBattleImages[i])));
+		if (!Border || !Icon)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BattleItem] HUD %s/%s 없음 — 칸 %d 표시 생략"), HUDBattleBorders[i], HUDBattleImages[i], i + 1);
+			BattleItemIcons.Add(nullptr);
+			BattleItemCooldownImages.Add(nullptr);
+			BattleItemCooldownMIDs.Add(nullptr);
+			BattleItemCooldownTexts.Add(nullptr);
+			BattleItemCountTexts.Add(nullptr);
+			continue;
+		}
+
+		// Border → Overlay → [아이콘, 원형 쿨타임, 쿨타임 초(가운데), 개수(우하단)] — 뒤에 넣은 게 위에 그려진다
+		UOverlay* Overlay = Tree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), FName(*FString::Printf(TEXT("BattleItemOverlay_%d"), i + 1)));
+		Border->SetContent(Overlay);
+
+		if (UOverlaySlot* S = Overlay->AddChildToOverlay(Icon))
+		{
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Fill);
+		}
+
+		UImage* Cooldown = Tree->ConstructWidget<UImage>(UImage::StaticClass(), FName(*FString::Printf(TEXT("BattleItemCooldown_%d"), i + 1)));
+		UMaterialInstanceDynamic* MID = CooldownMaterial ? UMaterialInstanceDynamic::Create(CooldownMaterial, this) : nullptr;
+		if (MID)
+		{
+			Cooldown->SetBrushFromMaterial(MID);
+		}
+		else
+		{
+			Cooldown->SetColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.6f));
+		}
+		Cooldown->SetVisibility(ESlateVisibility::Collapsed);
+		if (UOverlaySlot* S = Overlay->AddChildToOverlay(Cooldown))
+		{
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Fill);
+		}
+
+		UTextBlock* CooldownText = MakeText(FString::Printf(TEXT("BattleItemCooldownTxt_%d"), i + 1), 14);
+		if (UOverlaySlot* S = Overlay->AddChildToOverlay(CooldownText))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetVerticalAlignment(VAlign_Center);
+		}
+
+		UTextBlock* CountText = MakeText(FString::Printf(TEXT("BattleItemCountTxt_%d"), i + 1), 11);
+		if (UOverlaySlot* S = Overlay->AddChildToOverlay(CountText))
+		{
+			S->SetHorizontalAlignment(HAlign_Right);
+			S->SetVerticalAlignment(VAlign_Bottom);
+			S->SetPadding(FMargin(0.f, 0.f, 3.f, 1.f));
+		}
+
+		BattleItemIcons.Add(Icon);
+		BattleItemCooldownImages.Add(Cooldown);
+		BattleItemCooldownMIDs.Add(MID);
+		BattleItemCooldownTexts.Add(CooldownText);
+		BattleItemCountTexts.Add(CountText);
+	}
+}
+
+void ALoAPlayerController::UpdateBattleItemHUD()
+{
+	if (BattleItemIcons.Num() == 0) return;
+
+	const ALoACharacter* Char = GetPawn<ALoACharacter>();
+	const UBattleItemComponent* Items = Char ? Char->BattleItems.Get() : nullptr;
+	if (!Items) return;
+
+	for (int32 i = 0; i < BattleItemIcons.Num(); ++i)
+	{
+		UImage* Icon = BattleItemIcons[i];
+		UImage* Cooldown = BattleItemCooldownImages[i];
+		UTextBlock* CooldownText = BattleItemCooldownTexts[i];
+		UTextBlock* CountText = BattleItemCountTexts[i];
+		if (!Icon || !Cooldown || !CooldownText || !CountText) continue;
+
+		const FBattleItemSlot* Slot = Items->GetSlot(i);
+		const FItemDefinition* Def = Slot ? LoAItems::Find(Slot->ItemId) : nullptr;
+		if (!Def)
+		{
+			// 빈 칸 — 리소스도 비워야 드래그 시작(GetHUDSlotIconBrush)이 빈 칸으로 본다
+			if (Icon->GetBrush().GetResourceObject())
+			{
+				Icon->SetBrushResourceObject(nullptr);
+			}
+			Icon->SetVisibility(ESlateVisibility::Hidden);
+			Cooldown->SetVisibility(ESlateVisibility::Collapsed);
+			CooldownText->SetVisibility(ESlateVisibility::Collapsed);
+			CountText->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+
+		UTexture2D* Texture = Def->Icon.LoadSynchronous();
+		if (Texture && Icon->GetBrush().GetResourceObject() != Texture)
+		{
+			Icon->SetBrushResourceObject(Texture);
+		}
+		Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+		// 다 쓰면 칸에서 빼지 않고 빨간 반투명으로
+		const bool bDepleted = Slot->Count <= 0;
+		Icon->SetColorAndOpacity(bDepleted ? BattleItemDepletedTint : FLinearColor::White);
+
+		CountText->SetText(FText::AsNumber(Slot->Count));
+		CountText->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+		const float Ratio = bDepleted ? 0.f : Items->GetCooldownRatio(i);
+		if (Ratio > 0.f)
+		{
+			if (UMaterialInstanceDynamic* MID = BattleItemCooldownMIDs[i])
+			{
+				MID->SetScalarParameterValue(TEXT("CooldownRatio"), Ratio);
+			}
+			Cooldown->SetVisibility(ESlateVisibility::HitTestInvisible);
+			CooldownText->SetText(FText::AsNumber(FMath::CeilToInt(Items->GetCooldownRemaining(i))));
+			CooldownText->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		else
+		{
+			Cooldown->SetVisibility(ESlateVisibility::Collapsed);
+			CooldownText->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+// ─── 소지품 (I) ─────────────────────────────────────────────────────────────
+
+bool ALoAPlayerController::IsInventoryOpen() const
+{
+	return InventoryWidget && InventoryWidget->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void ALoAPlayerController::OnInventoryToggle()
+{
+	// 보스 맵 진입 연출 중·사망 후엔 못 연다
+	if (bRaidIntroActive || bDefeatActive) return;
+	SetInventoryOpen(!IsInventoryOpen());
+}
+
+void ALoAPlayerController::SetInventoryOpen(bool bOpen)
+{
+	if (!InventoryWidget) return;
+	if (bOpen == IsInventoryOpen()) return;
+
+	if (bOpen)
+	{
+		const ALoACharacter* Char = GetPawn<ALoACharacter>();
+		InventoryWidget->SetInventory(Char ? Char->Inventory.Get() : nullptr);
+		InventoryWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void ALoAPlayerController::HandleInventoryDropOutside(int32 InventoryIndex)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->BattleItems) return;
+
+	int32 Group = -1, Index = -1;
+	if (!FindHUDSlotUnderCursor(Group, Index) || Group != HUDGroupBattle) return;
+
+	FText Reason;
+	if (!Char->BattleItems->EquipFromInventory(Index, InventoryIndex, Reason) && !Reason.IsEmpty())
+	{
+		ShowTimedNotice(Reason, FText::GetEmpty(), 1.5f);
+	}
+}
+
+void ALoAPlayerController::LoAGiveItem(FName ItemId, int32 Count)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Inventory) return;
+	if (!LoAItems::Find(ItemId))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Cheat] LoAGiveItem — 없는 아이템 '%s'"), *ItemId.ToString());
+		return;
+	}
+	const int32 Left = Char->Inventory->AddItem(ItemId, FMath::Max(1, Count));
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAGiveItem %s x%d (못 넣은 개수 %d)"), *ItemId.ToString(), Count, Left);
+}
+
+void ALoAPlayerController::LoAInvTest()
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Inventory) return;
+
+	TArray<int32> Empty;
+	for (int32 i = 0; i < UInventoryComponent::Capacity; ++i)
+	{
+		if (Char->Inventory->GetSlot(i).IsEmpty()) Empty.Add(i);
+	}
+	for (int32 n = 0; n < 8 && Empty.Num() > 0; ++n)
+	{
+		const int32 Pick = FMath::RandRange(0, Empty.Num() - 1);
+		Char->Inventory->DebugSetSlot(Empty[Pick], LoAItems::SpiritRecoveryPotion, FMath::RandRange(1, 20));
+		Empty.RemoveAtSwap(Pick);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAInvTest — 회복약 묶음을 흩뿌림"));
+}
+
+void ALoAPlayerController::LoAGiveSilling(int64 Amount)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Inventory) return;
+	if (Amount >= 0) Char->Inventory->AddSilling(Amount);
+	else Char->Inventory->SpendSilling(-Amount);
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAGiveSilling %lld — 현재 %s 실링"), Amount, *LoAItems::FormatWithCommas(Char->Inventory->GetSilling()));
+}
+
+// ─── 상점 NPC ───────────────────────────────────────────────────────────────
+
+void ALoAPlayerController::UpdateNPCInteraction()
+{
+	APawn* MyPawn = GetPawn();
+
+	// 거리 안 가장 가까운 NPC
+	AShopNPCActor* Nearest = nullptr;
+	float NearestDistSq = TNumericLimits<float>::Max();
+	if (MyPawn && !bShopOpen)
+	{
+		for (TActorIterator<AShopNPCActor> It(GetWorld()); It; ++It)
+		{
+			if (!It->IsPawnInRange(MyPawn)) continue;
+			const float DistSq = FVector::DistSquared2D(It->GetActorLocation(), MyPawn->GetActorLocation());
+			if (DistSq < NearestDistSq)
+			{
+				NearestDistSq = DistSq;
+				Nearest = *It;
+			}
+		}
+	}
+	InRangeNPC = Nearest;
+
+	// 커서 아래 NPC — 창 위에 커서가 있으면 무시
+	AShopNPCActor* Hovered = nullptr;
+	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel());
+	if (!bShopOpen && !bCursorOverUI)
+	{
+		FHitResult Hit;
+		if (GetHitResultUnderCursor(ECC_Visibility, false, Hit))
+		{
+			Hovered = Cast<AShopNPCActor>(Hit.GetActor());
+		}
+	}
+	HoveredNPC = Hovered;
+
+	for (TActorIterator<AShopNPCActor> It(GetWorld()); It; ++It)
+	{
+		AShopNPCActor* NPC = *It;
+		NPC->SetHighlighted(!bShopOpen && (NPC == Nearest || NPC == Hovered));
+		NPC->SetPromptVisible(!bShopOpen && NPC == Nearest);
+	}
+}
+
+void ALoAPlayerController::OnInteractKey()
+{
+	if (bShopOpen) return;
+	if (AShopNPCActor* NPC = InRangeNPC.Get())
+	{
+		OpenShop(NPC);
+	}
+}
+
+void ALoAPlayerController::OpenShop(AShopNPCActor* NPC)
+{
+	if (bShopOpen || !NPC || !IsLocalController()) return;
+	if (bRaidIntroActive || bDefeatActive || bClearActive || bLevelTravelPending) return;
+
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || Char->IsActionLocked() || Char->IsCharmed() || !NPC->IsPawnInRange(Char)) return;
+
+	bShopOpen = true;
+	ActiveShopNPC = NPC;
+
+	// 하던 이동 멈추고 상점 동안 제자리 — 플레이어는 NPC를 바라봄
+	CancelAutoMove();
+	bHoldMoving = false;
+	Char->SetHeldByPattern(true);
+	FVector ToNPC = NPC->GetActorLocation() - Char->GetActorLocation();
+	ToNPC.Z = 0.f;
+	if (!ToNPC.IsNearlyZero())
+	{
+		Char->SetActorRotation(FRotator(0.f, ToNPC.Rotation().Yaw, 0.f));
+	}
+
+	// 카메라 줌인 — NPC가 화면 오른쪽에 오도록 (카메라 오른쪽 = Yaw + 90)
+	const float CameraYaw = ToNPC.IsNearlyZero() ? 0.f : ToNPC.Rotation().Yaw - 90.f;
+	Char->SetCameraZoomOverride(NPC->ShopCameraArmLength);
+	Char->SetCameraRotationOverride(FRotator(NPC->ShopCameraPitch, CameraYaw, 0.f));
+
+	// HUD는 숨기고, 열려 있던 스킬창은 닫는다
+	if (HUDWidget)
+	{
+		HUDVisibilityBeforeShop = static_cast<uint8>(HUDWidget->GetVisibility());
+		HUDWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (SkillTreeWidget && SkillTreeWidget->GetVisibility() != ESlateVisibility::Collapsed)
+	{
+		SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	// 하단 대화창
+	if (!ShopDialogueWidget)
+	{
+		ShopDialogueWidget = CreateWidget<UShopDialogueWidget>(this, UShopDialogueWidget::StaticClass());
+	}
+	if (ShopDialogueWidget)
+	{
+		if (!ShopDialogueWidget->IsInViewport()) ShopDialogueWidget->AddToViewport(7);
+		ShopDialogueWidget->SetDialogue(NPC->NPCName, NPC->GreetingLine);
+		ShopDialogueWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+
+	// 왼쪽 상점 창 + 바로 오른쪽 소지품 (둘 다 따로 끌 수 있음)
+	if (!ShopWidget)
+	{
+		ShopWidget = CreateWidget<UShopWidget>(this, UShopWidget::StaticClass());
+	}
+	if (ShopWidget)
+	{
+		if (!ShopWidget->IsInViewport()) ShopWidget->AddToViewport(9);
+		ShopWidget->OpenShop(NPC->ShopItems, NPC->CartSlotMaxCount, Char->Inventory.Get());
+		ShopWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	SetInventoryOpen(true);
+	if (InventoryWidget)
+	{
+		InventoryWidget->SetPanelPlacement(FVector2D(0.5f, 0.5f), FVector2D(0.f, 0.5f), FVector2D(4.f, -40.f));
+	}
+
+	NPC->SetHighlighted(false);
+	NPC->SetPromptVisible(false);
+	UE_LOG(LogTemp, Log, TEXT("[Shop] %s 상점 열림"), *NPC->NPCName.ToString());
+}
+
+void ALoAPlayerController::CloseShop()
+{
+	if (!bShopOpen) return;
+	bShopOpen = false;
+	ActiveShopNPC = nullptr;
+
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		Char->SetHeldByPattern(false);
+		Char->ClearCameraZoomOverride();
+		Char->ClearCameraRotationOverride();
+	}
+
+	if (HUDWidget)
+	{
+		HUDWidget->SetVisibility(static_cast<ESlateVisibility>(HUDVisibilityBeforeShop));
+	}
+	if (ShopWidget)
+	{
+		ShopWidget->CloseShop();
+		ShopWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (ShopDialogueWidget)
+	{
+		ShopDialogueWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	SetInventoryOpen(false);
+	if (InventoryWidget)
+	{
+		InventoryWidget->ResetPanelPlacement();
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Shop] 상점 닫힘"));
+}
+
+void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, bool bShift)
+{
+	if (bShopOpen && ShopWidget)
+	{
+		ShopWidget->HandleInventoryRightClick(InventoryIndex, bShift);
+	}
 }
