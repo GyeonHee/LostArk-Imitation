@@ -1,5 +1,6 @@
 #include "Item/ItemTypes.h"
 #include "Engine/Texture2D.h"
+#include "NiagaraSystem.h"
 
 namespace LoAItems
 {
@@ -22,6 +23,8 @@ namespace LoAItems
 			Potion.BattleEquipMax = 7;
 			Potion.HealMaxHPRatio = 0.6f;
 			Potion.Cooldown = 10.f;
+			Potion.UseVFX = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Free_Magic/VFX_Niagara/NS_Heal.NS_Heal")));
+			Potion.UseVFXDuration = 1.5f;
 			Map.Add(Potion.ItemId, Potion);
 
 			return Map;

@@ -4,6 +4,11 @@
 #include "LoACharacter.h"
 #include "LoAGameInstance.h"
 #include "Engine/World.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "TimerManager.h"
+#include "Components/CapsuleComponent.h"
 
 UBattleItemComponent::UBattleItemComponent()
 {
@@ -69,6 +74,8 @@ bool UBattleItemComponent::UseItem(int32 SlotIndex)
 		Character->Heal(Character->GetMaxHP() * Def->HealMaxHPRatio);
 	}
 
+	SpawnUseVFX(Character, *Def);
+
 	--Slot.Count;
 	if (Def->Cooldown > 0.f)
 	{
@@ -78,6 +85,27 @@ bool UBattleItemComponent::UseItem(int32 SlotIndex)
 
 	UE_LOG(LogTemp, Log, TEXT("[BattleItem] %s 사용 — 칸 남은 개수 %d"), *Def->DisplayName.ToString(), Slot.Count);
 	return true;
+}
+
+void UBattleItemComponent::SpawnUseVFX(ALoACharacter* Character, const FItemDefinition& Def)
+{
+	UNiagaraSystem* System = Def.UseVFX.LoadSynchronous();
+	if (!System || !Character->GetRootComponent()) return;
+
+	// 캡슐(루트)에 붙여 걸어 다녀도 몸에서 계속 나오게. 1회 재생이면 스스로 끝나고, 루핑이어도 UseVFXDuration 뒤 생성을 멈춘다
+	// 루트는 캡슐 중심(허리)이라 발밑으로 내린다 — NS_Heal의 원기둥 생성 범위가 바닥면부터 위로 뻗어서, 안 내리면 허리~머리 위에서 나옴
+	const float HalfHeight = Character->GetCapsuleComponent() ? Character->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 0.f;
+	UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		System, Character->GetRootComponent(), NAME_None, FVector(0.f, 0.f, -HalfHeight), FRotator::ZeroRotator,
+		EAttachLocation::KeepRelativeOffset, true);
+	if (!Comp || Def.UseVFXDuration <= 0.f) return;
+
+	TWeakObjectPtr<UNiagaraComponent> WeakComp = Comp;
+	FTimerHandle Handle;
+	GetWorld()->GetTimerManager().SetTimer(Handle, [WeakComp]()
+	{
+		if (WeakComp.IsValid()) WeakComp->Deactivate();
+	}, Def.UseVFXDuration, false);
 }
 
 bool UBattleItemComponent::EquipFromInventory(int32 SlotIndex, int32 InventoryIndex, FText& OutFailReason)

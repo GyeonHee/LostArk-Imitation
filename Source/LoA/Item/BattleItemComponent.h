@@ -80,4 +80,7 @@ private:
 	TMap<FName, float> CooldownDurations;
 
 	UInventoryComponent* GetInventory() const;
+
+	// 아이템 정의의 UseVFX를 캐릭터 몸에 붙여 재생 (회복약 = NS_Heal)
+	void SpawnUseVFX(class ALoACharacter* Character, const FItemDefinition& Def);
 };

@@ -160,6 +160,10 @@
   - 등록(`EquipFromInventory`) = 그 인벤토리 칸에서 최대 `BattleEquipMax`(회복약 7)개를 꺼내 배틀 칸에 담음. 칸에 다른 아이템이 있으면 인벤토리로 돌려보내고, 같은 아이템이 다른 배틀 칸에 있으면 그 칸은 비움. 배틀아이템(`bIsBattleItem`)만 등록 가능
   - 해제 = HUD 배틀 칸을 끌어 소지품 창 위에 놓기(`Unequip` → 남은 개수 인벤토리로)
   - 사용: 개수 0 / 쿨타임 중 / `IsActionLocked()` / 매혹이면 불가. **다 써도 칸에서 안 빠지고** 아이콘이 `BattleItemDepletedTint`(빨간 반투명)
+  - 사용 이펙트: 아이템 정의 `UseVFX`(회복약 = `/Game/Free_Magic/VFX_Niagara/NS_Heal`, ItemRegistry.cpp)를 `SpawnUseVFX`가 캐릭터 캡슐(루트)에 붙여 재생 — 걸어도 따라옴. 루핑이어도 `UseVFXDuration`(1.5초) 뒤 `Deactivate`로 생성만 멈추고 남은 입자가 사라지면 자동 정리. 소프트 경로라 그 폴더를 `DirectoriesToAlwaysCook`에 추가함
+    - 캡슐 중심이 아니라 **발밑**(-캡슐 절반 높이)에 붙임 — NS_Heal 생성 원기둥(반지름 28·높이 170, Midpoint 0)이 바닥면부터 위로 뻗어서. NS_Heal은 MCP로 수정(2026-10-19): `bLocalSpace` true(예전 false라 걸으면 입자가 뒤에 남아 떨어져 보였음), 버스트 50→120, 위 속도 100~400→30~120
+    - 2차(몸속에서 차오르는 느낌): 입자가 한쪽(정면처럼 보이는 방향)으로 쏠리던 건 컬 노이즈(주파수 20, 세기 200~500)가 좁은 범위에선 균일한 바람처럼 작용해서 → 세기 15~40으로 낮춤. Particle Update에 `AccelerationForce`(위로 0,0,90 — 계속 떠오름) + `VortexForce001`(Z축 회전 120, Origin Pull 80 — 몸 축으로 당겨 모이게) 추가. **힘 모듈은 `SolveForcesAndVelocity`보다 앞에 있어야 적용됨**(MCP `AddModule`은 지정한 모듈 **뒤**에 넣는다 — 처음에 Solve 뒤에 들어가서 지우고 다시 넣음). 원기둥 높이 170→150, 수명 2~3→1.2~2초
+    - 3차 — **진짜 원인**: `ShapeLocation`의 Rotation Mode가 `Axis Angle`(축 1,0,0)이었는데, 업그레이드된 ShapeLocation은 이 축을 원기둥 방향으로 써서 **원기둥이 캐릭터 정면(X)으로 누워** 입자가 발밑에서 앞으로 길게 깔렸음. Rotation Mode → `Default`로 바꿔 원기둥이 위(Z)로 섬. 다른 Free_Magic 이펙트를 복제해 쓸 때도 이 설정 확인할 것
   - 정비소 진입 시 `TopUpFromInventory` — 등록된 칸을 인벤토리에서 최대치까지 채움 + 쿨타임 초기화
   - 쿨타임은 칸이 아니라 **아이템 종류별**(`CooldownEndTimes` 맵) — 뺐다 껴서 쿨타임을 초기화하는 꼼수 방지
   - 칸 배치·개수는 `ULoAGameInstance`(`BattleItemSlotIds/Counts`) + SaveGame으로 유지

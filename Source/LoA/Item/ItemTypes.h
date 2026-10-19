@@ -4,6 +4,7 @@
 #include "ItemTypes.generated.h"
 
 class UTexture2D;
+class UNiagaraSystem;
 
 /** 정렬 순서 = 선언 순서 (배틀아이템이 맨 앞) */
 UENUM(BlueprintType)
@@ -64,6 +65,14 @@ struct FItemDefinition
 	// 재사용 대기시간 (초) — 아이템 종류별로 걸린다(칸을 옮기거나 뺐다 껴도 유지)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Battle")
 	float Cooldown = 0.f;
+
+	// 사용 시 캐릭터 몸(캡슐 중심)에 붙어 나오는 이펙트 — 비우면 없음
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Battle")
+	TSoftObjectPtr<UNiagaraSystem> UseVFX;
+
+	// 이펙트가 루핑이어도 이 시간(초) 뒤엔 생성을 멈추고 남은 입자가 사라지면 정리된다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Battle")
+	float UseVFXDuration = 1.5f;
 };
 
 /** 인벤토리 한 칸 — 저장 파일에도 이 그대로 들어간다 */
