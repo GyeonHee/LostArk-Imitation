@@ -1,6 +1,7 @@
 #include "SkillBlaze.h"
 #include "BlazeProjectile.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Character.h"
 #include "Components/CapsuleComponent.h"
@@ -51,14 +52,20 @@ void USkillBlaze::Execute_Implementation(AActor* Owner)
 
     ABlazeProjectile* Zone = World->SpawnActor<ABlazeProjectile>(
         ProjectileClass, SpawnLocation, SpawnRotation, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Zone, SkillRowName);
     if (!Zone) return;
 
-    const float AttackPower = Character ? Character->AttackPower : 100.f;
     AController* Instigator = Character ? Character->GetController() : nullptr;
+
+    // DT 계수 = 존 안에 계속 있는 대상이 받는 총 피해. 맞는 횟수 = 첫 타 1번 + BurnInterval마다(존이 ZoneDuration 뒤 사라짐)
+    // 예전엔 DT 계수(2.0)를 안 쓰고 BurnDamageRatio(0.3) × 타수로 따로 정해져 있었다
+    const int32 BurnHits = 1 + FMath::FloorToInt((ZoneDuration - KINDA_SMALL_NUMBER) / FMath::Max(0.01f, BurnInterval));
+    const float BurnTickDamage = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName) / BurnHits;
 
     Zone->Activate(
         BoxHalfExtent,
-        AttackPower * BurnDamageRatio,
+        BurnTickDamage,
         BurnInterval,
         ZoneDuration,
         Instigator

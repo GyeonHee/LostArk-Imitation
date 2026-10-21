@@ -17,6 +17,19 @@ enum class EItemCategory : uint8
 	Etc,
 };
 
+/** 장비 부위 — 장착 아이템 레벨은 이 6부위 평균 (로아: 무기 1 + 방어구 5) */
+UENUM(BlueprintType)
+enum class EEquipSlot : uint8
+{
+	Helmet   UMETA(DisplayName="투구"),
+	Shoulder UMETA(DisplayName="어깨"),
+	Chest    UMETA(DisplayName="상의"),
+	Pants    UMETA(DisplayName="하의"),
+	Gloves   UMETA(DisplayName="장갑"),
+	Weapon   UMETA(DisplayName="무기"),
+	MAX      UMETA(Hidden),
+};
+
 /**
  * 아이템 한 종류의 정의 — 변하지 않는 데이터. 인벤토리 칸은 ItemId·개수만 들고 있고 정의는 LoAItems::Find()로 찾는다(플라이웨이트).
  * 같은 회복약 100개가 이름·아이콘·수치를 100번 복사해 들고 있지 않게 하려는 것
@@ -73,6 +86,56 @@ struct FItemDefinition
 	// 이펙트가 루핑이어도 이 시간(초) 뒤엔 생성을 멈추고 남은 입자가 사라지면 정리된다
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Battle")
 	float UseVFXDuration = 1.5f;
+
+	// ── 장비 (Category == Equipment) — 칸 하나에 1개, 재련 단계 등은 FEquipmentInstance가 들고 있다 ──
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
+	EEquipSlot EquipSlot = EEquipSlot::MAX;
+
+	// 재련 0단계 아이템 레벨 — 부위 레벨 = 이 값 + 재련 단계 × LoAEquipRules::ItemLevelPerRefine
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
+	int32 BaseItemLevel = 0;
+
+	// 재련 0단계 스탯 — 단계마다 LoAEquipRules::StatPerRefine씩 오른다. 방어구는 주 스탯·체력, 무기는 무기 공격력
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
+	double PrimaryStat = 0.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
+	double WeaponPower = 0.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
+	double Vitality = 0.0;
+
+	bool IsEquipment() const { return Category == EItemCategory::Equipment && EquipSlot != EEquipSlot::MAX; }
+};
+
+/**
+ * 장비 한 개 — 같은 정의(투구)라도 재련 단계·품질이 제각각이라 인스턴스로 따로 들고 있다.
+ * 소지품 칸·장착 칸은 InstanceId(GUID)로 이걸 가리키고, 실제 데이터는 UInventoryComponent의 맵 하나에만 있다
+ */
+USTRUCT(BlueprintType)
+struct FEquipmentInstance
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	FGuid InstanceId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	FName ItemId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 RefineLevel = 0;
+
+	// 품질 0~100 — 아직 효과 없음(로아: 무기 추가 피해 / 방어구 체력)
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Quality = 0;
+
+	// 4단계 재련용 — 장인의 기운(0~1)과 실패 보정 누적 횟수
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	float ArtisanEnergy = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 FailBonusSteps = 0;
 };
 
 /** 인벤토리 한 칸 — 저장 파일에도 이 그대로 들어간다 */
@@ -91,8 +154,23 @@ struct FInventorySlot
 	UPROPERTY(BlueprintReadOnly, Category = "Item")
 	bool bLocked = false;
 
+	// 장비 칸이면 그 장비 인스턴스 (Count는 1). 일반 아이템은 무효 GUID
+	UPROPERTY(BlueprintReadOnly, Category = "Item")
+	FGuid EquipmentId;
+
 	bool IsEmpty() const { return ItemId.IsNone() || Count <= 0; }
+	bool IsEquipment() const { return EquipmentId.IsValid(); }
 };
+
+/** 장비 규칙 — 직업과 무관한 게임 규칙이라 코드에 둔다 (StatTypes.h의 LoAStatRules와 같은 방침) */
+namespace LoAEquipRules
+{
+	constexpr int32 SlotCount = static_cast<int32>(EEquipSlot::MAX);
+	constexpr int32 ItemLevelPerRefine = 5;   // 재련 1단계 = 부위 아이템 레벨 +5
+	constexpr double StatPerRefine = 0.02;    // 재련 1단계 = 부위 스탯 +2% (재련 0단계 기준)
+	constexpr int32 MaxRefineLevel = 25;
+	constexpr int32 StarterRefineLevel = 10;  // 시작 세트 +10 = 아이템 레벨 1640
+}
 
 /** 아이템 정의 등록소 — 지금은 C++ 표(ItemRegistry.cpp). 아이템이 많아지면 DataTable로 옮길 것 */
 namespace LoAItems
@@ -101,6 +179,13 @@ namespace LoAItems
 
 	// 정령의 회복약
 	LOA_API extern const FName SpiritRecoveryPotion;
+
+	/** 부위별 시작 장비 (1640 세트 = 재련 +10) — EEquipSlot 순서 */
+	LOA_API FName GetStarterEquipment(EEquipSlot Slot);
+
+	/** 장비 인스턴스의 부위 아이템 레벨 / 재련 반영 스탯 배율 */
+	LOA_API int32 GetEquipmentItemLevel(const FEquipmentInstance& Instance);
+	LOA_API double GetRefineStatMultiplier(int32 RefineLevel);
 
 	/** 세 자리마다 쉼표 — 100000000 → "100,000,000". 언어 설정과 무관하게 항상 쉼표 */
 	LOA_API FString FormatWithCommas(int64 Value);

@@ -1,6 +1,7 @@
 #include "Skill/SkillFrostCall.h"
 #include "Skill/FrostCallZoneActor.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "Engine/Engine.h"
 
@@ -87,12 +88,18 @@ void USkillFrostCall::Execute_Implementation(AActor* Owner)
 
     AFrostCallZoneActor* Zone = World->SpawnActor<AFrostCallZoneActor>(
         ZoneClass, TargetLoc, FRotator::ZeroRotator, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Zone, SkillRowName);
 
     if (Zone)
     {
         ActiveZone = Zone;
-        const float TickDamage = (Character ? Character->AttackPower : 100.f)
-                               * SkillData.DamageCoefficient;
+        // DT 계수 = 끝까지 홀드했을 때의 총 피해 → 최대 틱 수로 나눠 틱당 피해 (아이스 에로우와 같은 방식).
+        // 예전엔 계수를 틱마다 통째로 줘서 9틱이면 계수 72가 됐다 — 데미지 미터에서 딜 비중 45%로 드러남
+        const float TotalDamage = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName);
+        const AFrostCallZoneActor* ZoneCDO = ZoneClass->GetDefaultObject<AFrostCallZoneActor>();
+        const int32 Ticks = ZoneCDO ? FMath::Max(1, ZoneCDO->MaxDamageTicks) : 1;
+        const float TickDamage = TotalDamage / Ticks;
         Zone->Activate(TickDamage, Character ? Character->GetController() : nullptr);
 
         GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan,

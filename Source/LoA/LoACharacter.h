@@ -13,6 +13,8 @@ class USpringArmComponent;
 class UWidgetComponent;
 class UBattleItemComponent;
 class UInventoryComponent;
+class UStatComponent;
+struct FCombatStats;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHPChanged, float /*NewHP*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMPChanged, float /*NewMP*/);
@@ -45,6 +47,12 @@ private:
 	TObjectPtr<UWidgetComponent> CharmGaugeWidgetComponent;
 
 	void HandleCharmGaugeChanged(int32 NewGauge);
+
+	/** UStatComponent 재계산 결과를 캐릭터에 반영 — 공격력, 최대 HP(현재 HP 비율 유지), 이동속도 */
+	void HandleStatsChanged(const FCombatStats& NewStats);
+
+	// DA의 MoveSpeed — 신속 배율을 곱할 기준값
+	float BaseMoveSpeed = 600.f;
 
 	float MPRegenAccum = 0.f;
 
@@ -122,10 +130,20 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Items")
 	TObjectPtr<UInventoryComponent> Inventory;
 
+	// 장착 장비 6부위 (P키 캐릭터 정보 창) — 지능·무기공격력을 StatComponent에 더한다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Items")
+	TObjectPtr<class UEquipmentComponent> Equipment;
+
+	// 스탯(지능·무기공격력·체력 + 전투 특성) 계산 — 공격력·최대 HP·이동속도는 여기서 나온다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
+	TObjectPtr<UStatComponent> StatComponent;
+
 	// 에디터에서 DA_Sorceress 등 할당 — BeginPlay에서 스탯 초기화에 사용
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Data")
 	TObjectPtr<UCharacterDataAsset> CharacterData;
 
+	// StatComponent가 재계산 때마다 써넣는 값 — 기존 BP 참조(ABP_BasicAttack 등)를 깨지 않으려고 남겨둠.
+	// 새 코드는 StatComponent->GetStats().AttackPower를 읽을 것
 	UPROPERTY(BlueprintReadOnly, Category="Stats")
 	float AttackPower = 7911200.f;
 

@@ -1,6 +1,7 @@
 #include "Skill/SkillIceArrow.h"
 #include "Skill/IceArrowZoneActor.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
@@ -107,12 +108,13 @@ void USkillIceArrow::Execute_Implementation(AActor* Owner)
 
     AIceArrowZoneActor* Zone = World->SpawnActor<AIceArrowZoneActor>(
         ZoneClass, TargetLoc, FRotator::ZeroRotator, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Zone, SkillRowName);
 
     if (Zone)
     {
         // 총 데미지를 MaxTicks로 나눠서 틱당 데미지 계산
-        const float TotalDamage = (Character ? Character->AttackPower : 100.f)
-                                * SkillData.DamageCoefficient;
+        const float TotalDamage = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName);
         const AIceArrowZoneActor* ZoneCDO = ZoneClass->GetDefaultObject<AIceArrowZoneActor>();
         const int32 Ticks = ZoneCDO ? ZoneCDO->MaxTicks : 4;
         const float TickDmg = TotalDamage / FMath::Max(1, Ticks);

@@ -3,6 +3,7 @@
 
 #include "Skill/SkillCast.h"
 #include "Engine/Engine.h"
+#include "Stat/StatComponent.h"
 
 void USkillCast::OnKeyDown(AActor* Owner)
 {
@@ -16,7 +17,8 @@ void USkillCast::OnKeyHeld(AActor* Owner, float DeltaTime)
 {
     if (!bIsActive) return;
 
-    ElapsedTime += DeltaTime;
+    // 신속의 공격(캐스팅) 속도만큼 빨리 찬다
+    ElapsedTime += DeltaTime * UStatComponent::GetAttackSpeedMultiplierOf(Owner);
 
     // 키 1번을 고정 슬롯으로 사용 → 매 프레임 덮어써서 한 줄만 유지
     GEngine->AddOnScreenDebugMessage(1, 0.1f, FColor::Yellow,

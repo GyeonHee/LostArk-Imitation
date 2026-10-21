@@ -38,6 +38,14 @@ void ULoAGameInstance::LoadFromDisk()
 	bHasBattleItemLoadout = Save->bHasBattleItemLoadout;
 	BattleItemSlotIds = Save->BattleItemSlotIds;
 	BattleItemSlotCounts = Save->BattleItemSlotCounts;
+	EquipmentInstances = Save->EquipmentInstances;
+	EquippedIds = Save->EquippedIds;
+	bHasStarterGear = Save->bHasStarterGear;
+	if (Save->SaveVersion < CurrentSaveVersion)
+	{
+		// 0 → 1: 장비 필드가 생김. 옮길 데이터는 없고 bHasStarterGear=false라 시작 장비가 한 번 지급된다
+		UE_LOG(LogTemp, Log, TEXT("[Save] 저장 버전 %d → %d"), Save->SaveVersion, CurrentSaveVersion);
+	}
 	UE_LOG(LogTemp, Log, TEXT("[Save] 불러옴 — 스킬 배치 %s, 최고 기록 %.1f초, 클리어 %d회"),
 		bHasSkillLoadout ? TEXT("있음") : TEXT("없음"), BestClearTime, ClearCount);
 }
@@ -60,6 +68,10 @@ void ULoAGameInstance::SaveToDisk()
 	Save->bHasBattleItemLoadout = bHasBattleItemLoadout;
 	Save->BattleItemSlotIds = BattleItemSlotIds;
 	Save->BattleItemSlotCounts = BattleItemSlotCounts;
+	Save->SaveVersion = CurrentSaveVersion;
+	Save->EquipmentInstances = EquipmentInstances;
+	Save->EquippedIds = EquippedIds;
+	Save->bHasStarterGear = bHasStarterGear;
 
 	if (!UGameplayStatics::SaveGameToSlot(Save, SaveSlotName, 0))
 	{

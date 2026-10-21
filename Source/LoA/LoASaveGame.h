@@ -57,4 +57,19 @@ public:
 
 	UPROPERTY()
 	TArray<int32> BattleItemSlotCounts;
+
+	// 저장 구조 버전 — 구조를 바꿀 때 올리고 LoadFromDisk에서 옛 버전을 옮겨 담는다 (0 = 장비 이전 파일)
+	UPROPERTY()
+	int32 SaveVersion = 0;
+
+	// 장비 — 인스턴스 전부(소지품에 있는 것 + 장착한 것)와 부위별 장착 GUID
+	UPROPERTY()
+	TMap<FGuid, FEquipmentInstance> EquipmentInstances;
+
+	UPROPERTY()
+	TArray<FGuid> EquippedIds;
+
+	// 시작 장비(1640 세트)를 받았는지 — 실링처럼 따로 플래그라 장비 이전 저장 파일에도 한 번 지급
+	UPROPERTY()
+	bool bHasStarterGear = false;
 };

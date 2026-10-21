@@ -1,6 +1,7 @@
 #include "Skill/SkillCheonbeol.h"
 #include "Skill/LightningStrikeActor.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
@@ -79,8 +80,7 @@ void USkillCheonbeol::Execute_Implementation(AActor* Owner)
     if (!IsValid(Owner) || !LightningClass) return;
 
     ALoACharacter* Character = Cast<ALoACharacter>(Owner);
-    const float FinalDamage = (Character ? Character->AttackPower : 100.f)
-                            * SkillData.DamageCoefficient;
+    const float FinalDamage = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName);
 
     SpawnLightningAt(Owner, PendingCastTarget, FinalDamage);
 }
@@ -107,6 +107,8 @@ void USkillCheonbeol::SpawnLightningAt(AActor* Owner, const FVector& TargetPos, 
 
     ALightningStrikeActor* Lightning = World->SpawnActor<ALightningStrikeActor>(
         LightningClass, TargetPos, FRotator::ZeroRotator, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Lightning, SkillRowName);
 
     if (Lightning)
     {

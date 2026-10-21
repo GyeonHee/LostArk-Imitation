@@ -7,6 +7,8 @@
 #include "GameFramework/PlayerController.h"
 #include "LoAPlayerController.generated.h"
 
+enum class EEquipSlot : uint8;
+
 class UNiagaraSystem;
 class UInputMappingContext;
 class UInputAction;
@@ -355,9 +357,30 @@ public:
 	UFUNCTION(Exec)
 	void LoAGiveSilling(int64 Amount);
 
+	/** 테스트용 콘솔 명령 — 현재 스탯(기본 스탯·전투 특성·계산 결과)을 로그로 */
+	UFUNCTION(Exec)
+	void LoAStats();
+
+	/** 테스트용 콘솔 명령 — 스탯 임시 가산(같은 대상은 덮어씀, 0이면 제거). 대상 이름은 EStatModifierTarget.
+	 *  예) LoASetStat Crit 500 / LoASetStat Swiftness 800 / LoASetStat CritRate 0.5 / LoASetStat Reset */
+	UFUNCTION(Exec)
+	void LoASetStat(const FString& Target, double Value);
+
+	/** 테스트용 콘솔 명령 — 데미지 미터를 비우고 Seconds초 뒤 결과를 로그(CSV)로. 예) LoADpsTest 60 */
+	UFUNCTION(Exec)
+	void LoADpsTest(float Seconds);
+
 	// ── 소지품 창 (I키) ──
 	void SetInventoryOpen(bool bOpen);
 	bool IsInventoryOpen() const;
+
+	// ── 캐릭터 정보 창 (P키) ──
+	void SetCharacterInfoOpen(bool bOpen);
+	bool IsCharacterInfoOpen() const;
+
+	// ── 데미지 미터 창 (L키) ──
+	void SetDamageMeterOpen(bool bOpen);
+	bool IsDamageMeterOpen() const;
 
 	/** 소지품 칸을 창 밖에 놓았을 때(UInventoryWidget) — 커서가 HUD 배틀아이템 칸 위면 그 칸에 등록 */
 	void HandleInventoryDropOutside(int32 InventoryIndex);
@@ -371,6 +394,12 @@ public:
 
 	/** 소지품 칸 우클릭 — 상점이 열려 있으면 판매 목록에 올림(Shift = 묶음 판매). 상점 밖에선 아직 아무것도 안 함 */
 	void HandleInventorySlotRightClick(int32 InventoryIndex, bool bShift);
+
+	/** 캐릭터 정보 창의 장착 칸 우클릭 — 해제해서 소지품으로 */
+	void HandleEquipSlotRightClick(EEquipSlot Slot);
+
+	int32 LastEquipClickIndex = INDEX_NONE;
+	double LastEquipClickTime = -1.0;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Travel")
@@ -412,6 +441,30 @@ protected:
 	TObjectPtr<class UInventoryWidget> InventoryWidget;
 
 	void OnInventoryToggle();
+
+	// 캐릭터 정보 창(장비·스탯) — WBP 없이 C++ 클래스로 생성 (ZOrder 9, 소지품보다 먼저 만들어 소지품이 위에 그려짐)
+	UPROPERTY(Transient)
+	TObjectPtr<class UCharacterInfoWidget> CharacterInfoWidget;
+
+	// 캐릭터 정보 창 가운데 3D 미리보기 — 맵 위 허공에 세워두고 창이 열려 있을 때만 캡처
+	UPROPERTY(Transient)
+	TObjectPtr<class ACharacterPreviewActor> CharacterPreviewActor;
+
+	void OnCharacterInfoToggle();
+
+	// 보스·허수아비에 준 피해 집계 — 피격 쪽이 ULoADamageLibrary::ReportDamageDealt로 기록
+	UPROPERTY(VisibleAnywhere, Category="DamageMeter")
+	TObjectPtr<class UDamageMeterComponent> DamageMeter;
+
+	// 데미지 미터 창 — WBP 없이 C++ 클래스로 생성
+	UPROPERTY(Transient)
+	TObjectPtr<class UDamageMeterWidget> DamageMeterWidget;
+
+	void OnDamageMeterToggle();
+
+	/** 미터 기록이 바뀔 때 — 허수아비 세션이 처음 시작되면 창을 자동으로 연다(그 레벨에서 한 번) */
+	void HandleDamageMeterChanged();
+	bool bDamageMeterAutoOpened = false;
 
 	UPROPERTY(BlueprintReadOnly, Category="UI")
 	TObjectPtr<USkillTree_ViewModel> SkillTreeViewModel;

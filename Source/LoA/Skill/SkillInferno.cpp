@@ -1,6 +1,7 @@
 #include "Skill/SkillInferno.h"
 #include "Skill/InfernoZoneActor.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
@@ -98,11 +99,12 @@ void USkillInferno::Execute_Implementation(AActor* Owner)
 
     AInfernoZoneActor* Zone = World->SpawnActor<AInfernoZoneActor>(
         ZoneClass, TargetLoc, FRotator::ZeroRotator, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Zone, SkillRowName);
 
     if (Zone)
     {
-        const float FinalDamage = (Character ? Character->AttackPower : 100.f)
-                                * SkillData.DamageCoefficient;
+        const float FinalDamage = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName);
         Zone->Activate(FinalDamage, Character ? Character->GetController() : nullptr);
     }
 

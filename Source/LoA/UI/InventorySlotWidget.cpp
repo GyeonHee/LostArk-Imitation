@@ -3,6 +3,9 @@
 #include "UI/InventoryDragOperation.h"
 #include "UI/SlotDragVisualWidget.h"
 #include "Item/ItemTypes.h"
+#include "Item/InventoryComponent.h"
+#include "Item/EquipmentComponent.h"
+#include "GameFramework/Pawn.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Image.h"
@@ -102,14 +105,30 @@ void UInventorySlotWidget::Refresh(const FInventorySlot& InSlot)
 		}
 		IconImage->SetVisibility(ESlateVisibility::HitTestInvisible);
 
-		// 1개짜리는 개수 표시 안 함 (로아와 같이)
-		CountText->SetText(FText::AsNumber(InSlot.Count));
-		CountText->SetVisibility(InSlot.Count > 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		// 장비 — 개수 대신 재련 단계(+10), 툴팁은 아이템 레벨·스탯과 착용 중 장비 대비 차이
+		const UInventoryComponent* Inventory = Owner.IsValid() ? Owner->GetInventory() : nullptr;
+		const FEquipmentInstance* Equipment = (InSlot.IsEquipment() && Inventory) ? Inventory->FindEquipment(InSlot.EquipmentId) : nullptr;
 
 		FText Tooltip = Def->DisplayName;
+		if (Equipment)
+		{
+			CountText->SetText(FText::FromString(FString::Printf(TEXT("+%d"), Equipment->RefineLevel)));
+			CountText->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+			const APawn* Pawn = GetOwningPlayerPawn();
+			const UEquipmentComponent* Worn = Pawn ? Pawn->FindComponentByClass<UEquipmentComponent>() : nullptr;
+			Tooltip = UEquipmentComponent::DescribeEquipment(*Equipment, Worn ? Worn->GetEquipped(Def->EquipSlot) : nullptr);
+		}
+		else
+		{
+			// 1개짜리는 개수 표시 안 함 (로아와 같이)
+			CountText->SetText(FText::AsNumber(InSlot.Count));
+			CountText->SetVisibility(InSlot.Count > 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		}
+
 		if (bLocked)
 		{
-			Tooltip = FText::Format(NSLOCTEXT("Inventory", "LockedTooltip", "{0} (잠금)"), Def->DisplayName);
+			Tooltip = FText::Format(NSLOCTEXT("Inventory", "LockedTooltip", "{0} (잠금)"), Tooltip);
 		}
 		SetToolTipText(Tooltip);
 	}

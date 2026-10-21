@@ -1,6 +1,7 @@
 #include "Skill/SkillExplosion.h"
 #include "Skill/ExplosionMeteorActor.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
@@ -79,8 +80,7 @@ void USkillExplosion::Execute_Implementation(AActor* Owner)
     if (!IsValid(Owner) || !MeteorClass) return;
 
     ALoACharacter* Character    = Cast<ALoACharacter>(Owner);
-    const float    FinalDamage  = (Character ? Character->AttackPower : 100.f)
-                                * SkillData.DamageCoefficient;
+    const float    FinalDamage  = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName);
 
     SpawnMeteorAt(Owner, PendingCastTarget, FinalDamage);
 }
@@ -110,6 +110,8 @@ void USkillExplosion::SpawnMeteorAt(AActor* Owner, const FVector& TargetPos, flo
 
     AExplosionMeteorActor* Meteor = World->SpawnActor<AExplosionMeteorActor>(
         MeteorClass, TargetPos, FRotator::ZeroRotator, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Meteor, SkillRowName);
 
     if (Meteor)
     {

@@ -22,7 +22,9 @@ struct FSellReserveEntry
  * 소지품 — 10x10 고정 칸. 자료구조는 **크기 100의 고정 배열**(인덱스 = 행*10 + 열 = 화면 위치).
  * - 위치가 곧 인덱스라 칸 조회·드래그 스왑·잠금 토글이 전부 O(1)
  * - 칸은 ItemId·개수·잠금만 들고, 이름·아이콘·수치는 정의 해시맵(LoAItems::Find, O(1))에서 찾는다
- * - 정렬은 잠기지 않은 칸만 모아 같은 아이템을 합친 뒤 (카테고리, SortOrder, 이름) 순으로 O(n log n) 정렬 → 잠기지 않은 칸에 앞에서부터 채움
+ * - 정렬은 잠기지 않은 칸만 모아 같은 아이템을 합친 뒤(장비는 인스턴스별로 따로) (카테고리, 장비 아이템 레벨, SortOrder, 이름) 순으로
+ *   O(n log n) 정렬 → 잠기지 않은 칸에 앞에서부터 채움
+ * - 장비는 칸이 GUID로 FEquipmentInstance(재련 단계 등)를 가리킨다. 인스턴스 맵은 장착 중인 장비까지 여기 하나에만 있다
  * - 바뀐 칸 번호만 OnSlotChanged로 알려 UI는 그 칸만 다시 그린다(매 Tick 100칸을 훑지 않음)
  * 데이터는 레벨 이동(GameInstance)과 게임 재시작(SaveGame)을 넘어 유지된다
  */
@@ -76,6 +78,25 @@ public:
 	/** 테스트용 — 칸에 직접 넣는다(쌓기 규칙 무시) */
 	void DebugSetSlot(int32 Index, FName ItemId, int32 Count);
 
+	/** GameInstance에서 칸·장비 인스턴스를 불러온다 — 한 번만. 장비 컴포넌트가 먼저 BeginPlay돼도 쓸 수 있게 따로 뺐다 */
+	void EnsureLoaded();
+
+	// ── 장비 인스턴스 — 소지품 칸·장착 칸 모두 GUID로 이 맵을 가리킨다 ──
+	/** 새 장비 인스턴스를 만들어 맵에만 넣는다(칸에는 안 넣음). 정의가 장비가 아니면 무효 GUID */
+	FGuid CreateEquipment(FName ItemId, int32 RefineLevel, int32 Quality = 0);
+
+	const FEquipmentInstance* FindEquipment(const FGuid& Id) const { return Equipments.Find(Id); }
+	FEquipmentInstance* FindEquipmentMutable(const FGuid& Id) { return Equipments.Find(Id); }
+
+	/** 장비를 첫 빈 칸에 넣는다. 반환 = 칸 번호(가득 차면 INDEX_NONE) */
+	int32 PlaceEquipmentInEmptySlot(const FGuid& Id);
+
+	/** Index 칸을 이 장비로 바꾼다(무효 GUID면 비움) — 장착 칸과 맞바꿀 때 */
+	void SetSlotEquipment(int32 Index, const FGuid& Id);
+
+	/** 장비 인스턴스가 바뀜(재련 등) — 그 장비를 그리고 있는 칸·창이 다시 그리게 */
+	void NotifyEquipmentChanged(const FGuid& Id);
+
 	FOnInventorySlotChanged OnSlotChanged;
 
 	// ── 실링(은화) — 칸을 차지하지 않는 화폐. 나중에 상점에서 회복약 등을 산다 ──
@@ -120,6 +141,11 @@ protected:
 private:
 	UPROPERTY(Transient)
 	TArray<FInventorySlot> Slots;
+
+	UPROPERTY(Transient)
+	TMap<FGuid, FEquipmentInstance> Equipments;
+
+	bool bLoaded = false;
 
 	int64 Silling = 0;
 

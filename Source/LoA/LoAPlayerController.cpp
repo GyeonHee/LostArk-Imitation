@@ -47,7 +47,13 @@
 #include "Item/BattleItemComponent.h"
 #include "Item/InventoryComponent.h"
 #include "Item/ItemTypes.h"
+#include "Stat/StatComponent.h"
 #include "UI/InventoryWidget.h"
+#include "UI/CharacterInfoWidget.h"
+#include "UI/CharacterPreviewActor.h"
+#include "UI/DamageMeterWidget.h"
+#include "Stat/DamageMeterComponent.h"
+#include "Item/EquipmentComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Image.h"
@@ -65,6 +71,7 @@ ALoAPlayerController::ALoAPlayerController()
 
 	// create the path following comp
 	PathFollowingComponent = CreateDefaultSubobject<UPathFollowingComponent>(TEXT("Path Following Component"));
+	DamageMeter = CreateDefaultSubobject<UDamageMeterComponent>(TEXT("DamageMeter"));
 
 	// configure the controller
 	bShowMouseCursor = true;
@@ -129,6 +136,36 @@ void ALoAPlayerController::BeginPlay()
 
 	if (IsLocalController())
 	{
+		CharacterInfoWidget = CreateWidget<UCharacterInfoWidget>(this, UCharacterInfoWidget::StaticClass());
+		if (CharacterInfoWidget)
+		{
+			CharacterInfoWidget->AddToViewport(9);
+			CharacterInfoWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[CharacterInfo] 생성 %s"), CharacterInfoWidget ? TEXT("성공") : TEXT("실패"));
+
+		FActorSpawnParameters PreviewParams;
+		PreviewParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		PreviewParams.ObjectFlags |= RF_Transient;
+		CharacterPreviewActor = GetWorld()->SpawnActor<ACharacterPreviewActor>(ACharacterPreviewActor::StaticClass(),
+			FVector(0.f, 0.f, ACharacterPreviewActor::PreviewHeight), FRotator::ZeroRotator, PreviewParams);
+		if (CharacterInfoWidget)
+		{
+			CharacterInfoWidget->SetPreviewActor(CharacterPreviewActor);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[CharacterInfo] 미리보기 액터 %s"), CharacterPreviewActor ? TEXT("생성") : TEXT("생성 실패"));
+
+		DamageMeterWidget = CreateWidget<UDamageMeterWidget>(this, UDamageMeterWidget::StaticClass());
+		if (DamageMeterWidget)
+		{
+			DamageMeterWidget->AddToViewport(9);
+			DamageMeterWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		if (DamageMeter)
+		{
+			DamageMeter->OnChanged.AddUObject(this, &ALoAPlayerController::HandleDamageMeterChanged);
+		}
+
 		InventoryWidget = CreateWidget<UInventoryWidget>(this, UInventoryWidget::StaticClass());
 		if (InventoryWidget)
 		{
@@ -337,6 +374,7 @@ void ALoAPlayerController::OnPlayerDied()
 
 	CloseShop();
 	SetInventoryOpen(false);
+	SetCharacterInfoOpen(false);
 
 	// 스킬창이 열려 있었으면 닫고 입력 모드를 게임으로 되돌린다
 	if (SkillTreeWidget && SkillTreeWidget->GetVisibility() != ESlateVisibility::Collapsed)
@@ -1108,6 +1146,20 @@ void ALoAPlayerController::SetupInputComponent()
 				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
 			}
 
+			// 데미지 미터 (L)
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::L), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnDamageMeterToggle);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
+			// 캐릭터 정보 (P)
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::P), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnCharacterInfoToggle);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
 			// NPC 대화 (G)
 			{
 				FInputKeyBinding Binding(FInputChord(EKeys::G), IE_Pressed);
@@ -1149,6 +1201,11 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	{
 		const ALoACharacter* InvChar = Cast<ALoACharacter>(ControlledPawn);
 		InventoryWidget->SetInventory(InvChar ? InvChar->Inventory.Get() : nullptr);
+	}
+	if (CharacterInfoWidget && IsCharacterInfoOpen())
+	{
+		const ALoACharacter* InfoChar = Cast<ALoACharacter>(ControlledPawn);
+		CharacterInfoWidget->SetStatComponent(InfoChar ? InfoChar->StatComponent.Get() : nullptr);
 	}
 	UpdateEnrageTimer();
 	UpdateScreenFog(DeltaSeconds);
@@ -1583,6 +1640,8 @@ bool ALoAPlayerController::ConsumeHUDSlotPress()
 
 	// 소지품 창 위 — 보통은 UMG가 먼저 먹지만 혹시 새어 들어와도 이동·기본공격으로 쓰지 않는다
 	if (InventoryWidget && InventoryWidget->IsCursorOverPanel()) return true;
+	if (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel()) return true;
+	if (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel()) return true;
 
 	int32 Group = -1, Index = -1;
 	if (!FindHUDSlotUnderCursor(Group, Index)) return false;
@@ -1943,6 +2002,94 @@ void ALoAPlayerController::SetInventoryOpen(bool bOpen)
 	}
 }
 
+// ─── 캐릭터 정보 (P) ─────────────────────────────────────────────────────────
+
+bool ALoAPlayerController::IsCharacterInfoOpen() const
+{
+	return CharacterInfoWidget && CharacterInfoWidget->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void ALoAPlayerController::OnCharacterInfoToggle()
+{
+	// 보스 맵 진입 연출 중·사망 후·상점 대화 중엔 못 연다
+	if (bRaidIntroActive || bDefeatActive || bShopOpen) return;
+	SetCharacterInfoOpen(!IsCharacterInfoOpen());
+}
+
+void ALoAPlayerController::SetCharacterInfoOpen(bool bOpen)
+{
+	if (!CharacterInfoWidget) return;
+	if (bOpen == IsCharacterInfoOpen()) return;
+
+	if (bOpen)
+	{
+		const ALoACharacter* Char = GetPawn<ALoACharacter>();
+		CharacterInfoWidget->SetStatComponent(Char ? Char->StatComponent.Get() : nullptr);
+		if (CharacterPreviewActor)
+		{
+			// 열 때마다 복사 — 레벨 이동·캐릭터 교체 후에도 지금 캐릭터 모습
+			CharacterPreviewActor->SetupFromCharacter(Char);
+			CharacterPreviewActor->SetPreviewActive(true);
+		}
+		CharacterInfoWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		CharacterInfoWidget->SetVisibility(ESlateVisibility::Collapsed);
+		if (CharacterPreviewActor)
+		{
+			CharacterPreviewActor->SetPreviewActive(false);
+		}
+	}
+}
+
+// ─── 데미지 미터 (L) ─────────────────────────────────────────────────────────
+
+bool ALoAPlayerController::IsDamageMeterOpen() const
+{
+	return DamageMeterWidget && DamageMeterWidget->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void ALoAPlayerController::OnDamageMeterToggle()
+{
+	if (bRaidIntroActive) return;
+	SetDamageMeterOpen(!IsDamageMeterOpen());
+}
+
+void ALoAPlayerController::SetDamageMeterOpen(bool bOpen)
+{
+	if (!DamageMeterWidget) return;
+	if (bOpen == IsDamageMeterOpen()) return;
+
+	if (bOpen)
+	{
+		const ALoACharacter* Char = GetPawn<ALoACharacter>();
+		DamageMeterWidget->SetSources(DamageMeter, Char ? Char->SkillManager.Get() : nullptr);
+		DamageMeterWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		DamageMeterWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void ALoAPlayerController::HandleDamageMeterChanged()
+{
+	// 허수아비를 처음 때리면 한 번 자동으로 연다 — 닫은 뒤엔 다시 안 엶(L키로 직접)
+	if (!bDamageMeterAutoOpened && DamageMeter && DamageMeter->IsTrainingSession())
+	{
+		bDamageMeterAutoOpened = true;
+		SetDamageMeterOpen(true);
+	}
+}
+
+void ALoAPlayerController::LoADpsTest(float Seconds)
+{
+	if (!DamageMeter) return;
+	DamageMeter->StartDpsTest(Seconds);
+	SetDamageMeterOpen(true);
+}
+
 void ALoAPlayerController::HandleInventoryDropOutside(int32 InventoryIndex)
 {
 	ALoACharacter* Char = GetPawn<ALoACharacter>();
@@ -1999,6 +2146,66 @@ void ALoAPlayerController::LoAGiveSilling(int64 Amount)
 	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAGiveSilling %lld — 현재 %s 실링"), Amount, *LoAItems::FormatWithCommas(Char->Inventory->GetSilling()));
 }
 
+void ALoAPlayerController::LoAStats()
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->StatComponent) return;
+	TArray<FString> Lines = Char->StatComponent->DescribeStats();
+	Lines.Add(FString::Printf(TEXT("캐릭터 반영값 — AttackPower %.0f / MaxHP %.0f / MaxWalkSpeed %.1f"),
+		Char->AttackPower, Char->GetMaxHP(), Char->GetCharacterMovement()->MaxWalkSpeed));
+
+	// UE_LOG는 Output Log에만 남아서 ~ 콘솔로는 안 보인다 → 콘솔(ClientMessage)·화면에도 같이 띄움
+	for (int32 i = 0; i < Lines.Num(); ++i)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Stat] %s"), *Lines[i]);
+		ClientMessage(Lines[i]);
+		if (GEngine)
+		{
+			// 키를 줄마다 고정 → 다시 치면 같은 자리에서 갱신
+			GEngine->AddOnScreenDebugMessage(9100 + i, 8.f, FColor::Cyan, Lines[i]);
+		}
+	}
+}
+
+void ALoAPlayerController::LoASetStat(const FString& Target, double Value)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->StatComponent) return;
+
+	static const FName CheatSource(TEXT("Cheat"));
+
+	if (Target.Equals(TEXT("Reset"), ESearchCase::IgnoreCase))
+	{
+		Char->StatComponent->ClearModifiers(CheatSource);
+		UE_LOG(LogTemp, Log, TEXT("[Cheat] LoASetStat Reset — 임시 스탯 전부 제거"));
+		LoAStats();
+		return;
+	}
+
+	const UEnum* TargetEnum = StaticEnum<EStatModifierTarget>();
+	const int64 EnumValue = TargetEnum->GetValueByNameString(Target);
+	if (EnumValue == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Cheat] LoASetStat — 모르는 대상 '%s' (PrimaryStat/WeaponPower/Vitality/Crit/Specialization/Swiftness/Domination/Endurance/Expertise/CritRate/CritDamage/AdditiveDamage/MultiplicativeDamage)"), *Target);
+		return;
+	}
+	const EStatModifierTarget ModTarget = static_cast<EStatModifierTarget>(EnumValue);
+
+	TArray<FStatModifier> Mods = Char->StatComponent->GetModifiers(CheatSource);
+	Mods.RemoveAll([ModTarget](const FStatModifier& M) { return M.Target == ModTarget; });
+	if (!FMath::IsNearlyZero(Value))
+	{
+		FStatModifier& Mod = Mods.AddDefaulted_GetRef();
+		Mod.Target = ModTarget;
+		Mod.Value = Value;
+	}
+	Char->StatComponent->SetModifiers(CheatSource, Mods);
+
+	bCheatUsedThisRaid = true;
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoASetStat %s %g — 이번 판은 기록하지 않음"), *Target, Value);
+	LoAStats();
+}
+
 // ─── 상점 NPC ───────────────────────────────────────────────────────────────
 
 void ALoAPlayerController::UpdateNPCInteraction()
@@ -2025,7 +2232,9 @@ void ALoAPlayerController::UpdateNPCInteraction()
 
 	// 커서 아래 NPC — 창 위에 커서가 있으면 무시
 	AShopNPCActor* Hovered = nullptr;
-	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel());
+	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel())
+		|| (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel())
+		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
 	if (!bShopOpen && !bCursorOverUI)
 	{
 		FHitResult Hit;
@@ -2080,7 +2289,8 @@ void ALoAPlayerController::OpenShop(AShopNPCActor* NPC)
 	Char->SetCameraZoomOverride(NPC->ShopCameraArmLength);
 	Char->SetCameraRotationOverride(FRotator(NPC->ShopCameraPitch, CameraYaw, 0.f));
 
-	// HUD는 숨기고, 열려 있던 스킬창은 닫는다
+	// HUD는 숨기고, 열려 있던 스킬창·캐릭터 정보 창은 닫는다
+	SetCharacterInfoOpen(false);
 	if (HUDWidget)
 	{
 		HUDVisibilityBeforeShop = static_cast<uint8>(HUDWidget->GetVisibility());
@@ -2164,5 +2374,34 @@ void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, b
 	if (bShopOpen && ShopWidget)
 	{
 		ShopWidget->HandleInventoryRightClick(InventoryIndex, bShift);
+		return;
+	}
+
+	// 상점 밖 — 장비면 장착 (같은 부위 장비는 그 칸으로 돌아온다)
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Equipment) return;
+
+	// 빠른 연타의 두 번째 클릭(DoubleClick)도 우클릭으로 들어온다 — 그대로 처리하면 장착 직후 돌아온 장비를 다시 껴서
+	// 원래대로 되돌아가므로 같은 칸 0.3초 안 재클릭은 무시
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (InventoryIndex == LastEquipClickIndex && Now - LastEquipClickTime < 0.3) return;
+	LastEquipClickIndex = InventoryIndex;
+	LastEquipClickTime = Now;
+
+	FText FailReason;
+	if (!Char->Equipment->EquipFromInventory(InventoryIndex, FailReason) && !FailReason.IsEmpty())
+	{
+		ShowTimedNotice(NSLOCTEXT("Equipment", "EquipFailTitle", "장비"), FailReason);
+	}
+}
+
+void ALoAPlayerController::HandleEquipSlotRightClick(EEquipSlot Slot)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Equipment) return;
+	FText FailReason;
+	if (!Char->Equipment->Unequip(Slot, FailReason) && !FailReason.IsEmpty())
+	{
+		ShowTimedNotice(NSLOCTEXT("Equipment", "EquipFailTitle", "장비"), FailReason);
 	}
 }

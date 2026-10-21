@@ -181,6 +181,15 @@
   - 저장: `ULoAGameInstance::InventorySlots` + SaveGame(`LoA.sav`). 첫 실행(저장 없음)엔 `StartingItems` = 정령의 회복약 30개. **초기화하려면 `Saved/SaveGames/LoA.sav` 삭제**
   - 테스트 콘솔: `LoAGiveItem SpiritRecoveryPotion 50`, `LoAInvTest`(회복약 묶음 8개를 빈 칸에 흩뿌림 — 정렬·잠금 확인용)
   - **실링(은화, 2026-10-19)**: 칸을 차지하지 않는 화폐 — `UInventoryComponent::Silling`(int64), `AddSilling`/`SpendSilling`(모자라면 false, 상점 구매용 — 상점은 아직 없음)/`OnSillingChanged`. 창 맨 아래 어두운 띠에 은화 아이콘(`/Game/LostArk/UI/Item/T_Silling` — PIL로 만든 임시 아이콘) + `LoAItems::FormatWithCommas`(언어 설정과 무관하게 세 자리 쉼표, 100,000,000). 첫 지급 `StartingSilling` 1억 — 소지품과 **별도 플래그 `bHasSilling`**이라 실링 전 저장 파일에도 한 번 지급됨. GameInstance·SaveGame 유지. 치트 `LoAGiveSilling 5000`(음수면 차감)
+- **캐릭터 정보 창 (P키, 2026-10-21, `UI/CharacterInfoWidget`, `UI/CharacterPreviewActor`, `Stat/StatComponent`)** — 로아 [캐릭터 정보] 장비 탭 배치. C++ 트리(WBP 없음), 소지품 창과 같은 클릭·드래그 규칙
+  - 오른쪽 수치는 `UStatComponent::OnStatsChanged`로만 갱신. 공격력은 로아식 표시값(`DisplayAttackPower`, K 곱하기 전), 실제 계산값은 툴팁. 장비 칸은 3단계(장비) 전까지 빈 칸
+  - 가운데 3D 미리보기 = `ACharacterPreviewActor`(컨트롤러가 스폰, 맵 위 Z 60000) — 플레이어 메시 복사 + `MM_Idle`, SceneCapture → 렌더 타깃 → UImage. 끌어서 회전
+  - 조명: 자체 포인트 라이트 3개 + 라이팅 채널 1, 캡처 ShowFlag로 스카이라이트 끔 → 맵과 무관하게 같은 밝기. 수동 노출 EV0 기준이라 라이트가 cd 단위로 매우 세야 함(300은 완전히 검었고 15000/12500/12500으로 확정). 콘솔 `LoA.Preview.Light`/`LoA.Preview.Exposure`(창 다시 열면 반영)
+  - **버그였던 것 (캐릭터가 윤슬처럼 반짝임)** — 원인 세 개를 차례로 잡음:
+    ①노멀맵 위 반사 하이라이트가 하얀 점으로 반짝 → 라이트 `SpecularScale` **0** (0.35로는 남았음)
+    ②`SCS_FinalColorLDR`(8비트)에 톤매퍼가 넣는 양자화 디더링이 검은 배경·어두운 곳을 매 프레임 0~13으로 흔듦 → **`SCS_FinalToneCurveHDR` + `RTF_RGBA16f`** (프레임 차이 0 확인. `SCS_SceneColorHDR`은 완전히 검게 나옴)
+    ③TAA를 끄면 Idle 숨쉬기에 맞춰 슈트의 가는 선·윤곽이 지글거림 → **TAA는 켜 둘 것**(①②를 없앤 뒤엔 TAA가 반짝임을 만들지 않음)
+    필름 그레인·톤매퍼 품질·sRGB 형식·배경판·MegaLights는 원인 아니었음. **SceneCapture를 UI에 띄울 땐 이 조합을 쓸 것**
 - **HUD 위젯은 전부 루트 Visibility를 `HitTestInvisible`로 둘 것** — 클릭 이동 게임이라 바가 마우스 입력을 먹으면 그 영역을 클릭해도 캐릭터가 안 움직인다
 - ⚠️ **`BP_LoAPlayerController`의 위젯 클래스 프로퍼티는 반드시 에디터 Details 패널에서 직접 할당할 것.**
   MCP(`ObjectTools.set_properties`)로 CDO(`Default__BP_LoAPlayerController_C`)에 써서 저장하면 **에디터 조회로는 값이 보이고 `save_assets`도 true를 반환하는데, PIE 런타임에서는 null이다.** Live Coding 리인스턴싱을 거치면서 날아가는 것으로 보임.
@@ -983,18 +992,24 @@
 
 스킬 데미지 = `AttackPower × DamageCoefficient`. 킬타임 조절은 **`AttackPower` 하나만** 만지면 전체가 비례해 움직인다. 7,911,200 = 예전 35,000(보스 2100만 기준) × (4,746,719,168 ÷ 21,000,000) — 계수·쿨타임은 그대로 두고 킬타임이 유지되도록 환산한 값.
 
-### 스킬 계수/쿨타임 (`DT_Skills`) — 쿨타임은 실제 로아 소서리스 10레벨 값 그대로
-| 스킬 | 계수 | 데미지 | 쿨타임 |
-|---|---|---|---|
-| 기본공격 | 0.1 | 791,120 | 0.65s |
-| 블레이즈 | 2.0 | 15,822,400 | 10s |
-| 돌풍 | 4.0 | 31,644,800 | 14s |
-| 인페르노 | 6.0 | 47,467,200 | 14s |
-| 아이스 에로우 | 5.0 | 39,556,000 | 22s |
-| 혹한의 부름 | 8.0 | 63,289,600 | 24s |
-| 익스플로전 | 9.0 | 71,200,800 | 28s |
-| 천벌 | 14.0 | 110,756,800 | 28s |
-| 종말의 날 | 25.0 | 197,780,000 | 30s |
+### 스킬 계수/쿨타임 (`DT_Skills`) — 쿨타임은 실제 로아 소서리스 10레벨 값 그대로 (2026-10-22 계수 재분배)
+**계수 = 한 번 시전의 총 피해**(여러 번 맞는 스킬은 틱 수로 나눔). 데미지 = 공격력 7,190,431 × 계수(치명 전). 목표 비중은 특치 점화 소서리스 60초 딜 지분 참고값.
+Σ(계수 ÷ 쿨타임) = 3.13으로 재분배 전과 같게 유지 → 이론 DPS(약 2,670만)는 그대로, 스킬 간 비중만 바뀜
+
+| 스킬 | 계수 | 한 번 피해 | 쿨타임 | 목표 비중 |
+|---|---|---|---|---|
+| 기본공격 | 0.1 | 719,043 | 0.65s | - |
+| 블레이즈 | 2.2 | 15,818,948 | 10s | 7% |
+| 돌풍 | 0.45 | 3,235,694 | 14s | 1% |
+| 인페르노 | 3.5 | 25,166,508 | 14s | 8% |
+| 아이스 에로우 | 8.3 | 59,680,577 | 22s | 12% |
+| 혹한의 부름 | 5.3 | 38,109,284 | 24s | 7% |
+| 익스플로전 | 18.4 | 132,303,930 | 28s | 21% |
+| 천벌 | 16.6 | 119,361,155 | 28s | 19% |
+| 종말의 날 | 23.5 | 168,975,128 | 30s | 25% |
+
+- **버그였던 것 (데미지 미터로 발견)**: 혹한의 부름이 DT 계수를 **틱마다 통째로** 줘서 9틱이면 계수 72 — 허수아비 60초 측정에서 딜 비중 45%, 총 DPS가 이론의 1.7배였음. 아이스 에로우처럼 `MaxDamageTicks`로 나누도록 수정. 블레이즈는 DT 계수를 안 쓰고 `BurnDamageRatio`(0.3) × 타수로 따로 정해져 있어서, 계수 ÷ (첫 타 + 틱 수)로 통일(`BurnDamageRatio` 삭제)
+- 새 다단히트 스킬을 만들 땐 **DT 계수를 총 피해로 보고 틱 수로 나눌 것**
 
 - **기본공격 데미지 경로**: `BP_SorceressBasicAttack`(SkillInstant) → `BP_Sorceress.SpawnBasicAttack` → 발사체 `ABP_BasicAttack`이 BeginPlay에서 `DamageAmount = AttackPower × SkillManager.GetSlotSkillData(8).DamageCoefficient`로 계산. **2026-09-24 이전엔 계수를 안 곱하고 `AttackPower` 그대로(= 계수 1.0) 넣고 있어서 DT 계수를 바꿔도 데미지가 안 바뀌었음** — 다른 스킬처럼 C++ `Execute`가 아니라 BP 발사체가 데미지를 정하는 구조라 놓치기 쉬움
 

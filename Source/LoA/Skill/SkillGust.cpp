@@ -1,6 +1,7 @@
 #include "Skill/SkillGust.h"
 #include "Skill/GustTornadoActor.h"
 #include "LoACharacter.h"
+#include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "Engine/Engine.h"
 
@@ -42,11 +43,12 @@ void USkillGust::Execute_Implementation(AActor* Owner)
 
     AGustTornadoActor* Zone = World->SpawnActor<AGustTornadoActor>(
         ZoneClass, SpawnLoc, FaceRot, SpawnParams);
+    // 데미지 미터가 이 액터의 피해를 어느 스킬로 집계할지 알 수 있게
+    ULoADamageLibrary::TagDamageSource(Zone, SkillRowName);
 
     if (Zone)
     {
-        const float TotalDamage = (Character ? Character->AttackPower : 100.f)
-                                * SkillData.DamageCoefficient;
+        const float TotalDamage = ULoADamageLibrary::CalcOutgoingDamage(Character, SkillData.DamageCoefficient, SkillRowName);
         Zone->Activate(TotalDamage, Character ? Character->GetController() : nullptr, SkillData.bCanCounter);
 
         GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green,

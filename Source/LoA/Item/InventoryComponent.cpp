@@ -16,17 +16,31 @@ UInventoryComponent::UInventoryComponent()
 void UInventoryComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	EnsureLoaded();
+	OnSlotChanged.Broadcast(INDEX_NONE);
+	OnSillingChanged.Broadcast(Silling);
+}
+
+void UInventoryComponent::EnsureLoaded()
+{
+	if (bLoaded) return;
+	bLoaded = true;
 
 	Slots.SetNum(Capacity);
 
 	ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr;
+	if (GI)
+	{
+		Equipments = GI->EquipmentInstances;
+	}
 	if (GI && GI->bHasInventory)
 	{
 		for (int32 i = 0; i < Capacity; ++i)
 		{
 			Slots[i] = GI->InventorySlots.IsValidIndex(i) ? GI->InventorySlots[i] : FInventorySlot();
-			// 정의가 사라진 아이템(코드에서 지움)은 버린다
+			// 정의가 사라진 아이템(코드에서 지움)·인스턴스를 잃은 장비는 버린다
 			if (!LoAItems::Find(Slots[i].ItemId)) Slots[i] = FInventorySlot();
+			if (Slots[i].IsEquipment() && !Equipments.Contains(Slots[i].EquipmentId)) Slots[i] = FInventorySlot();
 			Normalize(Slots[i]);
 		}
 	}
@@ -39,9 +53,56 @@ void UInventoryComponent::BeginPlay()
 	}
 	// 실링은 따로 플래그 — 실링이 생기기 전 저장 파일(소지품만 있음)에도 처음 한 번은 지급
 	Silling = (GI && GI->bHasSilling) ? FMath::Max<int64>(0, GI->Silling) : FMath::Max<int64>(0, StartingSilling);
+}
 
-	OnSlotChanged.Broadcast(INDEX_NONE);
-	OnSillingChanged.Broadcast(Silling);
+FGuid UInventoryComponent::CreateEquipment(FName ItemId, int32 RefineLevel, int32 Quality)
+{
+	const FItemDefinition* Def = LoAItems::Find(ItemId);
+	if (!Def || !Def->IsEquipment()) return FGuid();
+
+	FEquipmentInstance Instance;
+	Instance.InstanceId = FGuid::NewGuid();
+	Instance.ItemId = ItemId;
+	Instance.RefineLevel = FMath::Clamp(RefineLevel, 0, LoAEquipRules::MaxRefineLevel);
+	Instance.Quality = FMath::Clamp(Quality, 0, 100);
+	Equipments.Add(Instance.InstanceId, Instance);
+	return Instance.InstanceId;
+}
+
+int32 UInventoryComponent::PlaceEquipmentInEmptySlot(const FGuid& Id)
+{
+	if (!Equipments.Contains(Id)) return INDEX_NONE;
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		if (Slots[i].IsEmpty())
+		{
+			SetSlotEquipment(i, Id);
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
+void UInventoryComponent::SetSlotEquipment(int32 Index, const FGuid& Id)
+{
+	if (!Slots.IsValidIndex(Index)) return;
+	FInventorySlot& Slot = Slots[Index];
+	Slot = FInventorySlot();
+	if (const FEquipmentInstance* Instance = Equipments.Find(Id))
+	{
+		Slot.ItemId = Instance->ItemId;
+		Slot.Count = 1;
+		Slot.EquipmentId = Id;
+	}
+	OnSlotChanged.Broadcast(Index);
+}
+
+void UInventoryComponent::NotifyEquipmentChanged(const FGuid& Id)
+{
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		if (Slots[i].EquipmentId == Id) OnSlotChanged.Broadcast(i);
+	}
 }
 
 void UInventoryComponent::AddSilling(int64 Amount)
@@ -67,6 +128,7 @@ void UInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr)
 	{
 		GI->InventorySlots = Slots;
+		GI->EquipmentInstances = Equipments;
 		GI->bHasInventory = true;
 		GI->Silling = Silling;
 		GI->bHasSilling = true;
@@ -97,7 +159,23 @@ int32 UInventoryComponent::GetMaxStack(FName ItemId)
 
 int32 UInventoryComponent::AddItem(FName ItemId, int32 Count)
 {
-	if (Count <= 0 || !LoAItems::Find(ItemId)) return FMath::Max(0, Count);
+	const FItemDefinition* Def = LoAItems::Find(ItemId);
+	if (Count <= 0 || !Def) return FMath::Max(0, Count);
+
+	// 장비 — 한 개마다 인스턴스(재련 0단계)를 만들어 빈 칸에
+	if (Def->IsEquipment())
+	{
+		for (; Count > 0; --Count)
+		{
+			const FGuid Id = CreateEquipment(ItemId, 0);
+			if (PlaceEquipmentInEmptySlot(Id) == INDEX_NONE)
+			{
+				Equipments.Remove(Id);
+				break;
+			}
+		}
+		return Count;
+	}
 	const int32 MaxStack = GetMaxStack(ItemId);
 
 	// 1) 이미 있는 같은 아이템 칸부터 채움
@@ -229,44 +307,76 @@ void UInventoryComponent::ToggleLock(int32 Index)
 
 void UInventoryComponent::SortItems()
 {
-	// 1) 잠기지 않은 칸 위치(앞→뒤) 수집 + 그 안의 아이템을 종류별 총개수로 합침 — 해시맵이라 합치기 O(n)
+	// 1) 잠기지 않은 칸 위치(앞→뒤) 수집 + 그 안의 아이템을 모음.
+	//    일반 아이템은 종류별 총개수로 합치고(해시맵, O(n)), 장비는 인스턴스가 제각각이라 하나씩 따로 둔다
 	TArray<int32> FreeIndices;
 	FreeIndices.Reserve(Capacity);
 	TMap<FName, int32> Totals;
+	TArray<FGuid> EquipmentIds;
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
 		const FInventorySlot& Slot = Slots[i];
 		if (Slot.bLocked && !Slot.IsEmpty()) continue;
 		FreeIndices.Add(i);
-		if (!Slot.IsEmpty())
+		if (Slot.IsEmpty()) continue;
+		if (Slot.IsEquipment()) EquipmentIds.Add(Slot.EquipmentId);
+		else Totals.FindOrAdd(Slot.ItemId) += Slot.Count;
+	}
+
+	// 2) 정렬 단위 — 일반 아이템 종류 하나 또는 장비 한 개
+	struct FSortEntry
+	{
+		FName ItemId;
+		int32 Count = 0;
+		FGuid EquipmentId;
+		int32 ItemLevel = 0;
+	};
+	TArray<FSortEntry> Entries;
+	Entries.Reserve(Totals.Num() + EquipmentIds.Num());
+	for (const TPair<FName, int32>& Pair : Totals)
+	{
+		Entries.Add({ Pair.Key, Pair.Value, FGuid(), 0 });
+	}
+	for (const FGuid& Id : EquipmentIds)
+	{
+		if (const FEquipmentInstance* Instance = Equipments.Find(Id))
 		{
-			Totals.FindOrAdd(Slot.ItemId) += Slot.Count;
+			Entries.Add({ Instance->ItemId, 1, Id, LoAItems::GetEquipmentItemLevel(*Instance) });
 		}
 	}
 
-	// 2) 종류 정렬 — 카테고리 → SortOrder → 이름. 종류 수 k개라 O(k log k)
-	TArray<FName> Ids;
-	Totals.GenerateKeyArray(Ids);
-	Ids.Sort([](const FName& L, const FName& R)
+	// 카테고리 → (장비는 아이템 레벨 높은 순) → SortOrder → 이름. O(k log k)
+	Entries.Sort([](const FSortEntry& L, const FSortEntry& R)
 	{
-		const FItemDefinition* A = LoAItems::Find(L);
-		const FItemDefinition* B = LoAItems::Find(R);
+		const FItemDefinition* A = LoAItems::Find(L.ItemId);
+		const FItemDefinition* B = LoAItems::Find(R.ItemId);
 		if (A->Category != B->Category) return static_cast<uint8>(A->Category) < static_cast<uint8>(B->Category);
+		if (L.ItemLevel != R.ItemLevel) return L.ItemLevel > R.ItemLevel;
 		if (A->SortOrder != B->SortOrder) return A->SortOrder < B->SortOrder;
-		return L.LexicalLess(R);
+		return L.ItemId.LexicalLess(R.ItemId);
 	});
 
-	// 3) 잠기지 않은 칸에 앞에서부터 다시 채움 (MaxStack 단위로 나눠서) — 합쳤으니 칸이 모자랄 일은 없다
+	// 3) 잠기지 않은 칸에 앞에서부터 다시 채움 (일반 아이템은 MaxStack 단위로 나눠서) — 합쳤으니 칸이 모자랄 일은 없다
 	int32 Cursor = 0;
-	for (const FName& Id : Ids)
+	for (const FSortEntry& Entry : Entries)
 	{
-		int32 Remaining = Totals[Id];
-		const int32 MaxStack = GetMaxStack(Id);
+		if (Entry.EquipmentId.IsValid())
+		{
+			if (Cursor >= FreeIndices.Num()) break;
+			FInventorySlot& Slot = Slots[FreeIndices[Cursor++]];
+			Slot = FInventorySlot();
+			Slot.ItemId = Entry.ItemId;
+			Slot.Count = 1;
+			Slot.EquipmentId = Entry.EquipmentId;
+			continue;
+		}
+		int32 Remaining = Entry.Count;
+		const int32 MaxStack = GetMaxStack(Entry.ItemId);
 		while (Remaining > 0 && Cursor < FreeIndices.Num())
 		{
 			FInventorySlot& Slot = Slots[FreeIndices[Cursor++]];
 			Slot = FInventorySlot();
-			Slot.ItemId = Id;
+			Slot.ItemId = Entry.ItemId;
 			Slot.Count = FMath::Min(Remaining, MaxStack);
 			Remaining -= Slot.Count;
 		}

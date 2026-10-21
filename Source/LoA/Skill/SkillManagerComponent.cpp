@@ -7,6 +7,7 @@
 #include "LoACharacter.h"
 #include "LoAGameInstance.h"
 #include "LoAPlayerController.h"
+#include "Stat/StatComponent.h"
 
 // Sets default values for this component's properties
 USkillManagerComponent::USkillManagerComponent()
@@ -415,13 +416,27 @@ void USkillManagerComponent::StartCooldown(int32 SlotIndex)
         return;
     }
 
-    if (SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex])
+    // 신속은 DT 쿨타임을 새로 읽는 슬롯에만 — 인스턴스 없는 슬롯(대시·즉시 기상)은 저장된 값을 다시 쓰므로
+    // 곱하면 쓸 때마다 누적돼 줄어든다(어차피 대시·기상은 신속 제외 대상)
+    const bool bHasInstance = SlotInstances.IsValidIndex(SlotIndex) && SlotInstances[SlotIndex];
+    if (bHasInstance)
     {
         CooldownDurations[SlotIndex] = SlotInstances[SlotIndex]->SkillData.Cooldown;
     }
     if (bCounterSlot && CounterCooldownOverride >= 0.f)
     {
+        // 거울 카운터의 고정 5초 — 신속을 받지 않는다
         CooldownDurations[SlotIndex] = CounterCooldownOverride;
+    }
+    else if (bHasInstance && SlotIndex == BasicAttackSlotIndex)
+    {
+        // 기본공격은 쿨감이 아니라 공격 속도로 빨라진다
+        CooldownDurations[SlotIndex] /= UStatComponent::GetAttackSpeedMultiplierOf(GetOwner());
+    }
+    else if (bHasInstance && SlotIndex != DashSlotIndex && SlotIndex != GetUpSlotIndex)
+    {
+        // 신속 쿨감 (상한 30%는 StatComponent에서). 대시·즉시 기상은 제외 — 딜 스탯이 생존기를 줄이면 패턴이 쉬워진다
+        CooldownDurations[SlotIndex] *= 1.f - UStatComponent::GetCooldownReductionOf(GetOwner());
     }
     CooldownEndTimes[SlotIndex] = World->GetTimeSeconds() + CooldownDurations[SlotIndex];
 }

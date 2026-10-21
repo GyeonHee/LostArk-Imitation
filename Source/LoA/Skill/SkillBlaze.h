@@ -28,11 +28,7 @@ public:
     UPROPERTY(EditDefaultsOnly, Category="Blaze")
     float ZoneDuration = 5.f;
 
-    // 틱당 데미지 = AttackPower * BurnDamageRatio
-    UPROPERTY(EditDefaultsOnly, Category="Blaze")
-    float BurnDamageRatio = 0.3f;
-
-    // 틱 간격 (초)
+    // 틱 간격 (초) — 피해는 DT 계수(한 번 시전의 총 피해)를 첫 타 + 틱 수로 나눠 준다
     UPROPERTY(EditDefaultsOnly, Category="Blaze")
     float BurnInterval = 1.0f;
 

@@ -2,6 +2,7 @@
 #include "BossDirectionIndicatorComponent.h"
 #include "EchidnaBossAIController.h"
 #include "UI/DamageNumberActor.h"
+#include "Stat/LoADamageLibrary.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "EngineUtils.h"
@@ -255,11 +256,18 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 	// (bDoFullDamage=true는 감쇠 곡선만 없앨 뿐 이 경로는 막지 못함).
 	// 실제로 "가끔 데미지 0이 뜨는" 증상의 원인이었고, HP도 안 깎이고 있었다.
 	// 이 프로젝트는 감쇠를 쓰지 않으므로 들어온 원본 값을 그대로 적용한다 — ALoACharacter::TakeDamage와 동일
-	ReceiveDamage(DamageAmount);
-	return DamageAmount;
+	// 치명·제압은 여기서 타수마다 굴린다 (시전 시점에 굴리면 범위 안 모든 타격이 같은 결과가 됨)
+	bool bCritical = false;
+	const float FinalDamage = ULoADamageLibrary::ResolveIncomingHit(DamageAmount, EventInstigator, IsGroggy(), bCritical);
+	if (!bDefeated)
+	{
+		ULoADamageLibrary::ReportDamageDealt(EventInstigator, this, DamageCauser, FinalDamage, bCritical, false);
+	}
+	ReceiveDamage(FinalDamage, bCritical);
+	return FinalDamage;
 }
 
-void AEchidnaBoss::ReceiveDamage(float DamageAmount)
+void AEchidnaBoss::ReceiveDamage(float DamageAmount, bool bCritical)
 {
 	// 처치 후엔 남은 장판·틱 데미지가 들어와도 무시 (데미지 숫자도 안 띄움)
 	if (bDefeated) return;
@@ -280,7 +288,7 @@ void AEchidnaBoss::ReceiveDamage(float DamageAmount)
 
 	OnHPChanged.Broadcast(HP, MaxHP);
 
-	SpawnDamageNumber(DamageAmount);
+	SpawnDamageNumber(DamageAmount, bCritical);
 
 	const int32 NewLine = GetCurrentLine();
 	if (NewLine != LastBroadcastLine)
@@ -316,7 +324,7 @@ void AEchidnaBoss::HandleDefeated()
 	OnDefeated.Broadcast();
 }
 
-void AEchidnaBoss::SpawnDamageNumber(float DamageAmount)
+void AEchidnaBoss::SpawnDamageNumber(float DamageAmount, bool bCritical)
 {
 	// 0짜리 숫자는 화면 노이즈일 뿐이라 아예 띄우지 않는다 (틱 데미지 반올림으로 0이 되는 경우 등)
 	if (!DamageNumberClass || DamageAmount < 0.5f) return;
@@ -339,7 +347,12 @@ void AEchidnaBoss::SpawnDamageNumber(float DamageAmount)
 		DamageNumberClass, SpawnLocation, FRotator::ZeroRotator, SpawnParams))
 	{
 		// 카운터가 계속 커지므로 나중에 맞은 숫자일수록 앞에 그려진다
-		Number->Activate(DamageAmount, ++DamageNumberCounter);
+		// "Counter!"와 같은 라벨 경로로 색·크기를 정해 띄운다 — 일반은 흰색, 치명타만 노랗고 크게
+		const FText Text = FText::FromString(FString::FormatAsNumber(FMath::RoundToInt(DamageAmount)));
+		Number->ActivateLabel(Text,
+			bCritical ? CritDamageNumberColor : NormalDamageNumberColor,
+			bCritical ? CritDamageNumberScale : 1.f,
+			++DamageNumberCounter);
 	}
 }
 

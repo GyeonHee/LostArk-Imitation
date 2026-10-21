@@ -61,8 +61,9 @@ public:
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
 		AController* EventInstigator, AActor* DamageCauser) override;
 
+	/** HP를 깎고 데미지 숫자를 띄운다. 치명 판정은 하지 않는다 — TakeDamage가 굴린 결과를 bCritical로 받는다 */
 	UFUNCTION(BlueprintCallable, Category = "Stats")
-	void ReceiveDamage(float DamageAmount);
+	void ReceiveDamage(float DamageAmount, bool bCritical = false);
 
 	/** 발밑 앞/뒤 방향 표시(정면은 가운데가 뾰족한 호, 후방은 매끈한 호) — 보스에 붙어 있어
 	 *  보스가 회전하면 같이 돈다. 모양/색은 이 컴포넌트의 Details에서 조절 */
@@ -80,6 +81,17 @@ public:
 	// 연타 시 숫자가 완전히 겹쳐 하나처럼 보이지 않도록 흩뿌리는 반경 (cm)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
 	float DamageNumberJitter = 70.f;
+
+	// 일반 데미지 숫자 — 흰색 (WBP_DamageNumber 기본 글자색과 무관하게 여기서 정함)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
+	FLinearColor NormalDamageNumberColor = FLinearColor::White;
+
+	// 치명타 숫자 — 로아처럼 노랗고 크게
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
+	FLinearColor CritDamageNumberColor = FLinearColor(1.f, 0.82f, 0.15f, 1.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
+	float CritDamageNumberScale = 1.3f;
 
 	// 풀피 기준 총 줄 수 (에키드나 싱글모드 = 285줄)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Stats")
@@ -397,5 +409,5 @@ private:
 	// 나중에 맞은 숫자가 앞에 그려지도록 계속 증가시키는 카운터 (ADamageNumberActor의 TranslucentSortPriority로 전달)
 	int32 DamageNumberCounter = 0;
 
-	void SpawnDamageNumber(float DamageAmount);
+	void SpawnDamageNumber(float DamageAmount, bool bCritical);
 };

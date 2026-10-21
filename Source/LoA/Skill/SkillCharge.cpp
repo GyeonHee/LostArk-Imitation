@@ -3,6 +3,7 @@
 
 #include "Skill/SkillCharge.h"
 #include "Engine/Engine.h"
+#include "Stat/StatComponent.h"
 
 void USkillCharge::OnKeyDown(AActor* Owner)
 {
@@ -15,7 +16,8 @@ void USkillCharge::OnKeyHeld(AActor* Owner, float DeltaTime)
 {
     if (!bIsActive) return;
 
-    ElapsedTime += DeltaTime;
+    // 신속의 공격(캐스팅) 속도만큼 빨리 찬다
+    ElapsedTime += DeltaTime * UStatComponent::GetAttackSpeedMultiplierOf(Owner);
 
     // 최대 차징 도달 → 자동 발동
     if (SkillData.ChargeMaxTime > 0.0f && ElapsedTime >= SkillData.ChargeMaxTime)

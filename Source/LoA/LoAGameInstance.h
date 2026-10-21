@@ -58,6 +58,19 @@ public:
 	UPROPERTY(Transient)
 	int64 Silling = 0;
 
+	// 장비 인스턴스 전부 + 부위별 장착 GUID (UInventoryComponent / UEquipmentComponent가 EndPlay에서 저장)
+	UPROPERTY(Transient)
+	TMap<FGuid, FEquipmentInstance> EquipmentInstances;
+
+	UPROPERTY(Transient)
+	TArray<FGuid> EquippedIds;
+
+	UPROPERTY(Transient)
+	bool bHasStarterGear = false;
+
+	// 현재 저장 구조 버전 — ULoASaveGame::SaveVersion
+	static constexpr int32 CurrentSaveVersion = 1;
+
 	// 보스 맵에서 사망·클리어해 대기 지역으로 돌아가는 중 — 대기 지역에서 캐릭터가 빙의되면 PlayerStart 대신 정비소 위치로 옮기고 끈다
 	UPROPERTY(Transient)
 	bool bReturnToRepairStation = false;

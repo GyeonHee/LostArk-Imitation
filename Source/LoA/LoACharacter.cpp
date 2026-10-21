@@ -15,6 +15,8 @@
 #include "UI/CharmGaugeWidget.h"
 #include "Item/BattleItemComponent.h"
 #include "Item/InventoryComponent.h"
+#include "Stat/StatComponent.h"
+#include "Item/EquipmentComponent.h"
 
 ALoACharacter::ALoACharacter()
 {
@@ -43,6 +45,8 @@ ALoACharacter::ALoACharacter()
 
 	BattleItems = CreateDefaultSubobject<UBattleItemComponent>(TEXT("BattleItems"));
 	Inventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("Inventory"));
+	StatComponent = CreateDefaultSubobject<UStatComponent>(TEXT("StatComponent"));
+	Equipment = CreateDefaultSubobject<UEquipmentComponent>(TEXT("Equipment"));
 
 	// Create the camera boom component
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -84,8 +88,36 @@ void ALoACharacter::PostInitializeComponents()
 		MaxMP       = CharacterData->MaxMP;
 		MP          = MaxMP;
 		MPRegenRate = CharacterData->MPRegenRate;
-		AttackPower = CharacterData->AttackPower;
-		GetCharacterMovement()->MaxWalkSpeed = CharacterData->MoveSpeed;
+		BaseMoveSpeed = CharacterData->MoveSpeed;
+		GetCharacterMovement()->MaxWalkSpeed = BaseMoveSpeed;
+	}
+
+	// 공격력·최대 HP·이동속도는 스탯 계산 결과로 덮어쓴다 (DA가 없으면 컴포넌트가 아무것도 안 해서 위/생성자 값 유지)
+	if (StatComponent)
+	{
+		StatComponent->OnStatsChanged.AddUObject(this, &ALoACharacter::HandleStatsChanged);
+		StatComponent->InitializeFromData(CharacterData);
+	}
+}
+
+void ALoACharacter::HandleStatsChanged(const FCombatStats& NewStats)
+{
+	AttackPower = static_cast<float>(NewStats.AttackPower);
+
+	if (!FMath::IsNearlyEqual(MaxHP, NewStats.MaxHP))
+	{
+		const float Ratio = MaxHP > 0.f ? HP / MaxHP : 1.f;
+		MaxHP = NewStats.MaxHP;
+		if (!bIsDead)
+		{
+			HP = FMath::Clamp(MaxHP * Ratio, 1.f, MaxHP);
+		}
+		OnHPChanged.Broadcast(HP);
+	}
+
+	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+	{
+		CMC->MaxWalkSpeed = BaseMoveSpeed * NewStats.MoveSpeedMultiplier;
 	}
 }
 
