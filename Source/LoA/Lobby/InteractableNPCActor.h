@@ -62,6 +62,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "NPC|Camera")
 	float MenuCameraPitch = -30.f;
 
+	// 미니맵 아이콘 — 비우면 미니맵에 노란 점 (상점·재련 NPC는 생성자에서 기본값)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "NPC|Minimap")
+	TSoftObjectPtr<class UTexture2D> MinimapIcon;
+
 	// ── 컨트롤러가 부름 ──
 	void SetHighlighted(bool bHighlighted);
 	void SetPromptVisible(bool bVisible);

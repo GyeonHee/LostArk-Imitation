@@ -24,6 +24,8 @@
 #include "Camera/CameraActor.h"
 #include "Camera/PlayerCameraManager.h"
 #include "UI/MinimapWidget.h"
+#include "UI/ResourceBarWidget.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Raid/HexArena.h"
 #include "GameFramework/Pawn.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
@@ -239,15 +241,34 @@ void ALoAPlayerController::BeginPlay()
 			BossHPWidgetClass ? TEXT("설정됨") : TEXT("미설정"), IsLocalController());
 	}
 
-	// 미니맵 — 아레나가 있는 레벨에서만. WBP 없이 C++ 클래스로 바로 생성해서 에디터 할당이 필요 없다
+	// 미니맵 — 모든 맵(아레나가 있으면 타일, 없으면 대기 지역 바닥·구역·NPC). WBP 없이 C++ 클래스로 바로 생성해서 에디터 할당이 필요 없다
 	// (위젯 클래스 CDO 할당이 PIE에서 날아가던 문제와 무관). 연기(ZOrder -1)보다 위라 그네·랜잡 중에도 보인다
-	if (IsLocalController() && UGameplayStatics::GetActorOfClass(this, AHexArena::StaticClass()))
+	if (IsLocalController())
 	{
 		MinimapWidget = CreateWidget<UMinimapWidget>(this, UMinimapWidget::StaticClass());
 		if (MinimapWidget)
 		{
 			MinimapWidget->AddToViewport(5);
 			UE_LOG(LogTemp, Log, TEXT("[Minimap] 위젯 생성 완료"));
+		}
+
+		// 좌상단 자원 띠 — 같은 좌상단에 있는 보스 맵 정산 게이지(WBP_BossHP의 SettlementRoot)는 띠 아래로 내린다
+		ResourceBarWidget = CreateWidget<UResourceBarWidget>(this, UResourceBarWidget::StaticClass());
+		if (ResourceBarWidget)
+		{
+			ResourceBarWidget->AddToViewport(5);
+			if (BossHPWidget)
+			{
+				if (UWidget* Settlement = BossHPWidget->GetWidgetFromName(TEXT("SettlementRoot")))
+				{
+					if (UCanvasPanelSlot* SettlementSlot = Cast<UCanvasPanelSlot>(Settlement->Slot))
+					{
+						FVector2D Pos = SettlementSlot->GetPosition();
+						Pos.Y = FMath::Max(Pos.Y, ResourceBarWidget->GetBottomY() + 10.f);
+						SettlementSlot->SetPosition(Pos);
+					}
+				}
+			}
 		}
 	}
 
@@ -687,7 +708,7 @@ void ALoAPlayerController::BeginRaidIntro(AEchidnaBoss* Boss)
 	// 연출 중엔 전투 UI를 숨긴다 (원래 Visibility를 기억했다가 되돌림). 캐스팅 바는 원래 숨어 있으니 제외
 	IntroHiddenWidgets.Reset();
 	IntroHiddenVisibilities.Reset();
-	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), AbandonWidget.Get() })
+	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), ResourceBarWidget.Get(), AbandonWidget.Get() })
 	{
 		if (!Widget) continue;
 		IntroHiddenWidgets.Add(Widget);

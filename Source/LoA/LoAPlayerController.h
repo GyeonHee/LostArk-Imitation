@@ -123,6 +123,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<class UMinimapWidget> MinimapWidget;
 
+	// 좌상단 자원 띠 (현재 시간 · 실링 · 골드 · 운명의 파편) — 모든 맵
+	UPROPERTY()
+	TObjectPtr<class UResourceBarWidget> ResourceBarWidget;
+
 	// ── 화면 연기 (랜잡 패턴) ──
 	UPROPERTY(Transient)
 	TObjectPtr<class UScreenFogWidget> ScreenFogWidget;

@@ -6,6 +6,7 @@ AShopNPCActor::AShopNPCActor()
 	NPCTitle = NSLOCTEXT("NPC", "ShopTitle", "[물약 상점]");
 	NPCName = NSLOCTEXT("NPC", "ShopName", "에일린");
 	GreetingLine = NSLOCTEXT("NPC", "ShopGreeting", "어서 오세요! 레이드 전에 회복약은 넉넉히 챙기셨나요?");
+	MinimapIcon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/Minimap/T_MinimapIcon_Shop.T_MinimapIcon_Shop")));
 
 	FShopItemEntry Potion;
 	Potion.ItemId = LoAItems::SpiritRecoveryPotion;

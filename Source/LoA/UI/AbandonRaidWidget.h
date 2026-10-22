@@ -20,7 +20,7 @@ class LOA_API UAbandonRaidWidget : public UUserWidget
 public:
 	// 버튼 위치 — 화면 좌상단 기준 (좌상단 초상화·정산 게이지 아래)
 	UPROPERTY(EditDefaultsOnly, Category = "Abandon")
-	FVector2D ButtonPosition = FVector2D(20.f, 200.f);
+	FVector2D ButtonPosition = FVector2D(20.f, 240.f);  // 좌상단 자원 띠 + 정산 게이지 아래
 
 	void CloseConfirm();
 

@@ -2,6 +2,10 @@
 #include "Raid/HexArena.h"
 #include "Raid/HexTile.h"
 #include "Raid/EchidnaBoss.h"
+#include "Lobby/LobbyZoneActor.h"
+#include "Lobby/InteractableNPCActor.h"
+#include "EngineUtils.h"
+#include "Engine/Texture2D.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
 #include "Camera/PlayerCameraManager.h"
@@ -58,6 +62,24 @@ void UMinimapWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
 	}
+
+	// 아레나가 없는 맵이면 구역·NPC를 한 번 모은다
+	if (!Arena.IsValid() && !bGatheredLobbyActors && GetWorld())
+	{
+		bGatheredLobbyActors = true;
+		for (TActorIterator<ALobbyZoneActor> It(GetWorld()); It; ++It) Zones.Add(*It);
+		for (TActorIterator<AInteractableNPCActor> It(GetWorld()); It; ++It)
+		{
+			NPCs.Add(*It);
+			FSlateBrush& Brush = NPCBrushes.AddDefaulted_GetRef();
+			if (UTexture2D* Icon = It->MinimapIcon.LoadSynchronous())
+			{
+				NPCIconTextures.Add(Icon);
+				Brush.SetResourceObject(Icon);
+				Brush.ImageSize = FVector2D(Icon->GetSizeX(), Icon->GetSizeY());
+			}
+		}
+	}
 }
 
 int32 UMinimapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect,
@@ -66,9 +88,11 @@ int32 UMinimapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allot
 	LayerId = Super::NativePaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
 
 	const AHexArena* ArenaPtr = Arena.Get();
+	const bool bArenaMode = ArenaPtr && ArenaPtr->TileMap.Num() > 0;
 	const APlayerController* PC = GetOwningPlayer();
-	if (!ArenaPtr || ArenaPtr->TileMap.Num() == 0 || !PC || !PC->PlayerCameraManager)
+	if (!PC || !PC->PlayerCameraManager || (ArenaPtr && !bArenaMode))
 	{
+		// 아레나는 있는데 타일이 아직 안 스폰됐으면 기다린다
 		return LayerId;
 	}
 
@@ -83,25 +107,29 @@ int32 UMinimapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allot
 	const FVector CamFwd = FRotator(0.f, CamYaw, 0.f).Vector();
 	const FVector CamRight = FRotator(0.f, CamYaw + 90.f, 0.f).Vector();
 
-	FVector WorldCenter;
-	if (!ArenaPtr->GetTileTopLocation(FIntPoint(0, 0), WorldCenter))
-	{
-		WorldCenter = ArenaPtr->GetActorLocation();
-	}
-
 	// 타일 꼭짓점 반지름(외접원) = 내접원 반지름 × 2/√3 — TileSpacing이 flat-to-flat(내접원 지름)
-	const float HexRadius = ArenaPtr->TileSpacing / FMath::Sqrt(3.f);
+	const float HexRadius = bArenaMode ? ArenaPtr->TileSpacing / FMath::Sqrt(3.f) : 0.f;
 
-	// 아레나 전체가 들어가도록 가장 먼 타일 중심 + 꼭짓점 반지름으로 배율 결정
-	float WorldExtent = HexRadius;
-	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : ArenaPtr->TileMap)
+	FVector WorldCenter(LobbyWorldCenter.X, LobbyWorldCenter.Y, 0.f);
+	float WorldExtent = LobbyHalfExtent;
+	if (bArenaMode)
 	{
-		if (const AHexTile* Tile = Pair.Value.Get())
+		if (!ArenaPtr->GetTileTopLocation(FIntPoint(0, 0), WorldCenter))
 		{
-			WorldExtent = FMath::Max(WorldExtent, FVector::Dist2D(Tile->GetActorLocation(), WorldCenter) + HexRadius);
+			WorldCenter = ArenaPtr->GetActorLocation();
+		}
+
+		// 아레나 전체가 들어가도록 가장 먼 타일 중심 + 꼭짓점 반지름으로 배율 결정
+		WorldExtent = HexRadius;
+		for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : ArenaPtr->TileMap)
+		{
+			if (const AHexTile* Tile = Pair.Value.Get())
+			{
+				WorldExtent = FMath::Max(WorldExtent, FVector::Dist2D(Tile->GetActorLocation(), WorldCenter) + HexRadius);
+			}
 		}
 	}
-	const float Scale = (MapSize * 0.5f - MapPadding) / WorldExtent;
+	const float Scale = (MapSize * 0.5f - MapPadding) / FMath::Max(WorldExtent, 1.f);
 
 	auto ToMap = [&](const FVector& World) -> FVector2f
 	{
@@ -122,10 +150,11 @@ int32 UMinimapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allot
 	// ── 배경 ──
 	FSlateDrawElement::MakeBox(OutDrawElements, ++LayerId,
 		AllottedGeometry.ToPaintGeometry(FVector2f(MapSize, MapSize), FSlateLayoutTransform(MapOrigin)),
-		WhiteBrush, ESlateDrawEffect::None, BackgroundColor * FLinearColor(1.f, 1.f, 1.f, Opacity));
+		WhiteBrush, ESlateDrawEffect::None, (bArenaMode ? BackgroundColor : LobbyBackgroundColor) * FLinearColor(1.f, 1.f, 1.f, Opacity));
 
-	// ── 타일 ──
+	if (bArenaMode)
 	{
+		// ── 타일 ──
 		TArray<FSlateVertex> Verts;
 		TArray<SlateIndex> Indices;
 		TArray<FVector2f> Hex;
@@ -148,6 +177,81 @@ int32 UMinimapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allot
 			AddConvexPolygon(Verts, Indices, Xform, Hex, Color);
 		}
 		FSlateDrawElement::MakeCustomVerts(OutDrawElements, ++LayerId, Handle, Verts, Indices, nullptr, 0, 0);
+	}
+	else
+	{
+		// ── 대기 지역: 바닥 → 구역 → NPC ──
+		TArray<FSlateVertex> Verts;
+		TArray<SlateIndex> Indices;
+		const float E = LobbyHalfExtent;
+		AddConvexPolygon(Verts, Indices, Xform, {
+			ToMap(WorldCenter + FVector(E, -E, 0.f)), ToMap(WorldCenter + FVector(E, E, 0.f)),
+			ToMap(WorldCenter + FVector(-E, E, 0.f)), ToMap(WorldCenter + FVector(-E, -E, 0.f)) }, ToColor(LobbyFloorColor));
+
+		// 구역 — 실제 테두리와 같은 정N각형. 테두리 색은 HDR(발광용)이라 최댓값으로 나눠 0~1로 맞춘다
+		TArray<TPair<TArray<FVector2f>, FLinearColor>> ZoneOutlines;
+		for (const TWeakObjectPtr<ALobbyZoneActor>& ZonePtr : Zones)
+		{
+			const ALobbyZoneActor* Zone = ZonePtr.Get();
+			if (!Zone) continue;
+
+			FLinearColor Border = Zone->BorderColor;
+			const float MaxC = FMath::Max3(Border.R, Border.G, Border.B);
+			if (MaxC > 1.f) { Border.R /= MaxC; Border.G /= MaxC; Border.B /= MaxC; }
+			Border.A = 1.f;
+
+			const int32 Sides = FMath::Clamp(Zone->BorderSides, 3, 32);
+			const float Yaw0 = Zone->GetActorRotation().Yaw + Zone->BorderAngleOffset;
+			TArray<FVector2f> Poly;
+			for (int32 i = 0; i < Sides; ++i)
+			{
+				Poly.Add(ToMap(Zone->GetActorLocation() + FRotator(0.f, Yaw0 + 360.f * i / Sides, 0.f).Vector() * Zone->ZoneRadius));
+			}
+			AddConvexPolygon(Verts, Indices, Xform, Poly, ToColor(FLinearColor(Border.R, Border.G, Border.B, 0.35f)));
+			// Poly[0]을 그대로 넘기면 Add가 배열을 늘리며 원본이 옮겨질 수 있어 엔진이 assert — 복사본으로 닫는다
+			const FVector2f FirstPoint = Poly[0];
+			Poly.Add(FirstPoint);
+			ZoneOutlines.Add({ MoveTemp(Poly), Border });
+		}
+
+		// NPC — 아이콘이 없는 NPC만 작은 원 (아이콘은 플레이어 아래 레이어에 따로 그림)
+		for (int32 n = 0; n < NPCs.Num(); ++n)
+		{
+			const AInteractableNPCActor* NPC = NPCs[n].Get();
+			if (!NPC || NPCBrushes[n].GetResourceObject()) continue;
+			const FVector2f P = ToMap(NPC->GetActorLocation());
+			TArray<FVector2f> Dot;
+			for (int32 i = 0; i < 10; ++i)
+			{
+				const float A = 2.f * PI * i / 10.f;
+				Dot.Add(P + FVector2f(FMath::Cos(A), FMath::Sin(A)) * NPCIconSize);
+			}
+			AddConvexPolygon(Verts, Indices, Xform, Dot, ToColor(NPCColor));
+		}
+		FSlateDrawElement::MakeCustomVerts(OutDrawElements, ++LayerId, Handle, Verts, Indices, nullptr, 0, 0);
+
+		const FPaintGeometry OutlineGeometry = AllottedGeometry.ToPaintGeometry();
+		for (const TPair<TArray<FVector2f>, FLinearColor>& Outline : ZoneOutlines)
+		{
+			FSlateDrawElement::MakeLines(OutDrawElements, ++LayerId, OutlineGeometry, Outline.Key, ESlateDrawEffect::None,
+				Outline.Value * FLinearColor(1.f, 1.f, 1.f, Opacity), true, 1.5f);
+		}
+
+		// NPC 아이콘 — 위치 중심에 세로 NPCTextureIconSize로
+		++LayerId;
+		for (int32 n = 0; n < NPCs.Num(); ++n)
+		{
+			const AInteractableNPCActor* NPC = NPCs[n].Get();
+			const FSlateBrush& Brush = NPCBrushes[n];
+			if (!NPC || !Brush.GetResourceObject()) continue;
+
+			const float Aspect = Brush.ImageSize.Y > 0.f ? Brush.ImageSize.X / Brush.ImageSize.Y : 1.f;
+			const FVector2f IconSize(NPCTextureIconSize * Aspect, NPCTextureIconSize);
+			const FVector2f P = ToMap(NPC->GetActorLocation()) - IconSize * 0.5f;
+			FSlateDrawElement::MakeBox(OutDrawElements, LayerId,
+				AllottedGeometry.ToPaintGeometry(IconSize, FSlateLayoutTransform(P)),
+				&Brush, ESlateDrawEffect::None, FLinearColor(1.f, 1.f, 1.f, Opacity));
+		}
 	}
 
 	const FPaintGeometry LineGeometry = AllottedGeometry.ToPaintGeometry();
