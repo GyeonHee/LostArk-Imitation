@@ -36,7 +36,7 @@ public:
 	void Setup(UShopWidget* InOwner, int32 InIndex);
 	void SetEntry(const FShopItemEntry* Entry);
 	// 판매 탭 — 아이콘 왼쪽 위에 개수, 가격 = 개수 × 판매가. ItemId가 None이면 빈 칸
-	void SetSellEntry(FName ItemId, int32 Count, int64 TotalPrice);
+	void SetSellEntry(FName ItemId, int32 Count, int64 TotalPrice, const struct FEquipmentInstance* Equipment = nullptr);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

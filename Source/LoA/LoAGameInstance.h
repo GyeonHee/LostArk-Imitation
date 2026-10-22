@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
 #include "Item/ItemTypes.h"
+#include "Item/RaidReward.h"
 #include "LoAGameInstance.generated.h"
 
 /**
@@ -58,6 +59,13 @@ public:
 	UPROPERTY(Transient)
 	int64 Silling = 0;
 
+	// 골드 (재련 비용·레이드 보상)
+	UPROPERTY(Transient)
+	bool bHasGold = false;
+
+	UPROPERTY(Transient)
+	int64 Gold = 0;
+
 	// 장비 인스턴스 전부 + 부위별 장착 GUID (UInventoryComponent / UEquipmentComponent가 EndPlay에서 저장)
 	UPROPERTY(Transient)
 	TMap<FGuid, FEquipmentInstance> EquipmentInstances;
@@ -68,8 +76,35 @@ public:
 	UPROPERTY(Transient)
 	bool bHasStarterGear = false;
 
+	// 시작 장신구(도전자의 5종)를 받았는지 — 장신구 이전 저장 파일에도 한 번 지급
+	UPROPERTY(Transient)
+	bool bHasStarterAccessories = false;
+
+	// 시작 운명의 파편을 받았는지 — 장비 성장 이전 저장 파일에도 한 번 지급
+	UPROPERTY(Transient)
+	bool bHasStarterFragments = false;
+
+	// 운명의 파편 10만 추가 지급(테스트용)을 받았는지
+	UPROPERTY(Transient)
+	bool bHasFragmentGift = false;
+
 	// 현재 저장 구조 버전 — ULoASaveGame::SaveVersion
-	static constexpr int32 CurrentSaveVersion = 1;
+	// 1 = 장비, 2 = 레이드 보상(대기 보상·첫 클리어) + 실링 상한 조정 + 골드
+	static constexpr int32 CurrentSaveVersion = 2;
+
+	// 버전 1 이하 저장 파일의 실링을 이 값으로 낮춘다 — 시작 실링 1억이면 숨결(실링 구매)을 무한정 사서 재련 확률을 올릴 수 있어서
+	static constexpr int64 SillingCapOnMigrate = 2000000;
+
+	// ── 레이드 보상 (5단계) ──
+	// 소지품이 가득 차 아직 못 받은 보상 — 보스 맵 클리어 직후, 대기 지역에 들어올 때 다시 넣어 본다
+	UPROPERTY(Transient)
+	TArray<FLoARewardItem> PendingRewards;
+
+	UPROPERTY(Transient)
+	bool bFirstClearRewarded = false;
+
+	/** 대기 보상을 소지품·실링에 넣는다. 들어간 만큼은 OutDelivered에, 못 넣은 건 PendingRewards에 남김. 반환 = 남은 줄 수 */
+	int32 DeliverPendingRewards(class UInventoryComponent* Inventory, TArray<FLoARewardItem>& OutDelivered);
 
 	// 보스 맵에서 사망·클리어해 대기 지역으로 돌아가는 중 — 대기 지역에서 캐릭터가 빙의되면 PlayerStart 대신 정비소 위치로 옮기고 끈다
 	UPROPERTY(Transient)

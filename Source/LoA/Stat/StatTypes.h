@@ -13,7 +13,7 @@ enum class EPrimaryStat : uint8
 };
 
 // 전투 특성 6종 — 필드는 6개 다 두지만 효과는 연결할 곳이 있는 것만 켠다.
-// 인내(방어력)는 짤패턴 데미지가 절대값이라 "5~8대면 사망" 설계를 깨서, 숙련은 걸 곳(보스 상태이상·무력화 피해 게이지)이 없어서 효과 0
+// 인내 = 방어력 증가(로아 수치). 숙련은 걸 곳(보스 상태이상·무력화 피해 게이지)이 없어서 효과 0
 UENUM(BlueprintType)
 enum class ELoACombatStat : uint8
 {
@@ -60,6 +60,8 @@ enum class EStatModifierTarget : uint8
 	CritDamage           UMETA(DisplayName="치명타 피해"),     // 0.4 = +40%p
 	AdditiveDamage       UMETA(DisplayName="피해 증가(합)"),   // 서로 더한 뒤 (1 + 합)으로 곱함
 	MultiplicativeDamage UMETA(DisplayName="피해 증가(곱)"),   // 0.1 = ×1.1, 각자 따로 곱함(각인 등)
+	PhysDefense          UMETA(DisplayName="물리 방어력"),     // 직업 방어 계수·인내 곱하기 전
+	MagicDefense         UMETA(DisplayName="마법 방어력"),
 };
 
 USTRUCT(BlueprintType)
@@ -92,7 +94,16 @@ struct FCombatStats
 	// 실제 데미지 계산에 쓰는 공격력 = K × DisplayAttackPower (정수로 반올림)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") double AttackPower = 0.0;
 
+	// 최대 생명력 = 체력 × 직업 생명 활성력 계수(소서리스 2.1). 기본 = 맨몸 체력분, 장비 = 장비 체력분 (P창 툴팁용)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MaxHP = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float BaseHP = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float EquipmentHP = 0.f;
+
+	// 방어력 = (장비 방어력) × 직업 방어 계수(소서리스 0.95) × (1 + 인내 효과). 받는 피해 감소 = 방어력 / (방어력 + 6500)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") double PhysDefense = 0.0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") double MagicDefense = 0.0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float PhysDamageReduction = 0.f;  // 0~1
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MagicDamageReduction = 0.f;
 
 	// ── 전투 특성 효과 ──
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float CritRate = 0.f;             // 0~1
@@ -110,14 +121,17 @@ struct FCombatStats
 
 // 전투 특성 1포인트당 효과 — 직업과 무관한 게임 규칙이라 에셋이 아니라 코드에 둔다
 // (에셋 값이 C++ 기본값을 덮어써서 "고쳤는데 안 바뀌는" 함정을 피하려는 것도 있음)
+// 로아 수치: Maxroll 게임 데이터 statLevelScaling(70레벨) — 치명 27.944 / 신속 46.5731(쿨감)·58.2211(속도) / 제압 14.0053(무력화 대상) / 인내 12.2255(방어력) 포인트당 1%
 namespace LoAStatRules
 {
-	constexpr float CritRatePerPoint        = 0.000358f; // 치명 1 = 치명타 적중률 +0.0358%
+	constexpr float CritRatePerPoint        = 1.f / 2794.4f;  // 치명 1 = 치명타 적중률 +0.0358%
 	// 특화 1 = 캐스팅·차지 스킬 피해 +0.05%. 캐스팅 3종(종말·익스·천벌)이 딜의 약 65%라 전체로는 +0.033% — 치명 1(기대값 +0.036%)과 비슷하게
 	constexpr float SpecializationPerPoint  = 0.0005f;
-	constexpr float CooldownPerSwiftness    = 0.000215f; // 신속 1 = 쿨타임 -0.0215%
-	constexpr float SpeedPerSwiftness       = 0.000172f; // 신속 1 = 이동·공격 속도 +0.0172%
-	constexpr float DominationPerPoint      = 0.001f;    // 제압 1 = 그로기 보스 피해 +0.1% — 임시값, 2단계 미터로 다시 정함
+	constexpr float CooldownPerSwiftness    = 1.f / 4657.31f; // 신속 1 = 쿨타임 -0.0215%
+	constexpr float SpeedPerSwiftness       = 1.f / 5822.11f; // 신속 1 = 이동·공격 속도 +0.0172%
+	constexpr float DominationPerPoint      = 1.f / 1400.53f; // 제압 1 = 무력화(그로기) 보스 피해 +0.0714%
+	constexpr float DefensePerEndurance     = 1.f / 1222.55f; // 인내 1 = 물리·마법 방어력 +0.0818%
+	constexpr double DefenseConstant        = 6500.0;         // 받는 피해 감소 = 방어력 / (방어력 + 6500)
 	constexpr float MaxCooldownReduction    = 0.30f;     // 쿨감 상한 (신속 + 7단계 쿨감 보석 공유)
 	constexpr float BaseCritDamage          = 2.0f;      // 기본 치명타 피해 200%
 }

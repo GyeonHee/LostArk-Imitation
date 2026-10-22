@@ -1,5 +1,15 @@
 #include "UI/ClearWidget.h"
+#include "LoAPlayerController.h"
+#include "Item/ItemTypes.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/Button.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/SizeBox.h"
+#include "Engine/Texture2D.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Border.h"
@@ -34,6 +44,28 @@ namespace
 			BandSlot->SetOffsets(FMargin(0.f, 0.f, 0.f, Height));
 		}
 		return Band;
+	}
+
+	// 어두운 버튼 + 가운데 글자 (고정 크기)
+	USizeBox* MakeClearButton(UWidgetTree* Tree, const TCHAR* Name, const FText& Label, float Width, UButton*& OutButton, UTextBlock*& OutText)
+	{
+		USizeBox* Box = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), FName(*(FString(Name) + TEXT("Box"))));
+		Box->SetWidthOverride(Width);
+		Box->SetHeightOverride(34.f);
+		UButton* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
+		FButtonStyle Style = Button->GetStyle();
+		Style.Normal.TintColor = FSlateColor(FLinearColor(0.16f, 0.14f, 0.10f, 1.f));
+		Style.Hovered.TintColor = FSlateColor(FLinearColor(0.32f, 0.26f, 0.14f, 1.f));
+		Style.Pressed.TintColor = FSlateColor(FLinearColor(0.10f, 0.09f, 0.06f, 1.f));
+		Style.Disabled.TintColor = FSlateColor(FLinearColor(0.10f, 0.10f, 0.11f, 0.8f));
+		Button->SetStyle(Style);
+		Box->SetContent(Button);
+		UTextBlock* Text = MakeClearText(Tree, *(FString(Name) + TEXT("Text")), 11, FLinearColor(0.95f, 0.92f, 0.85f, 1.f), FLinearColor(0.f, 0.f, 0.f, 0.f), 0);
+		Text->SetText(Label);
+		Button->SetContent(Text);
+		OutButton = Button;
+		OutText = Text;
+		return Box;
 	}
 }
 
@@ -96,12 +128,48 @@ TSharedRef<SWidget> UClearWidget::RebuildWidget()
 			ResultSlot->SetPosition(FVector2D(0.f, 110.f));
 			ResultSlot->SetAutoSize(true);
 		}
+		ResultBand->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		UVerticalBox* ResultLines = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ResultLines"));
+		ResultBand->SetContent(ResultLines);
+
 		ResultText = MakeClearText(WidgetTree, TEXT("ResultText"), 14, FLinearColor(0.92f, 0.92f, 0.92f, 1.f), Shadow, 1);
-		ResultBand->SetContent(ResultText);
+		if (UVerticalBoxSlot* S = ResultLines->AddChildToVerticalBox(ResultText)) S->SetHorizontalAlignment(HAlign_Center);
+
+		// 전리품 줄
+		RewardRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("RewardRow"));
+		if (UVerticalBoxSlot* S = ResultLines->AddChildToVerticalBox(RewardRow))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetPadding(FMargin(0.f, 10.f, 0.f, 4.f));
+		}
+		RewardNoteText = MakeClearText(WidgetTree, TEXT("RewardNote"), 11, AccentColor, Shadow, 1);
+		RewardNoteText->SetVisibility(ESlateVisibility::Collapsed);
+		if (UVerticalBoxSlot* S = ResultLines->AddChildToVerticalBox(RewardNoteText)) S->SetHorizontalAlignment(HAlign_Center);
+
+		// [더보기] [정비소로 이동]
+		UHorizontalBox* Buttons = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("ClearButtons"));
+		if (UVerticalBoxSlot* S = ResultLines->AddChildToVerticalBox(Buttons))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetPadding(FMargin(0.f, 10.f, 0.f, 0.f));
+		}
+		UTextBlock* LeaveText = nullptr;
+		UButton* LeaveButton = nullptr;
+		UTextBlock* BonusText = nullptr;
+		UButton* Bonus = nullptr;
+		if (UHorizontalBoxSlot* S = Buttons->AddChildToHorizontalBox(MakeClearButton(WidgetTree, TEXT("ClearBonus"), FText::GetEmpty(), 230.f, Bonus, BonusText)))
+		{
+			S->SetPadding(FMargin(0.f, 0.f, 8.f, 0.f));
+		}
+		BonusButton = Bonus;
+		BonusButtonText = BonusText;
+		Buttons->AddChildToHorizontalBox(MakeClearButton(WidgetTree, TEXT("ClearLeave"), NSLOCTEXT("Clear", "Leave", "정비소로 이동"), 150.f, LeaveButton, LeaveText));
+		BonusButton->OnClicked.AddDynamic(this, &UClearWidget::HandleBonusClicked);
+		LeaveButton->OnClicked.AddDynamic(this, &UClearWidget::HandleLeaveClicked);
 	}
 
-	// 클릭 이동 게임 HUD 규칙 — 마우스 입력을 먹지 않게
-	SetVisibility(ESlateVisibility::HitTestInvisible);
+	// 버튼만 클릭을 받는다 — 나머지(빈 화면)는 클릭 이동 그대로
+	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
 	return Super::RebuildWidget();
 }
@@ -120,4 +188,92 @@ void UClearWidget::SetCountdown(int32 Seconds)
 	{
 		CountdownText->SetText(FText::Format(NSLOCTEXT("Clear", "Countdown", "{0}초"), FText::AsNumber(FMath::Max(0, Seconds))));
 	}
+}
+
+void UClearWidget::SetRewards(const TArray<FLoARewardItem>& Items, const FText& Note)
+{
+	if (!RewardRow) TakeWidget();
+	if (!RewardRow) return;
+	RewardRow->ClearChildren();
+
+	UTexture2D* SillingTexture = SillingIcon.LoadSynchronous();
+	UTexture2D* GoldTexture = GoldIcon.LoadSynchronous();
+	for (int32 i = 0; i < Items.Num(); ++i)
+	{
+		const FLoARewardItem& Item = Items[i];
+		// 화폐(골드·실링)는 코인 + 숫자로 — 변수 이름은 예전 그대로 bSilling
+		const bool bSilling = LoARaidReward::IsCurrency(Item.ItemId);
+		const bool bGold = Item.ItemId == LoARaidReward::Gold;
+		const FItemDefinition* Def = bSilling ? nullptr : LoAItems::Find(Item.ItemId);
+		UTexture2D* Texture = bSilling ? (bGold ? GoldTexture : SillingTexture) : (Def ? Def->Icon.LoadSynchronous() : nullptr);
+
+		// 아이콘 44 + 오른쪽 아래 개수 (실링은 칸이 넓게 숫자만 옆에)
+		USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), FName(*FString::Printf(TEXT("Reward_%d"), i)));
+		Box->SetHeightOverride(44.f);
+		if (!bSilling) Box->SetWidthOverride(44.f);
+		UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), FName(*FString::Printf(TEXT("RewardOverlay_%d"), i)));
+		Box->SetContent(Overlay);
+		Box->SetToolTipText(bGold ? NSLOCTEXT("Clear", "GoldName", "골드") : bSilling ? NSLOCTEXT("Clear", "SillingName", "실링") : (Def ? Def->DisplayName : FText::FromName(Item.ItemId)));
+
+		if (bSilling)
+		{
+			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), FName(*FString::Printf(TEXT("RewardSilling_%d"), i)));
+			Overlay->AddChildToOverlay(Row);
+			UImage* Coin = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), FName(*FString::Printf(TEXT("RewardIcon_%d"), i)));
+			if (Texture) Coin->SetBrushFromTexture(Texture);
+			Coin->SetDesiredSizeOverride(FVector2D(28.f, 28.f));
+			if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Coin)) S->SetVerticalAlignment(VAlign_Center);
+			UTextBlock* Amount = MakeClearText(WidgetTree, *FString::Printf(TEXT("RewardCount_%d"), i), 13, FLinearColor(0.92f, 0.92f, 0.95f, 1.f), FLinearColor(0.f, 0.f, 0.f, 0.9f), 1);
+			Amount->SetText(FText::FromString(LoAItems::FormatWithCommas(Item.Count)));
+			if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Amount))
+			{
+				S->SetVerticalAlignment(VAlign_Center);
+				S->SetPadding(FMargin(4.f, 0.f, 0.f, 0.f));
+			}
+		}
+		else
+		{
+			UImage* Icon = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), FName(*FString::Printf(TEXT("RewardIcon_%d"), i)));
+			if (Texture) Icon->SetBrushFromTexture(Texture);
+			else Icon->SetColorAndOpacity(FLinearColor(0.35f, 0.35f, 0.4f, 1.f));
+			if (UOverlaySlot* S = Overlay->AddChildToOverlay(Icon))
+			{
+				S->SetHorizontalAlignment(HAlign_Fill);
+				S->SetVerticalAlignment(VAlign_Fill);
+			}
+			UTextBlock* Count = MakeClearText(WidgetTree, *FString::Printf(TEXT("RewardCount_%d"), i), 11, FLinearColor::White, FLinearColor(0.f, 0.f, 0.f, 1.f), 1);
+			Count->SetText(FText::FromString(LoAItems::FormatWithCommas(Item.Count)));
+			if (UOverlaySlot* S = Overlay->AddChildToOverlay(Count))
+			{
+				S->SetHorizontalAlignment(HAlign_Right);
+				S->SetVerticalAlignment(VAlign_Bottom);
+				S->SetPadding(FMargin(0.f, 0.f, 2.f, 0.f));
+			}
+		}
+		if (UHorizontalBoxSlot* S = RewardRow->AddChildToHorizontalBox(Box)) S->SetPadding(FMargin(5.f, 0.f));
+	}
+
+	RewardNoteText->SetText(Note);
+	RewardNoteText->SetVisibility(Note.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+}
+
+void UClearWidget::SetBonusState(bool bVisible, bool bTaken, bool bAffordable, int64 Cost)
+{
+	if (!BonusButton) TakeWidget();
+	if (!BonusButton) return;
+	if (UWidget* Box = BonusButton->GetParent()) Box->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	BonusButton->SetIsEnabled(bVisible && !bTaken && bAffordable);
+	BonusButtonText->SetText(bTaken
+		? NSLOCTEXT("Clear", "BonusTaken", "더보기 완료")
+		: FText::Format(NSLOCTEXT("Clear", "Bonus", "더보기 (재료 +50%)  {0} 골드"), FText::FromString(LoAItems::FormatWithCommas(Cost))));
+}
+
+void UClearWidget::HandleBonusClicked()
+{
+	if (ALoAPlayerController* PC = GetOwningPlayer<ALoAPlayerController>()) PC->RequestClearBonus();
+}
+
+void UClearWidget::HandleLeaveClicked()
+{
+	if (ALoAPlayerController* PC = GetOwningPlayer<ALoAPlayerController>()) PC->RequestClearLeave();
 }

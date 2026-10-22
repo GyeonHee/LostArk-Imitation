@@ -43,13 +43,19 @@ public:
 	/** 장착 장비의 인스턴스가 바뀜(재련 등) — 스탯·창을 다시 계산 */
 	void RefreshEquipped();
 
+	/** 장착 GUID를 GameInstance에 복사 (디스크엔 안 씀) */
+	void WriteToGameInstance() const;
+
+	/** 소지품·장비를 지금 바로 디스크에 저장 — 재련 직후(재시작으로 결과를 되돌리는 꼼수 방지) */
+	void SaveNow() const;
+
 	/** 테스트용 — 장착 장비의 재련 단계를 바로 바꾼다 (LoASetRefine) */
 	bool DebugSetRefine(EEquipSlot Slot, int32 RefineLevel);
 
 	FOnEquipmentChanged OnEquipmentChanged;
 
 	/** 장비 한 개가 주는 스탯 (재련 반영) — 툴팁·비교용 */
-	static void GetEquipmentStats(const FEquipmentInstance& Instance, double& OutPrimary, double& OutWeapon, double& OutVitality);
+	static FGearStats GetEquipmentStats(const FEquipmentInstance& Instance);
 
 	/** 툴팁 글 — 이름 +재련, 부위, 아이템 레벨, 스탯. Compare(같은 부위에 착용 중인 장비)를 주면 차이를 ▲▼로 붙인다 */
 	static FText DescribeEquipment(const FEquipmentInstance& Instance, const FEquipmentInstance* Compare = nullptr);

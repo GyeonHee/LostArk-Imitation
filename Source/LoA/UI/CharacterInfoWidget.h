@@ -7,6 +7,8 @@
 #include "CharacterInfoWidget.generated.h"
 
 class UBorder;
+class UButton;
+class UScrollBox;
 class USizeBox;
 class UTextBlock;
 class UVerticalBox;
@@ -16,7 +18,8 @@ class UStatComponent;
  * 캐릭터 정보 창 (P키) — 로아 [캐릭터 정보] 장비 탭 배치를 따라 C++ 트리로 만든다(WBP 없음).
  *   왼쪽: 직업·이름 프로필 + 특수장비 칸
  *   가운데: 방어구 5 + 무기 칸(왼쪽 줄) / 3D 캐릭터 미리보기(ACharacterPreviewActor, 끌어서 회전) / 장신구 5 + 팔찌 + 어빌리티 스톤 칸(오른쪽 줄)
- *   오른쪽: 장착 아이템 레벨, 기본 특성(공격력·최대 생명력), 전투 특성 6종, [상세정보](실제 % 값)
+ *   오른쪽: 장착 아이템 레벨, 기본 특성(공격력·최대 생명력), 전투 특성 6종(포인트만), [상세정보]
+ *   [상세정보]: 창 오른쪽에 "전체 효과 정보" 칸이 붙는다 — [공격]/[방어] 탭, 지금 실제로 적용되는 효과만 % 값으로
  * 수치는 UStatComponent::OnStatsChanged를 받을 때만 다시 쓴다. 장비 칸은 3단계(장비) 전까지 빈 칸.
  * 루트는 SelfHitTestInvisible — 창 밖 클릭은 게임(클릭 이동)으로, 창 안 클릭은 여기서 먹는다(소지품 창과 동일)
  */
@@ -49,6 +52,16 @@ private:
 
 	UFUNCTION()
 	void HandleDetailClicked();
+
+	UFUNCTION()
+	void HandleDetailAttackTab();
+
+	UFUNCTION()
+	void HandleDetailDefenseTab();
+
+	UWidget* BuildDetailPanel();
+	void RefreshDetailPanel(const FCombatStats& Stats);
+	void SetDetailTab(int32 Tab);
 
 	void HandleStatsChanged(const FCombatStats& NewStats);
 	void Refresh();
@@ -100,14 +113,20 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> AttackPowerText;
 	UPROPERTY(Transient) TObjectPtr<UWidget> AttackPowerRow; // 실제 계산 공격력 툴팁용
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> MaxHPText;
+	UPROPERTY(Transient) TObjectPtr<UWidget> MaxHPRow;          // 기본 + 장비 내역 툴팁
 
 	// ELoACombatStat 순서(치명·특화·신속·제압·인내·숙련)로 들고 있는다 — 화면 배치 순서와는 별개
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> CombatStatTexts;
 	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> CombatStatRows;
 
-	// [상세정보] — 특성을 실제 % 값으로 풀어 보여주는 칸 (기본은 접힘)
-	UPROPERTY(Transient) TObjectPtr<UVerticalBox> DetailBox;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> DetailText;
+	// [상세정보] — 창 오른쪽 "전체 효과 정보" 칸 (기본은 접힘). 0 = 공격, 1 = 방어
+	UPROPERTY(Transient) TObjectPtr<UWidget> DetailPanel;
+	UPROPERTY(Transient) TObjectPtr<UScrollBox> DetailRows;
+	UPROPERTY(Transient) TObjectPtr<UButton> DetailAttackTab;
+	UPROPERTY(Transient) TObjectPtr<UButton> DetailDefenseTab;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> DetailAttackTabText;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> DetailDefenseTabText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> DetailButtonText;
 	bool bDetailOpen = false;
+	int32 DetailTab = 0;
 };

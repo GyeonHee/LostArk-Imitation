@@ -2,6 +2,7 @@
 #include "UI/InventorySlotWidget.h"
 #include "UI/InventoryDragOperation.h"
 #include "Item/InventoryComponent.h"
+#include "Item/EquipmentComponent.h"
 #include "LoAPlayerController.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -157,7 +158,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 			SlotWidgets.Add(SlotWidget);
 		}
 
-		// ── 하단 화폐 줄: [은화] 100,000,000 (오른쪽 정렬, 어두운 띠) ──
+		// ── 하단 화폐 줄: [골드] 10,000   [은화] 2,000,000 (오른쪽 정렬, 어두운 띠) ──
 		UBorder* CurrencyBar = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CurrencyBar"));
 		CurrencyBar->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.35f));
 		CurrencyBar->SetPadding(FMargin(8.f, 3.f));
@@ -169,6 +170,40 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 
 		UHorizontalBox* CurrencyRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("CurrencyRow"));
 		CurrencyBar->SetContent(CurrencyRow);
+
+		// 골드 — 재련 비용·레이드 보상
+		{
+			USizeBox* GoldBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("GoldIconBox"));
+			GoldBox->SetWidthOverride(18.f);
+			GoldBox->SetHeightOverride(18.f);
+			UImage* GoldCoin = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("GoldIcon"));
+			if (UTexture2D* GoldTexture = GoldIcon.LoadSynchronous())
+			{
+				GoldCoin->SetBrushFromTexture(GoldTexture);
+			}
+			else
+			{
+				GoldCoin->SetColorAndOpacity(FLinearColor(0.95f, 0.72f, 0.2f, 1.f));
+			}
+			GoldBox->SetContent(GoldCoin);
+			if (UHorizontalBoxSlot* S = CurrencyRow->AddChildToHorizontalBox(GoldBox))
+			{
+				S->SetVerticalAlignment(VAlign_Center);
+				S->SetPadding(FMargin(0.f, 0.f, 5.f, 0.f));
+			}
+
+			GoldText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("GoldText"));
+			FSlateFontInfo GoldFont = GoldText->GetFont();
+			GoldFont.Size = 11;
+			GoldText->SetFont(GoldFont);
+			GoldText->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 0.85f, 0.45f)));
+			GoldText->SetToolTipText(NSLOCTEXT("Inventory", "GoldTooltip", "골드"));
+			if (UHorizontalBoxSlot* S = CurrencyRow->AddChildToHorizontalBox(GoldText))
+			{
+				S->SetVerticalAlignment(VAlign_Center);
+				S->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
+			}
+		}
 
 		USizeBox* CoinBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("SillingIconBox"));
 		CoinBox->SetWidthOverride(18.f);
@@ -207,6 +242,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 	TSharedRef<SWidget> Result = Super::RebuildWidget();
 	RefreshAll();
 	HandleSillingChanged(Inventory.IsValid() ? Inventory->GetSilling() : 0);
+	HandleGoldChanged(Inventory.IsValid() ? Inventory->GetGold() : 0);
 	return Result;
 }
 
@@ -224,18 +260,41 @@ void UInventoryWidget::SetInventory(UInventoryComponent* InInventory)
 	{
 		Old->OnSlotChanged.Remove(InventoryChangedHandle);
 		Old->OnSillingChanged.Remove(SillingChangedHandle);
+		Old->OnGoldChanged.Remove(GoldChangedHandle);
+	}
+	if (UEquipmentComponent* OldEquip = WatchedEquipment.Get())
+	{
+		OldEquip->OnEquipmentChanged.Remove(EquipmentChangedHandle);
 	}
 	InventoryChangedHandle.Reset();
 	SillingChangedHandle.Reset();
+	GoldChangedHandle.Reset();
+	EquipmentChangedHandle.Reset();
+	WatchedEquipment.Reset();
 	Inventory = InInventory;
 
 	if (InInventory)
 	{
 		InventoryChangedHandle = InInventory->OnSlotChanged.AddUObject(this, &UInventoryWidget::HandleInventoryChanged);
 		SillingChangedHandle = InInventory->OnSillingChanged.AddUObject(this, &UInventoryWidget::HandleSillingChanged);
+		GoldChangedHandle = InInventory->OnGoldChanged.AddUObject(this, &UInventoryWidget::HandleGoldChanged);
+		if (UEquipmentComponent* Equip = InInventory->GetOwner() ? InInventory->GetOwner()->FindComponentByClass<UEquipmentComponent>() : nullptr)
+		{
+			WatchedEquipment = Equip;
+			EquipmentChangedHandle = Equip->OnEquipmentChanged.AddUObject(this, &UInventoryWidget::HandleEquipmentChanged);
+		}
 	}
 	RefreshAll();
 	HandleSillingChanged(InInventory ? InInventory->GetSilling() : 0);
+	HandleGoldChanged(InInventory ? InInventory->GetGold() : 0);
+}
+
+void UInventoryWidget::HandleGoldChanged(int64 NewAmount)
+{
+	if (GoldText)
+	{
+		GoldText->SetText(FText::FromString(LoAItems::FormatWithCommas(NewAmount)));
+	}
 }
 
 void UInventoryWidget::HandleSillingChanged(int64 NewAmount)
@@ -243,6 +302,16 @@ void UInventoryWidget::HandleSillingChanged(int64 NewAmount)
 	if (SillingText)
 	{
 		SillingText->SetText(FText::FromString(LoAItems::FormatWithCommas(NewAmount)));
+	}
+}
+
+void UInventoryWidget::HandleEquipmentChanged()
+{
+	const UInventoryComponent* Inv = Inventory.Get();
+	if (!Inv) return;
+	for (int32 i = 0; i < SlotWidgets.Num(); ++i)
+	{
+		if (Inv->GetSlot(i).IsEquipment()) RefreshSlot(i);
 	}
 }
 

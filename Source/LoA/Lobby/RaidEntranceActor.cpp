@@ -1,6 +1,7 @@
 #include "Lobby/RaidEntranceActor.h"
 #include "LoACharacter.h"
 #include "LoAPlayerController.h"
+#include "Item/EquipmentComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
@@ -26,6 +27,30 @@ void ARaidEntranceActor::OnPlayerEnterZone(APawn* Player)
 {
 	if (bTravelling) return;
 
+	float ItemLevel = 0.f;
+	if (!MeetsItemLevel(Player, ItemLevel))
+	{
+		bBlockedByItemLevel = true;
+		ShowBlockedNotice(ItemLevel);
+		UE_LOG(LogTemp, Log, TEXT("[RaidEntrance] 입장 불가 — 아이템 레벨 %.2f < %d"), ItemLevel, RequiredItemLevel);
+		return;
+	}
+	StartCountdown();
+}
+
+bool ARaidEntranceActor::MeetsItemLevel(APawn* Player, float& OutItemLevel) const
+{
+	OutItemLevel = 0.f;
+	const ALoACharacter* Character = Cast<ALoACharacter>(Player);
+	if (RequiredItemLevel <= 0 || !Character || !Character->Equipment) return true;
+	OutItemLevel = Character->Equipment->GetItemLevel();
+	// 평균이라 1619.999… 같은 부동소수 오차로 막히지 않게 약간 여유
+	return OutItemLevel + KINDA_SMALL_NUMBER * 10.f >= static_cast<float>(RequiredItemLevel);
+}
+
+void ARaidEntranceActor::StartCountdown()
+{
+	bBlockedByItemLevel = false;
 	Remaining = EnterCountdown;
 	ShownSeconds = -1;
 	ShowNotice(NoticeTitle, NoticeMessage);
@@ -33,11 +58,24 @@ void ARaidEntranceActor::OnPlayerEnterZone(APawn* Player)
 	UE_LOG(LogTemp, Log, TEXT("[RaidEntrance] 입장 카운트다운 시작 (%.1f초)"), EnterCountdown);
 }
 
+void ARaidEntranceActor::ShowBlockedNotice(float ItemLevel)
+{
+	ShownBlockedItemLevel = ItemLevel;
+	FNumberFormattingOptions Fmt;
+	Fmt.MinimumFractionalDigits = 2;
+	Fmt.MaximumFractionalDigits = 2;
+	Fmt.UseGrouping = false;
+	ShowNotice(NoticeTitle,
+		FText::Format(NSLOCTEXT("Lobby", "EntranceItemLevel", "입장 가능 아이템 레벨 {0}"), FText::AsNumber(RequiredItemLevel, &FNumberFormattingOptions::DefaultNoGrouping())),
+		FText::Format(NSLOCTEXT("Lobby", "EntranceCurrentItemLevel", "현재 {0}"), FText::AsNumber(ItemLevel, &Fmt)));
+}
+
 void ARaidEntranceActor::OnPlayerExitZone(APawn* Player)
 {
 	// 이동이 확정된 뒤(초록 테두리)엔 나가도 취소하지 않는다
 	if (bTravelling) return;
 
+	bBlockedByItemLevel = false;
 	Remaining = EnterCountdown;
 	ShownSeconds = -1;
 	HideNotice();
@@ -47,6 +85,24 @@ void ARaidEntranceActor::OnPlayerExitZone(APawn* Player)
 void ARaidEntranceActor::TickPlayerInZone(APawn* Player, float DeltaSeconds)
 {
 	if (bTravelling) return;
+
+	// 구역 안에서 장비를 바꿀 수 있으므로 매 틱 다시 확인 — 조건을 넘기면 그 자리에서 시작, 내려가면 다시 막음
+	float ItemLevel = 0.f;
+	const bool bMeets = MeetsItemLevel(Player, ItemLevel);
+	if (!bMeets)
+	{
+		if (!bBlockedByItemLevel || !FMath::IsNearlyEqual(ItemLevel, ShownBlockedItemLevel, 0.005f))
+		{
+			bBlockedByItemLevel = true;
+			ShowBlockedNotice(ItemLevel);
+		}
+		return;
+	}
+	if (bBlockedByItemLevel)
+	{
+		StartCountdown();
+		return;
+	}
 
 	Remaining -= DeltaSeconds;
 	if (Remaining <= 0.f)

@@ -176,12 +176,14 @@
   - **드래그**: UMG 드래그 앤 드랍(`UInventoryDragOperation`). 다른 칸에 놓으면 `MoveOrSwap`(같은 아이템이면 합치기, 아니면 잠금 포함 통째로 스왑). 창 밖에 놓으면(`DragCancelled`) 컨트롤러가 커서 아래 HUD 배틀 칸을 찾아 등록 — **HUD가 HitTestInvisible이라 UMG 드랍을 못 받아서** 이렇게 우회
   - **UI 갱신**: 칸 위젯 100개는 한 번만 만들고, `OnSlotChanged(Index)`(INDEX_NONE=전체)로 **바뀐 칸만** 다시 그림. 매 Tick 훑지 않음
   - 창 루트는 `SelfHitTestInvisible`, 창(Panel)만 Visible — 창 밖 클릭은 클릭 이동으로. 창 안 클릭은 위젯이 Handled로 먹고, 컨트롤러 `ConsumeHUDSlotPress`도 `IsCursorOverPanel`이면 이동·기본공격으로 안 씀
+  - 장비 칸 툴팁의 ▲▼는 착용 장비 기준이라 `UInventoryWidget`이 캐릭터의 `UEquipmentComponent::OnEquipmentChanged`를 구독해 장비 칸만 다시 그린다(2026-10-22 — 예전엔 바꾼 칸만 갱신돼 다른 칸 비교값이 낡았음)
   - **창 이동**: 헤더(제목 줄)를 좌클릭으로 끌면 창이 따라온다(마우스 캡처, 화면 밖으로 못 나가게 클램프). 위치는 위젯이 살아 있는 동안(그 레벨) 유지
   - **버그였던 것 (슬롯을 빠르게 두 번 누르면 맵 클릭 이동)**: 두 번째 클릭은 `MouseButtonDown`이 아니라 `MouseButtonDoubleClick`으로 오는데 위젯이 안 먹어서 게임으로 샜고, 컨트롤러는 시작(`OnInputStarted`)만 막고 누르는 중(Triggered)·뗄 때(Released) 이동은 막지 않았음 → 칸·창 위젯이 DoubleClick도 Handled + 컨트롤러 `bMovePressSuppressed`(UI 위에서 시작된 클릭이면 Triggered·Released 이동도 무시). **C++ 트리 위젯에서 클릭을 막을 땐 `NativeOnMouseButtonDoubleClick`도 오버라이드할 것**
   - 저장: `ULoAGameInstance::InventorySlots` + SaveGame(`LoA.sav`). 첫 실행(저장 없음)엔 `StartingItems` = 정령의 회복약 30개. **초기화하려면 `Saved/SaveGames/LoA.sav` 삭제**
   - 테스트 콘솔: `LoAGiveItem SpiritRecoveryPotion 50`, `LoAInvTest`(회복약 묶음 8개를 빈 칸에 흩뿌림 — 정렬·잠금 확인용)
   - **실링(은화, 2026-10-19)**: 칸을 차지하지 않는 화폐 — `UInventoryComponent::Silling`(int64), `AddSilling`/`SpendSilling`(모자라면 false, 상점 구매용 — 상점은 아직 없음)/`OnSillingChanged`. 창 맨 아래 어두운 띠에 은화 아이콘(`/Game/LostArk/UI/Item/T_Silling` — PIL로 만든 임시 아이콘) + `LoAItems::FormatWithCommas`(언어 설정과 무관하게 세 자리 쉼표, 100,000,000). 첫 지급 `StartingSilling` 1억 — 소지품과 **별도 플래그 `bHasSilling`**이라 실링 전 저장 파일에도 한 번 지급됨. GameInstance·SaveGame 유지. 치트 `LoAGiveSilling 5000`(음수면 차감)
 - **캐릭터 정보 창 (P키, 2026-10-21, `UI/CharacterInfoWidget`, `UI/CharacterPreviewActor`, `Stat/StatComponent`)** — 로아 [캐릭터 정보] 장비 탭 배치. C++ 트리(WBP 없음), 소지품 창과 같은 클릭·드래그 규칙
+  - **기본 특성 = 공격력·최대 생명력, 전투 특성 = 포인트만**(% 값은 툴팁). **[상세정보]** = 창 오른쪽에 "전체 효과 정보" 칸(290px, 같은 Panel 안이라 같이 끌림, 열 때 창을 절반만큼 오른쪽으로 옮겨 본문 자리 유지) — [공격](주 스탯·무기 공격력·추가 피해·적에게 주는 피해·공격/이동 속도·치명타 적중률/피해·쿨감·특화·제압) / [방어](최대 생명력·체력·물리/마법 방어력·받는 피해 감소). **지금 실제로 계산에 쓰는 값만** — 로아 화면의 적중률·진화형 피해·방어 관통·계열 피해·활동 탭·추가 성장 정보는 없음. 새 스탯을 적용하면 `RefreshDetailPanel`에 줄 추가
   - 오른쪽 수치는 `UStatComponent::OnStatsChanged`로만 갱신. 공격력은 로아식 표시값(`DisplayAttackPower`, K 곱하기 전), 실제 계산값은 툴팁. 장비 칸은 3단계(장비) 전까지 빈 칸
   - 가운데 3D 미리보기 = `ACharacterPreviewActor`(컨트롤러가 스폰, 맵 위 Z 60000) — 플레이어 메시 복사 + `MM_Idle`, SceneCapture → 렌더 타깃 → UImage. 끌어서 회전
   - 조명: 자체 포인트 라이트 3개 + 라이팅 채널 1, 캡처 ShowFlag로 스카이라이트 끔 → 맵과 무관하게 같은 밝기. 수동 노출 EV0 기준이라 라이트가 cd 단위로 매우 세야 함(300은 완전히 검었고 15000/12500/12500으로 확정). 콘솔 `LoA.Preview.Light`/`LoA.Preview.Exposure`(창 다시 열면 반영)
@@ -855,6 +857,7 @@
   - **스킬 슬롯 등록은 정비소 안에서만**: 들어오면 `USkillManagerComponent::SetSlotEditAllowed(true)`, 나가면 false. `AssignSkillToSlot`(WBP_SkillTree OnDrop이 부름)이 꺼져 있으면 거부 + `ALoAPlayerController::ShowTimedNotice()`로 "스킬은 정비소에서만 등록할 수 있습니다." 안내(ZOrder 11 — 스킬트리 창 위). 보스 맵엔 정비소가 없으니 항상 등록 불가. 스킬 레벨업(+/-)은 제한 없음
 - `ARaidEntranceActor`(팔각형, 보라): 안에 있으면 `EnterCountdown`(**3초**) 카운트다운 알림("에키드나 2관문 / 잠시 후 다음 지역으로 이동됩니다. / N초")
   - 끝나기 전에 나가면 **카운트 초기화 + 알림 즉시 제거**
+  - **아이템 레벨 제한 (2026-10-22)**: 장착 아이템 레벨(`UEquipmentComponent::GetItemLevel`)이 `RequiredItemLevel`(1620, 0이면 제한 없음) 미만이면 카운트다운 대신 "입장 가능 아이템 레벨 1620 / 현재 xxxx.xx" 알림만. 매 틱 다시 확인해서 구역 안에서 장비를 바꿔 넘기면 그 자리에서 카운트다운 시작, 카운트다운 중 내려가면 다시 막힘. 시작 세트(1640)보다 낮아 지금은 벗었을 때만 걸린다
   - 0초 → 이동 확정: 테두리 `ReadyBorderColor`(초록) + "이동합니다." + **캐릭터 정지·조작 불가**(`SetHeldByPattern(true)` — 이동·스킬·대시 전부 막힘, 새 레벨에선 캐릭터가 새로 스폰되니 해제 불필요) → `TravelDelay`(0.8초) 뒤 `OpenLevelBySoftObjectPtr(TargetLevel = Echidna2-1)`. 확정 뒤엔 나가도 취소 안 됨
 - **레벨 이동 시 스킬 배치 유지 — `ULoAGameInstance`**(`DefaultEngine.ini` `GameInstanceClass=/Script/LoA.LoAGameInstance`): OpenLevel로 캐릭터·컴포넌트는 새로 만들어지지만 GameInstance는 게임 내내 산다. `USkillManagerComponent::EndPlay`가 슬롯 0~7 행 이름·`SkillLevels`·`AvailableSkillPoints`를 저장하고, `BeginPlay` 끝에서 복원(`bHasSkillLoadout` 전엔 BP 기본 배치). 복원은 등록 제한을 거치지 않는 `AssignSkillToSlotInternal`/`ClearSlotInternal`로. 로그 `[SkillLoadout] 저장/복원`
   - ⚠️ **버그였던 것 (레벨 이동 후 WBP_HUD `RefreshingSlot`에서 Accessed None 16개)**: 복원이 슬롯마다 `OnSkillSlotChanged`를 쐈는데, 복원은 캐릭터 `BeginPlay`(같은 프레임)에서 돌고 WBP_HUD의 `Slot Images` 배열은 Construct의 `Delay` 뒤에 채워져서 `Array Get`이 None → `SetBrushFromTexture`/`SetColorAndOpacity` 에러. 복원 땐 브로드캐스트 안 함(`bBroadcast=false`) — 아이콘은 HUD 초기화 루프가 `GetSlotIcon`으로 복원된 값을 읽어간다. **BeginPlay 시점에 HUD 바인딩 이벤트를 쏘지 말 것**
@@ -870,7 +873,23 @@
     - 상점이 열린 동안 **소지품 칸 우클릭 = 1개씩 판매 목록에**(같은 칸에서 또 누르면 같은 줄에 합쳐짐), **Shift+우클릭 = "묶음 판매" 팝업**(기본값 = 칸 개수 전부, 최대도 칸 개수). 구매 탭이었으면 판매 탭으로 자동 전환. 판매 목록 줄 우클릭 = 소지품으로 되돌림. 잠긴 아이템·`SellPrice` 0은 거절(안내)
     - 데이터는 **`UInventoryComponent::SellReserve`**(최대 `MaxSellReserve` 12줄) — 올리면 소지품 칸에서 실제로 빠지고(`ReserveForSell`), 비우기·**상점 닫기(`UShopWidget::CloseShop`)·인벤토리 `EndPlay`(저장 전)**에 원래 칸으로 돌아감(`UnreserveSell` — 원래 칸이 비었거나 같은 아이템이면 거기, 아니면 빈 칸). 판매 = `SellReserved()`(실링 지급 + 목록 비움). 판매 칸 표시 = 아이콘 왼쪽 위 개수 + 개수 × 판매가
     - 판매가 = `FItemDefinition::SellPrice`(정령의 회복약 1)
+    - **장비 판매 (2026-10-22)**: `FSellReserveEntry::EquipmentId`로 인스턴스를 들고 다닌다 — 장비는 합치지 않고 한 줄씩, 되돌리면 원래 칸(비었으면)/첫 빈 칸으로 `SetSlotEquipment`, 판매하면 인스턴스 맵에서도 삭제. 판매가 100 고정(재련 무관). 판매 칸은 개수 대신 +재련, 툴팁은 `DescribeEquipment`. 잘못 팔면 `LoAGiveItem Equip_StarterWeapon 1`(재련 0단계)로 복구 — 장비를 파는 NPC는 없음
   - **배치**: 로비 오른쪽 벽(+Y, 카메라 Yaw 0이라 화면 오른쪽 = +Y) 앞 — `BP_ShopNPC`(`/Game/LostArk/Lobby/`)
+- **NPC 공통 부모 `AInteractableNPCActor` (2026-10-22, `Lobby/InteractableNPCActor`)** — 마네킹·이름표·[G] 대화하기·테두리 발광·상호작용 거리·메뉴 카메라(`MenuCameraArmLength`/`MenuCameraPitch`)를 전부 여기로 올림. `AShopNPCActor`(판매 목록만)와 `ARefineNPCActor`가 상속. **컴포넌트가 아니라 상속**인 이유: NPC마다 다른 건 "어떤 창을 여는가" 하나뿐이고 그 분기는 컨트롤러가 `Cast`로 한다 — 기존 `BP_ShopNPC`의 부모 클래스를 바꾸지 않아도 됨
+  - 카메라 프로퍼티 이름이 `ShopCamera*` → `MenuCamera*`로 바뀌어 `DefaultEngine.ini [CoreRedirects]`에 PropertyRedirects 2줄(BP_ShopNPC 값 유지)
+  - 컨트롤러: `OpenShop/CloseShop/bShopOpen` → **`OpenNPCMenu/CloseNPCMenu/bNPCMenuOpen`**(공통 연출 후 NPC 종류별 창), `IsShopOpen()`은 "메뉴가 열렸고 그게 상점 NPC"일 때만. 새 NPC 종류를 추가하면 `OpenNPCMenu`/`CloseNPCMenu`에 분기 하나씩
+- **재련 NPC + 재련 창 (4단계, 2026-10-22, `Lobby/RefineNPCActor`, `Item/RefineLibrary`, `UI/RefineWidget`)** — [장비 재련] 칼도르(푸른 테두리). G/우클릭 → 하단 대화창 + 가운데 재련 창(소지품은 안 띄움)
+  - 규칙 `LoARefine`(RefineLibrary): 확률표는 C++ `Refine_Tiers`(계획서 4단계 표 + 시작 세트 아래 +1~+10 = 100%). 실패 보정 = 실패마다 기본×10%(최대 2배, `FEquipmentInstance::FailBonusSteps`), 숨결 = 구간마다 최대 개수·1개당 확률(`Refine_Tiers`의 Breath/BreathPerUnit, 로아 T4 무기 표: +11~12 0.5%×20=+10% / ~15 0.25%×20 / ~18 0.2%×20 / ~21 0.06%×25 / ~23 0.04%×25 / ~25 0.02%×50=+1%, 방어구도 같은 표) — 예전 '기본÷최대 개수'는 45% 구간에서 1개당 22.5%였음(보정 상한과 별개, `Preview(Instance, BreathUse)`가 개수를 받음), 장인의 기운 = 실패마다 그번 확률×46.51%(`ArtisanEnergy`), 100%면 확정. 성공하면 기운·보정 0. 무기는 파괴석, 방어구는 수호석, **비용은 골드**(계획서 실링 비용 ÷ 100, 50~1,000), 무기는 돌·돌파석·골드 1.5배
+  - `TryRefine` = 재료 확인 → 차감 → 굴림 → 인스턴스 갱신 → `NotifyEquipmentChanged` + `RefreshEquipped`(스탯) → **`UEquipmentComponent::SaveNow()`로 즉시 디스크 저장**(재시작으로 결과 되돌리기 방지). SaveNow는 소지품 `WriteToGameInstance` → 장착 GUID `WriteToGameInstance` → `SaveToDisk` 순서 — 둘이 어긋난 채 저장되면 장비가 사라지거나 늘어난다. 판매 목록에 올린 게 있으면 저장 건너뜀
+  - **창 (2026-10-22 로아 [장비 재련] 배치로 재작성, 1200×700 — 1040×550은 버튼이 삐져나왔음)**: 왼쪽 "☰ 전체" + 6부위 줄(무기 맨 위, 아이콘·"N 단계"·주황 이름) / 가운데 "장비 재련" 제목(끌기) → 장비 아이콘 → 이름 → "N 단계 ››› N+1 단계" → 장인의 기운 → **장비 성장 원**(완료면 주황 + 100%, 아니면 0%) + [성장] → 빨간 "▲ 장비 성장 완료 후, 재련할 수 있습니다" → 성공 확률 분해 → 재료 원 2개(돌·돌파석, 보유/필요 초록·빨강 — 숨결은 확인 팝업에서) → 재련 비용 / 소지 금액(골드) → [장비 재련](금테) [장비 재련 10회] / 오른쪽 "재련 단계" 스크롤 목록(25→0, **그 단계 성공 시 늘어나는** 양 — 무기는 무기 공격력, 방어구는 물리·마법 방어력·주 스탯·체력(누적값 아님, 로아 표라 단계마다 다름, 0단계 = "기본"), 현재 단계 금빛 강조, 자동 스크롤). 원은 텍스처 없이 `RoundedBox` + `HalfHeightRadius` 브러시
+  - **장비 성장 (로아)**: 단계마다 재련 전에 [성장] → 팝업(운명의 파편 필요 수량 + 성장 비용/소지 금액 **실링**) → `LoARefine::TryGrow`가 `FEquipmentInstance::bGrowthDone = true` + 즉시 저장. 재련 성공하면 다시 false. 성장 전엔 `TryRefine`이 `NeedGrowth`. 비용 표 `Refine_Tiers`의 GrowthFragments(200/1,200/1,800/2,600/3,600/5,000/6,500)·GrowthSilling(5천~10만, 예전 실링 재련 비용), 무기 1.5배 — 졸업까지 파편 약 32만·실링 약 520만 ≒ 클리어 80회. 운명의 파편 `LoAItems::FateFragment`(공식 아이콘 `T_FateFragment`, MaxStack 99,999), 레이드 기본 보상 3,400~4,600(첫 클리어 ×3·더보기 대상), 시작 지급 3,000(`bHasStarterFragments` 플래그 — 기존 저장 파일도 한 번)
+  - **재련 확인 팝업 (2026-10-22, 로아 [재련] 창)**: [장비 재련]/[장비 재련 10회]를 누르면(성장·숨결 없는 기본 재료 확인 후) 창 위에 뜸 — "N 단계 ››› N+1 단계", 재련 성공률 막대(지금 / 숨결 최대), 장인의 기운(실패 시 +증가량), 추가 재료 = 숨결 줄(아이콘·보유 수, 1개당 상승, "N / 최대" [−] 슬라이더 [+] [최대] — 보유 수를 넘으면 되돌림) → [장비 재련 / 10회][취소]. 고른 개수(`BreathUse`)는 성공·부위 변경·창 다시 열기 때 0. **특수 재료(책)는 안 넣음**
+  - **[장비 재련 N회]**: 로아처럼 재료 수에 따라 N = 2~10(`GetMultiCount`, 확인 팝업에선 숨결까지 넣은 재료 기준). 성장 완료 + 2번 이상 가능할 때만 켜짐. `TryRefineMany`가 성공하거나 재료가 떨어질 때까지 최대 N번(매 시도 저장) — 시도마다 차감하므로 성공하면 남은 횟수의 재료는 그대로 남음(로아의 "반환"). 실패 결과는 "N회 모두 실패 (장인의 기운 +x%)" / "재료가 떨어져 멈춤"
+  - **재련 성공 창**(로아 [재련 성공]): 성공하면 창 위에 아이콘(금테)·이름·"N 단계"·"재련 성공" + 스탯 줄 "이전 ››› 이후 ▲"(아이템 레벨, 무기 = 무기 공격력 / 방어구 = 물리·마법 방어력·주 스탯·체력) + N회 재련이면 "재련을 K회 시도했습니다."(+ "남은 M회분의 재료는 반환되었습니다.") → [확인]. 재련 전 장비는 `AnimBefore`로 들고 있다
+  - 재료 아이템: `GuardianStone`(수호석)/`DestructionStone`(파괴석)/`LeapStone`(돌파석)/**숨결 2종 (2026-10-22 분리)** — `LoAItems::GlacierBreath`(빙하의 숨결, **방어구 전용**, ItemId는 숨결이 하나이던 시절의 `"RefineBreath"` 그대로라 기존 저장 파일 호환, 아이콘 `T_RefineBreath`) / `LavaBreath`(용암의 숨결, **무기 전용**, `T_LavaBreath`). `FRefineCost::BreathId`가 부위에 맞는 숨결을 고르고 재련 창 체크 문구도 그 이름으로. 상점 각 1,000실링, 레이드 보상 빙하 1~3개 30% / 용암 1~2개 15% — 아이콘 `/Game/LostArk/UI/Item/T_*` = 로스트아크 공식 가이드(재련 페이지)의 운명의 수호석/파괴석/돌파석·빙하의 숨결 64×64 아이콘(2026-10-22 교체, 스마일게이트 저작물 — 개인 학습용, 외부 배포 금지). 아이콘이 없으면 창에서 색 네모로 보임
+  - 배치: 로비 (-800, 1720), Yaw -90 — 상점 NPC(0, 1720)와 같은 +Y 벽, 정비소 쪽. 레벨 인스턴스 `RefineNPC`(C++ 클래스 직접, BP 없음)
+  - ⚠️ MCP로 World Partition 레벨에 액터를 새로 놓으면 `save_actor`/경로 지정 `save_assets`는 "Asset does not exist"로 실패(외부 액터 패키지가 아직 디스크에 없어서) → `save_assets([])`(변경된 것 전부)로 저장됨
+  - 아직 재료를 얻는 길은 숨결(상점)뿐 — 나머지는 5단계 클리어 보상. 테스트: `LoAGiveItem GuardianStone 5000` 등, `LoARefineSim 25 10000`(3% → 평균 약 17.5회, 최악 40회)
 - 배치: PlayerStart (-1300,0) → 정비소 (-300,0) → 입장 구역 (1300,0) 일직선. 참고: `BP_Sorceress`의 기본 메시는 원래 `SKM_Quinn_Simple`(마네킹)이다 — 로비 문제 아님
 - MCP 테스트 팁: `StartPIE`의 `startTransform`으로 구역 안에 바로 스폰 가능, PIE 중엔 `find_actors`가 PIE 월드(`UEDPIE_0_...`) 액터를 돌려주므로 `set_actor_transform`으로 폰을 옮겨 이탈 테스트도 가능
 - 로비엔 `AHexArena`/`AEchidnaBoss`가 없으므로 미니맵·보스 HP 위젯은 컨트롤러가 알아서 안 만든다(HUD·스킬창은 정상)
@@ -899,6 +918,47 @@
 - `ClearReturnDelay`(3초) 뒤 사망과 같은 `ReturnToLobby()` → 정비소 위치에 스폰
 - 사망·클리어는 서로 덮지 않는다(먼저 뜬 쪽이 우선)
 
+## 클리어 보상 & 경제 (5단계, 2026-10-22, `Item/RaidReward`, `LoAGameInstance`, `UI/ClearWidget`, `LoAPlayerController`)
+
+- **화폐 2종 (2026-10-22 유저 결정)**: **골드** = 재련 비용·[더보기]·레이드 보상 / **실링** = 상점(회복약·숨결, 나중에 잡화상점). `UInventoryComponent::Gold`(`AddGold`/`SpendGold`/`OnGoldChanged`, `StartingGold` 10,000 — 별도 플래그 `bHasGold`라 기존 저장 파일도 한 번 지급), GI·SaveGame 유지, 아이콘 `/Game/LostArk/UI/Item/T_Gold`(PIL 임시), 소지품 창 하단 띠에 골드 → 실링 순으로 표시. 치트 `LoAGiveGold 50000`(음수면 차감)
+- 보상 표 `LoARaidReward::RollEchidna`(C++ 표 — 레이드·난이도가 늘면 DataTable로): 수호석 110~150 / 파괴석 34~46 / 돌파석 40~52 / **골드 5,200~7,000** / 실링 5.1만~6.9만(기본) + 숨결 1~3개 30%(확률). 약 80회 클리어에 전 부위 +25(골드 약 48.8만)가 되도록 4단계 재련 기대값에서 역산. 보상 줄의 `ItemId`가 `LoARaidReward::Gold`/`Silling`이면 화폐(`IsCurrency`)
+- **첫 클리어**: 기본 보상 ×3 — `ULoAGameInstance::bFirstClearRewarded`(저장됨) 별도 플래그라 기존 저장 파일도 한 번 받음. 테스트 명령을 쓴 판은 제외(최고 기록과 같은 규칙)
+- 지급 흐름(`OnBossDefeated`): 굴림 → `GI->PendingRewards`에 넣고 **즉시 SaveToDisk**(클리어 화면에서 꺼도 보상 유지) → `DeliverPendingRewardsNow`가 소지품 `AddItem`/`AddSilling` → `Equipment->SaveNow()`(소지품·장비·대기 보상을 한 번에). 칸이 모자라 못 넣은 분량은 `PendingRewards`에 남고, 대기 지역 `BeginPlay`가 남은 게 있으면 2초마다 `TryDeliverPendingRewards`로 다시 넣어 보며 알림
+- 클리어 화면: 결과 줄 아래 **전리품 줄**(아이콘 + 개수, 실링은 코인 + 숫자), 안내(첫 클리어 ×3 / 소지품 가득), **[더보기 (재료 +50%) 1,500 골드]**(로아처럼 골드, 한 번, `LoARaidReward::MakeBonus` — 화폐 제외 재료만 올림) + **[정비소로 이동]**(카운트다운 생략). 루트가 `SelfHitTestInvisible`로 바뀜(버튼만 클릭). `ClearReturnDelay` 3 → **12초**
+- 실패·중단은 보상 없음
+- **실링**: `StartingSilling` 1억 → **200만**. `CurrentSaveVersion` 2 — 버전 1 이하 저장 파일은 불러올 때 실링을 200만(`SillingCapOnMigrate`)으로 낮춤(1억이면 숨결을 무한정 사서 재련 확률을 올릴 수 있어서)
+
+## 장신구 · 전투 특성 (6단계, 2026-10-22, `Item/ItemTypes`·`ItemRegistry`·`EquipmentComponent`, `UI/CharacterInfoWidget`)
+
+- `EEquipSlot` 뒤에 **Necklace / Earring1 / Earring2 / Ring1 / Ring2** 추가(저장 파일 장착 GUID 배열이 이 순서라 **항상 뒤에만 추가**). `LoAEquipRules::SlotCount`(11, 전부) vs **`GearSlotCount`(6, 재련 장비)** — 아이템 레벨 평균·재련·`LoASetRefine All`은 Gear만. 귀걸이·반지 정의는 1번 칸(`Earring1`/`Ring1`)으로 두고 `CanEquipInSlot`이 2번 칸도 허용, 장착 시 빈 칸 우선 → 둘 다 차면 1번과 교체
+- 특성은 인스턴스에 `FEquipmentInstance::StatRolls`(`FStatRoll` = 종류 + 값). `CreateEquipment`가 장신구 정의(`AccessoryStatCount/Min/Max`)로 치명·특화·신속·제압 중 서로 다른 종류를 굴림(인내·숙련은 효과가 없어 제외). `ApplyStats`가 합쳐서 "Equipment" 수정치로 Crit/Specialization/Swiftness/Domination 등록. 재련 불가
+- 정의: 시작 "도전자의" 목걸이(치명 350 + 특화 350)·귀걸이·반지(각 200, 고정) / 드랍 "욕망의" 목걸이(2종 350~420)·귀걸이·반지(1종 200~240). 판매가 100 / 3,000 / 2,000 실링. 아이콘 `T_Acc_Necklace/Earring/Ring`(PIL 임시)
+- **시작 장신구**: 별도 플래그 `bHasStarterAccessories`(GI·SaveGame)라 기존 저장 파일도 한 번 받음 — 치명 750 + 특화 750(Earring1·Ring1 = 치명, Earring2·Ring2 = 특화)
+- **K 재조정**: `DA_Sorceress` BaseCombatStats 치명 280 → **0**, AttackPowerScale 124.541921 → **87.966**(C++ 기본값도). 치명 기대값 ×1.2685, 특화 ×1.375가 딜의 약 61%에 붙어 ×1.228 → 1640 시작 세트 DPS 불변. 시작 특성을 바꾸면 다시 역산할 것
+- 성장 폭: 최상급 치특(치명 900 + 특화 900)이 시작 대비 DPS 약 **+8.1%**. ⚠️ 신속 몰빵(목걸이 420 + 귀걸이·반지 240×4 = 1,380)이면 **이동속도 +23.7%, 쿨감 29.7%(상한 30%)** — 걸어서 피하는 패턴이 쉬워질 수 있음(미결)
+- 레이드 보상에 장신구 1개(100%, 첫 클리어 배수·더보기 대상 아님). 대기 보상에는 ItemId만 남고 특성은 소지품에 들어갈 때 굴림
+- 표시: 칸 배지 `LoAItems::GetEquipmentBadge` — 재련 장비 "+10", 장신구 특성 첫 글자("치특"). P 창 오른쪽 줄 앞 5칸이 장착 칸이 됨(`GearSlots` 6~10 = EEquipSlot), 전투 특성 값 옆에 실제 효과 %(치명률·특화 피해·쿨감·제압)
+
+## 로아 스탯 시스템 — 장비 표·방어력·생명력 (2026-10-22, `Item/ItemRegistry.cpp`, `Stat/StatComponent`, `Stat/LoADamageTypes.h`, `LoACharacter`)
+
+- **방침: 수치는 최대한 실제 로스트아크 값.** 출처는 Maxroll 플래너가 쓰는 게임 데이터 덤프 `https://assets-ng.maxroll.gg/laplanner/game/stats.json`(13MB, 2026-09-30) — 커뮤니티 글보다 이걸 먼저 볼 것
+  - `itemLevel["아이템ID#아이템레벨"]` = 그 레벨의 기본 효과. stat ID: **55 물리 방어력 / 56 마법 방어력 / 3·4·5 힘·민첩·지능 / 6 체력 / 151 무기 공격력**
+  - 운명의 업화(1590~) ID: `11159000` 무기, `111590X1~X5` 방어구(X = 1 힘 · 2 민첩 · 3 지능 계열, 끝자리 1 투구 · 2 상의 · 3 하의 · 4 장갑 · 5 견갑). 전율(1675~)은 다른 ID
+  - `classes[직업코드]` = `hpCon`(생명 활성력 계수)·`defCoefficient`(방어 계수)·`mainStat`. 소서리스(205) 2.1 / 0.95
+  - `statLevelScaling["70"]` = 전투 특성 포인트당 효과(값 × 100 = 1%당 포인트), `statConversion` = 특성 → 효과 환산(인내 → 방어력 0.8 등)
+- **장비 스탯 = `LoAItems::GetGearStats(부위, 재련 단계)`** — 업화 표 0~25단계를 C++ 배열로 옮김(지능 계열 값, 주 스탯은 직업 주 스탯에 들어감). 단계마다 오르는 양이 다르다(예전 "+2%/단계"는 폐기, `FItemDefinition`의 스탯 필드도 삭제). 검증: 투구 10→11 = 물방 6,130→6,226 · 마방 6,811→6,918 · 주 스탯 57,721→59,077 · 체력 7,293→7,401(로아 화면과 일치)
+  - 시작 세트(+10): 지능 합 284,481 · 무기 공격력 100,036 · 체력 36,465 · 물방/마방 각 34,055 → +25: 418,167 · 147,000 · 45,980 · 43,487
+- **최대 생명력 = (맨몸 체력 + 장비 체력) × `HPPerVitality`(소서리스 2.1)**. `DA_Sorceress.BaseVitality` 11,154 → 캐릭터 기본 23,423 + 시작 장비 76,577 = **100,000**(예전 설계값 유지), +25면 약 120,000. `FCombatStats::BaseHP`/`EquipmentHP`로 나눠 P창 툴팁에 표시. `DA.MaxHP`는 이제 안 씀
+  - **장비를 입고 벗어도 현재 HP는 그대로**, 최대 HP만 바뀜(줄면 잘림 — 로아와 같음). 스폰 때만 `ALoACharacter::BeginPlay`(컴포넌트 BeginPlay로 장비가 들어온 뒤)가 HP를 최대로 채우고 `bHPSettled`를 켠다. HUD 최대 HP는 `OnPlayerHPChanged`마다 다시 넣음 — 예전엔 바인딩할 때 한 번만 넣어서 "100151 / 23423"처럼 보였음
+- **방어력 = 장비 방어력 × `DefenseCoefficient`(0.95) × (1 + 인내 / 1,222.55)**, 받는 피해 감소 = **방어력 / (방어력 + 6,500)**. 시작 세트 32,352 → -83.27%, +25 → -86.4%
+  - 피해 종류: `ALoACharacter::ReceiveDamage(Amount, ELoADamageKind)` — `ApplyDamage`의 DamageTypeClass가 `ULoAPhysicalDamageType`이면 물리, `ULoATrueDamageType`이면 **Fixed(방어 무시)**, 그 외(기본 `UDamageType`)는 **마법**. 에키드나 패턴은 전부 마법. UENUM 값 이름에 `True`는 UHT가 거부함
+  - **패턴 수치는 그대로**: `AEchidnaBoss::IncomingDamageScale`(5.977 = (32,352+6,500)/6,500)을 곱한 뒤 방어력으로 깎는다 → 시작 세트는 예전과 같은 양을 맞고, +25면 약 81%만 맞는다. 보스가 없으면 1
+  - "최대 HP × N" 기믹(파리지옥·그네·거울잇기 실패)과 `LoAKillSelf`는 `ULoATrueDamageType`/Fixed — 방어력·배율 무시. 새 % 기믹도 이걸 쓸 것
+- **전투 특성 상수(로아 70레벨)**: 치명 27.944 / 신속 46.5731(쿨감)·58.2211(속도) / 제압 14.0053(무력화 대상 피해) / **인내 12.2255(방어력)** 포인트당 1% (`LoAStatRules`). 특화는 직업별이라 우리 설계(캐스팅·차지 스킬 +0.05%) 유지
+- **K(AttackPowerScale) 87.966 → 73.682**: 시작 표시 공격력이 57,735 → 68,928(√(284,958 × 100,036 / 6))로 올라서, 1640 DPS가 그대로 되도록 역산. 맨몸 주 스탯 477(로아 70레벨), 맨몸 무기 공격력 0. +25 세트는 표시 공격력 약 101,000(1640 대비 약 +47% — 예전 +2%/단계 모델보다 성장 폭이 큼)
+- `DA_Sorceress` 값(BasePrimaryStat 477 / BaseWeaponPower 0 / BaseVitality 11,154 / HPPerVitality 2.1 / AttackPowerScale 73.682)은 MCP로 저장함 — 예전 K가 에셋에 직렬화돼 있어서 C++ 기본값만 바꾸면 안 바뀐다
+- 장신구는 아직 전투 특성만(로아 장신구의 주 스탯·체력은 안 넣음)
+
 ## 레이드 흐름 마무리 — 중단·페이드 이동·디스크 저장·테스트 치트 (2026-09-28)
 
 - **레벨 이동은 전부 `ALoAPlayerController::TravelToLevelWithFade()`**(보스 입장·사망·클리어·중단): `TravelFadeOutTime`(0.5) 동안 검게 페이드 아웃(bHoldWhenFinished) → `OpenLevel`. `ULoAGameInstance::bFadeInOnArrive`를 켜두면 도착 레벨 BeginPlay가 `ArriveFadeInTime`(0.5) 페이드 인(보스 맵은 인트로가 대신). 이동 대기 중 중복 호출 무시
@@ -906,6 +966,7 @@
 - **디스크 저장 `ULoASaveGame`**(슬롯 `LoA` = `Saved/SaveGames/LoA.sav`): 스킬 배치·스킬 레벨·포인트·최고 클리어 기록·클리어 횟수. `ULoAGameInstance::Init`에서 읽고, 스킬 배치 저장(SkillManager EndPlay)·클리어(`RecordClear`)마다 씀. **초기 상태로 테스트하려면 이 파일을 지울 것**
 - 클리어 화면 결과 줄: "클리어 시간 00:04:12 (최고 기록 00:03:50)" 또는 "최고 기록 갱신!"
 - **테스트 콘솔 명령**(`~` 콘솔): `LoAKillBoss`(보스 즉사 → 클리어), `LoAKillSelf`(플레이어 즉사 → 패배). 쓴 판은 최고 기록에 안 남김
+  - `LoASetRefine All 15` / `LoASetRefine Weapon 20` — 장착 장비 재련 단계 바로 설정(0~25, **저장 파일에 남음**), 콘솔에 바뀐 아이템 레벨 출력
 - 대시: `IsActionLocked()`(경직·기절·끌려감·붙잡힘·사망) 중이면 막힘 — 예전엔 기절 중에도 대시가 나갔다
 
 ## 매혹 게이지 스택 시스템 (`Source/LoA/LoACharacter.h/.cpp`, `LoAPlayerController.h/.cpp`, `UI/CharmGaugeWidget.h/.cpp`) — 2026-09-21
@@ -979,7 +1040,7 @@
 ### 기준값 (2026-09-23 — 실제 에키드나 싱글모드 수치로 교체)
 | 항목 | 값 | 실제 저장 위치 |
 |---|---|---|
-| 플레이어 최대 HP | 100,000 | `DA_Sorceress.MaxHP` |
+| 플레이어 최대 HP | 100,000 (시작 세트 기준, 재련하면 오름) | (`DA_Sorceress.BaseVitality` + 장비 체력) × `HPPerVitality` — 아래 "로아 스탯 시스템" |
 | 플레이어 AttackPower | 7,911,200 | `DA_Sorceress.AttackPower` |
 | 보스 최대 HP | 4,746,719,168 (에키드나 **싱글모드** 실제값) | C++ 기본값 (`BP_Echidna` CDO·레벨 인스턴스 모두 오버라이드를 지워 C++을 따르게 함) |
 | 보스 체력 줄 | 285 (싱글모드) | `BP_Echidna` CDO |

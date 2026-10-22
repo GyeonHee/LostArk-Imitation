@@ -10,6 +10,8 @@
  *  - 끝나기 전에 밖으로 나가면 카운트다운 초기화 + 알림 즉시 사라짐 (다시 들어오면 처음부터)
  *  - 0초가 되면 이동 확정 — 테두리가 초록색(ReadyBorderColor)으로 바뀌고 TravelDelay 뒤 TargetLevel로 이동.
  *    확정 뒤에는 나가도 취소되지 않는다
+ *  - 장착 아이템 레벨이 RequiredItemLevel 미만이면 카운트다운 대신 "입장 가능 아이템 레벨" 알림만 띄운다.
+ *    구역 안에서 장비를 바꿔 조건을 넘기면 그 자리에서 카운트다운이 시작된다
  */
 UCLASS(Blueprintable)
 class LOA_API ARaidEntranceActor : public ALobbyZoneActor
@@ -35,6 +37,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Entrance")
 	FLinearColor ReadyBorderColor = FLinearColor(0.3f, 6.f, 0.6f, 0.9f);
 
+	// 입장 가능 장착 아이템 레벨 (0이면 제한 없음)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Entrance", meta = (ClampMin = "0"))
+	int32 RequiredItemLevel = 1620;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Entrance")
 	FText NoticeTitle;
 
@@ -47,12 +53,19 @@ protected:
 	virtual void TickPlayerInZone(APawn* Player, float DeltaSeconds) override;
 
 private:
+	bool MeetsItemLevel(APawn* Player, float& OutItemLevel) const;
+	void StartCountdown();
+	void ShowBlockedNotice(float ItemLevel);
 	void UpdateCounterText();
 	void BeginTravel();
 	void TravelToTarget();
 
 	float Remaining = 0.f;
 	int32 ShownSeconds = -1;
+
+	// 아이템 레벨 미달로 입장이 막힌 상태 (구역 안에 있는 동안)
+	bool bBlockedByItemLevel = false;
+	float ShownBlockedItemLevel = -1.f;
 
 	// 카운트다운이 끝나 이동이 확정된 상태 (초록 테두리 ~ 레벨 전환)
 	bool bTravelling = false;

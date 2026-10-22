@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
 #include "Item/ItemTypes.h"
+#include "Item/RaidReward.h"
 #include "LoASaveGame.generated.h"
 
 /**
@@ -48,6 +49,13 @@ public:
 	UPROPERTY()
 	int64 Silling = 0;
 
+	// 골드 (버전 2~)
+	UPROPERTY()
+	bool bHasGold = false;
+
+	UPROPERTY()
+	int64 Gold = 0;
+
 	// 배틀아이템 칸 1~4
 	UPROPERTY()
 	bool bHasBattleItemLoadout = false;
@@ -72,4 +80,22 @@ public:
 	// 시작 장비(1640 세트)를 받았는지 — 실링처럼 따로 플래그라 장비 이전 저장 파일에도 한 번 지급
 	UPROPERTY()
 	bool bHasStarterGear = false;
+
+	// 시작 장신구를 받았는지 (6단계~)
+	UPROPERTY()
+	bool bHasStarterAccessories = false;
+
+	UPROPERTY()
+	bool bHasStarterFragments = false;
+
+	UPROPERTY()
+	bool bHasFragmentGift = false;
+
+	// 레이드 보상 중 소지품이 가득 차 아직 못 받은 것 — 대기 지역에서 칸이 생기면 지급 (버전 2~)
+	UPROPERTY()
+	TArray<FLoARewardItem> PendingRewards;
+
+	// 첫 클리어 보너스(기본 보상 ×3)를 받았는지 (버전 2~)
+	UPROPERTY()
+	bool bFirstClearRewarded = false;
 };

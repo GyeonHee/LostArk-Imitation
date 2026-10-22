@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Stat/StatTypes.h"
 #include "ItemTypes.generated.h"
 
 class UTexture2D;
@@ -17,7 +18,8 @@ enum class EItemCategory : uint8
 	Etc,
 };
 
-/** 장비 부위 — 장착 아이템 레벨은 이 6부위 평균 (로아: 무기 1 + 방어구 5) */
+/** 장비 부위 — 앞 6칸(방어구 5 + 무기)이 재련 장비, 장착 아이템 레벨은 이 6칸 평균 (로아와 같음).
+ *  뒤 5칸은 장신구(6단계) — 재련 없음, 전투 특성만 준다. 저장 파일의 장착 GUID 배열이 이 순서라 **뒤에만 추가할 것** */
 UENUM(BlueprintType)
 enum class EEquipSlot : uint8
 {
@@ -27,7 +29,25 @@ enum class EEquipSlot : uint8
 	Pants    UMETA(DisplayName="하의"),
 	Gloves   UMETA(DisplayName="장갑"),
 	Weapon   UMETA(DisplayName="무기"),
+	Necklace UMETA(DisplayName="목걸이"),
+	Earring1 UMETA(DisplayName="귀걸이"),
+	Earring2 UMETA(DisplayName="귀걸이"),
+	Ring1    UMETA(DisplayName="반지"),
+	Ring2    UMETA(DisplayName="반지"),
 	MAX      UMETA(Hidden),
+};
+
+/** 장신구에 붙은 전투 특성 하나 (예: 치명 +385) */
+USTRUCT(BlueprintType)
+struct FStatRoll
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	ELoACombatStat Stat = ELoACombatStat::Crit;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Value = 0;
 };
 
 /**
@@ -95,15 +115,19 @@ struct FItemDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
 	int32 BaseItemLevel = 0;
 
-	// 재련 0단계 스탯 — 단계마다 LoAEquipRules::StatPerRefine씩 오른다. 방어구는 주 스탯·체력, 무기는 무기 공격력
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
-	double PrimaryStat = 0.0;
+	// 스탯(무기 공격력·방어력·주 스탯·체력)은 정의에 없다 — 부위와 재련 단계로 LoAItems::GetGearStats(로아 T4 업화 표)에서 읽는다
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
-	double WeaponPower = 0.0;
+	// ── 장신구 (6단계) — 인스턴스를 만들 때 특성 AccessoryStatCount종을 [Min, Max]로 굴린다(서로 다른 종류). 0이면 장신구 아님 ──
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Accessory")
+	int32 AccessoryStatCount = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Equipment")
-	double Vitality = 0.0;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Accessory")
+	int32 AccessoryStatMin = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Accessory")
+	int32 AccessoryStatMax = 0;
+
+	bool IsAccessory() const { return IsEquipment() && AccessoryStatCount > 0; }
 
 	bool IsEquipment() const { return Category == EItemCategory::Equipment && EquipSlot != EEquipSlot::MAX; }
 };
@@ -136,6 +160,14 @@ struct FEquipmentInstance
 
 	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
 	int32 FailBonusSteps = 0;
+
+	// 장신구 전투 특성 (6단계) — 재련 장비는 비어 있다
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	TArray<FStatRoll> StatRolls;
+
+	// 장비 성장 — 다음 단계 재련 전에 운명의 파편 + 실링으로 경험치를 100% 채워야 한다(로아). 재련에 성공하면 다시 false
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	bool bGrowthDone = false;
 };
 
 /** 인벤토리 한 칸 — 저장 파일에도 이 그대로 들어간다 */
@@ -165,12 +197,25 @@ struct FInventorySlot
 /** 장비 규칙 — 직업과 무관한 게임 규칙이라 코드에 둔다 (StatTypes.h의 LoAStatRules와 같은 방침) */
 namespace LoAEquipRules
 {
-	constexpr int32 SlotCount = static_cast<int32>(EEquipSlot::MAX);
+	constexpr int32 SlotCount = static_cast<int32>(EEquipSlot::MAX);  // 장신구까지 전부 (장착 GUID 배열 크기)
+	constexpr int32 GearSlotCount = 6;                                 // 재련 장비 (방어구 5 + 무기) — 아이템 레벨 평균·재련 대상
+	inline bool IsGearSlot(EEquipSlot Slot) { return static_cast<int32>(Slot) < GearSlotCount; }
+	/** Def의 부위(귀걸이·반지는 1번 칸으로 정의)가 장착 칸 Slot에 들어갈 수 있는지 — 귀걸이·반지는 두 칸 다 */
+	LOA_API bool CanEquipInSlot(EEquipSlot DefSlot, EEquipSlot Slot);
 	constexpr int32 ItemLevelPerRefine = 5;   // 재련 1단계 = 부위 아이템 레벨 +5
-	constexpr double StatPerRefine = 0.02;    // 재련 1단계 = 부위 스탯 +2% (재련 0단계 기준)
 	constexpr int32 MaxRefineLevel = 25;
 	constexpr int32 StarterRefineLevel = 10;  // 시작 세트 +10 = 아이템 레벨 1640
 }
+
+/** 재련 장비 한 부위의 기본 효과 — 무기는 무기 공격력만, 방어구는 나머지 넷 */
+struct FGearStats
+{
+	double PrimaryStat = 0.0;   // 직업 주 스탯(힘·민첩·지능 중 그 직업 것)에 더해진다
+	double WeaponPower = 0.0;
+	double Vitality = 0.0;
+	double PhysDefense = 0.0;   // 직업 방어 계수 곱하기 전
+	double MagicDefense = 0.0;
+};
 
 /** 아이템 정의 등록소 — 지금은 C++ 표(ItemRegistry.cpp). 아이템이 많아지면 DataTable로 옮길 것 */
 namespace LoAItems
@@ -180,12 +225,35 @@ namespace LoAItems
 	// 정령의 회복약
 	LOA_API extern const FName SpiritRecoveryPotion;
 
+	// 재련 재료 — 수호석(방어구) / 파괴석(무기) / 돌파석(공통) / 숨결(선택, 확률 +기본 확률: 빙하 = 방어구, 용암 = 무기)
+	LOA_API extern const FName GuardianStone;
+	LOA_API extern const FName DestructionStone;
+	LOA_API extern const FName LeapStone;
+	LOA_API extern const FName GlacierBreath;  // 빙하의 숨결 — ID는 숨결이 하나이던 시절의 "RefineBreath" 그대로(저장 파일 호환)
+	LOA_API extern const FName LavaBreath;     // 용암의 숨결
+	LOA_API extern const FName FateFragment;   // 운명의 파편 — 장비 성장(재련 전 단계) 재료
+
 	/** 부위별 시작 장비 (1640 세트 = 재련 +10) — EEquipSlot 순서 */
 	LOA_API FName GetStarterEquipment(EEquipSlot Slot);
 
-	/** 장비 인스턴스의 부위 아이템 레벨 / 재련 반영 스탯 배율 */
+	/** 장신구 정의로 전투 특성을 굴린다 — 치명·특화·신속·제압 중 서로 다른 AccessoryStatCount종 (인내·숙련은 효과가 없어 빼둠) */
+	LOA_API TArray<FStatRoll> RollAccessoryStats(const FItemDefinition& Def);
+
+	/** 칸 왼쪽 위 표시 — 재련 장비는 "+10", 장신구는 특성 첫 글자("치특") */
+	LOA_API FString GetEquipmentBadge(const FEquipmentInstance& Instance);
+
+	/** 시작 장신구 (EEquipSlot::Necklace ~ Ring2 순서) — 정의 ID와 고정 특성 */
+	LOA_API FName GetStarterAccessory(EEquipSlot Slot);
+	LOA_API TArray<FStatRoll> GetStarterAccessoryStats(EEquipSlot Slot);
+
+	/** 레이드 드랍 장신구 — 목걸이·귀걸이·반지 중 하나 (특성은 인스턴스를 만들 때 굴림) */
+	LOA_API FName GetRandomDropAccessory();
+
+	/** 장비 인스턴스의 부위 아이템 레벨 */
 	LOA_API int32 GetEquipmentItemLevel(const FEquipmentInstance& Instance);
-	LOA_API double GetRefineStatMultiplier(int32 RefineLevel);
+
+	/** 재련 장비 부위의 RefineLevel(0~25) 단계 기본 효과 — 로아 T4 운명의 업화 표 (부위마다, 단계마다 오르는 양이 다르다) */
+	LOA_API FGearStats GetGearStats(EEquipSlot Slot, int32 RefineLevel);
 
 	/** 세 자리마다 쉼표 — 100000000 → "100,000,000". 언어 설정과 무관하게 항상 쉼표 */
 	LOA_API FString FormatWithCommas(int64 Value);

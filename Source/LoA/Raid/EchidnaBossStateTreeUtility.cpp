@@ -1,4 +1,5 @@
 #include "EchidnaBossStateTreeUtility.h"
+#include "Stat/LoADamageTypes.h"
 #include "NiagaraSystem.h"
 #include "StateTreeExecutionContext.h"
 #include "EchidnaBoss.h"
@@ -892,7 +893,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorLinkPattern::Tick(FStateTreeExec
 			}
 			for (TActorIterator<ALoACharacter> It(Boss->GetWorld()); It; ++It)
 			{
-				UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * InstanceData.FailDamageRatio, Boss->GetController(), Boss, UDamageType::StaticClass());
+				UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * InstanceData.FailDamageRatio, Boss->GetController(), Boss, ULoATrueDamageType::StaticClass());
 			}
 			InstanceData.Phase = EEchidnaMirrorLinkPhase::Failing;
 			InstanceData.PhaseElapsed = 0.f;

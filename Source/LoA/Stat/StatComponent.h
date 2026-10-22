@@ -59,8 +59,8 @@ private:
 	double BasePrimaryStat = 0.0;
 	double BaseWeaponPower = 0.0;
 	double BaseVitality = 0.0;
-	float BaseMaxHP = 0.f;
 	float HPPerVitality = 1.f;
+	float DefenseCoefficient = 1.f;
 	double AttackPowerScale = 1.0;
 	float BaseCritRate = 0.f;
 	FCombatStatPoints BaseCombatStats;

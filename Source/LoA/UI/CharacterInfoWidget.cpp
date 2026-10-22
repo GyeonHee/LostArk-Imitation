@@ -16,6 +16,7 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
 #include "Components/Overlay.h"
+#include "Components/ScrollBox.h"
 #include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
 #include "Components/Spacer.h"
@@ -37,6 +38,7 @@ namespace
 
 	constexpr float CharInfo_SlotSize = 50.f;
 	constexpr float CharInfo_PanelWidth = 1000.f;
+	constexpr float CharInfo_DetailWidth = 290.f;   // [상세정보] 전체 효과 정보 칸
 	constexpr float CharInfo_BodyHeight = 540.f;
 	constexpr float CharInfo_PreviewHeight = 516.f; // 본문 높이 - 장비 영역 안쪽 여백(12 × 2)
 	constexpr float CharInfo_PreviewRotateSpeed = 0.6f; // 1px 끌 때 몇 도
@@ -256,7 +258,8 @@ UWidget* UCharacterInfoWidget::BuildEquipmentArea()
 	Area->SetContent(Row);
 
 	// 세로 칸 줄 하나 — 금색 테두리 띠 안에 칸들을 쌓는다
-	auto MakeSlotColumn = [this](const TArray<FText>& Parts, const TCHAR* Prefix, bool bGear) -> UWidget*
+	// GearCount = 앞에서부터 몇 칸이 실제 장착 칸인지(GearSlots에 들어감) — 나머지는 아직 시스템이 없는 빈 자리
+	auto MakeSlotColumn = [this](const TArray<FText>& Parts, const TCHAR* Prefix, int32 GearCount) -> UWidget*
 	{
 		UBorder* Frame = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		Frame->SetBrushColor(FLinearColor(0.10f, 0.09f, 0.065f, 1.f));
@@ -266,7 +269,7 @@ UWidget* UCharacterInfoWidget::BuildEquipmentArea()
 		Frame->SetContent(Slots);
 		for (int32 i = 0; i < Parts.Num(); ++i)
 		{
-			FGearSlotWidgets* Out = bGear ? &GearSlots.AddDefaulted_GetRef() : nullptr;
+			FGearSlotWidgets* Out = i < GearCount ? &GearSlots.AddDefaulted_GetRef() : nullptr;
 			if (UVerticalBoxSlot* S = Slots->AddChildToVerticalBox(MakeEquipSlot(Parts[i], FName(*FString::Printf(TEXT("%s_%d"), Prefix, i)), Out)))
 			{
 				S->SetPadding(FMargin(0.f, i == 0 ? 0.f : 6.f, 0.f, 0.f));
@@ -284,7 +287,7 @@ UWidget* UCharacterInfoWidget::BuildEquipmentArea()
 		NSLOCTEXT("CharInfo", "Gloves", "장갑"),
 		NSLOCTEXT("CharInfo", "Weapon", "무기"),
 	};
-	if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MakeSlotColumn(GearParts, TEXT("GearSlot"), true)))
+	if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MakeSlotColumn(GearParts, TEXT("GearSlot"), GearParts.Num())))
 	{
 		S->SetVerticalAlignment(VAlign_Top);
 	}
@@ -310,7 +313,7 @@ UWidget* UCharacterInfoWidget::BuildEquipmentArea()
 		S->SetPadding(FMargin(12.f, 0.f));
 	}
 
-	// 오른쪽 줄: 장신구 5 + 팔찌 + 어빌리티 스톤
+	// 오른쪽 줄: 장신구 5(6단계, EEquipSlot::Necklace~Ring2 — GearSlots 6~10번) + 팔찌 + 어빌리티 스톤(아직 없음)
 	const TArray<FText> AccessoryParts = {
 		NSLOCTEXT("CharInfo", "Necklace", "목걸이"),
 		NSLOCTEXT("CharInfo", "Earring1", "귀걸이"),
@@ -320,7 +323,7 @@ UWidget* UCharacterInfoWidget::BuildEquipmentArea()
 		NSLOCTEXT("CharInfo", "Bracelet", "팔찌"),
 		NSLOCTEXT("CharInfo", "Stone", "스톤"),
 	};
-	if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MakeSlotColumn(AccessoryParts, TEXT("AccessorySlot"), false)))
+	if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MakeSlotColumn(AccessoryParts, TEXT("AccessorySlot"), LoAEquipRules::SlotCount - LoAEquipRules::GearSlotCount)))
 	{
 		S->SetVerticalAlignment(VAlign_Top);
 	}
@@ -383,8 +386,9 @@ UWidget* UCharacterInfoWidget::BuildStatColumn()
 	AttackPowerRow = MakeStatRow(NSLOCTEXT("CharInfo", "AttackPower", "공격력"), Value, TEXT("AttackPowerRow"));
 	AttackPowerText = Value;
 	Column->AddChildToVerticalBox(AttackPowerRow);
-	Column->AddChildToVerticalBox(MakeStatRow(NSLOCTEXT("CharInfo", "MaxHP", "최대 생명력"), Value, TEXT("MaxHPRow")));
+	MaxHPRow = MakeStatRow(NSLOCTEXT("CharInfo", "MaxHP", "최대 생명력"), Value, TEXT("MaxHPRow"));
 	MaxHPText = Value;
+	Column->AddChildToVerticalBox(MaxHPRow);
 
 	// ── 전투 특성 — 로아 창 순서(치명·특화·제압·신속·인내·숙련), 값은 ELoACombatStat 순서로 보관 ──
 	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(MakeSectionTitle(NSLOCTEXT("CharInfo", "CombatStats", "전투 특성"))))
@@ -408,20 +412,6 @@ UWidget* UCharacterInfoWidget::BuildStatColumn()
 		CombatStatTexts[Index] = Value;
 		CombatStatRows[Index] = StatRow;
 		Column->AddChildToVerticalBox(StatRow);
-	}
-
-	// ── [상세정보] 펼침 칸 ──
-	DetailBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("DetailBox"));
-	DetailBox->SetVisibility(ESlateVisibility::Collapsed);
-	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(DetailBox))
-	{
-		S->SetPadding(FMargin(0.f, 10.f, 0.f, 0.f));
-	}
-	DetailBox->AddChildToVerticalBox(MakeSectionTitle(NSLOCTEXT("CharInfo", "Detail", "상세 효과")));
-	DetailText = MakeText(TEXT(""), 10, CharInfo_LabelColor, TEXT("DetailText"));
-	if (UVerticalBoxSlot* S = DetailBox->AddChildToVerticalBox(DetailText))
-	{
-		S->SetPadding(FMargin(10.f, 6.f));
 	}
 
 	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass())))
@@ -463,9 +453,21 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 			S->SetPosition(FVector2D::ZeroVector);
 		}
 
+		// 창 본문 | [상세정보] "전체 효과 정보" 칸 — 같은 Panel 안이라 창을 끌면 같이 움직인다
+		UHorizontalBox* PanelRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("PanelRow"));
+		Panel->SetContent(PanelRow);
+
 		USizeBox* PanelSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("PanelSize"));
 		PanelSize->SetWidthOverride(CharInfo_PanelWidth);
-		Panel->SetContent(PanelSize);
+		PanelRow->AddChildToHorizontalBox(PanelSize);
+
+		DetailPanel = BuildDetailPanel();
+		DetailPanel->SetVisibility(ESlateVisibility::Collapsed);
+		if (UHorizontalBoxSlot* S = PanelRow->AddChildToHorizontalBox(DetailPanel))
+		{
+			S->SetVerticalAlignment(VAlign_Fill);
+			S->SetPadding(FMargin(10.f, 0.f, 0.f, 0.f));
+		}
 
 		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("CharacterInfoColumn"));
 		PanelSize->SetContent(Column);
@@ -637,12 +639,17 @@ void UCharacterInfoWidget::Refresh()
 			static_cast<int64>(Stats.AttackPower))));
 	}
 	MaxHPText->SetText(FText::FromString(FString::Printf(TEXT("%lld"), static_cast<int64>(FMath::RoundToDouble(Stats.MaxHP)))));
-
+	if (MaxHPRow)
+	{
+		MaxHPRow->SetToolTipText(FText::FromString(FString::Printf(TEXT("체력 × 생명 활성력 계수\n캐릭터 기본 %s + 장비 %s"),
+			*LoAItems::FormatWithCommas(static_cast<int64>(Stats.BaseHP)), *LoAItems::FormatWithCommas(static_cast<int64>(Stats.EquipmentHP)))));
+	}
 	const FCombatStatPoints& P = Stats.CombatPoints;
 	const float SpecBonus = Stats.SpecializationMultiplier - 1.f;
 	const float SpeedBonus = Stats.MoveSpeedMultiplier - 1.f;
 	const float DominationBonus = Stats.DominationMultiplier - 1.f;
 
+	// 전투 특성은 포인트만 — 실제 % 값은 툴팁과 [상세정보]
 	for (int32 i = 0; i < CombatStatTexts.Num(); ++i)
 	{
 		if (!CombatStatTexts[i]) continue;
@@ -661,6 +668,9 @@ void UCharacterInfoWidget::Refresh()
 		case ELoACombatStat::Domination:
 			Tip = FString::Printf(TEXT("무력화(그로기) 상태의 적에게 주는 피해 +%s"), *CharInfo_Percent(DominationBonus));
 			break;
+		case ELoACombatStat::Endurance:
+			Tip = FString::Printf(TEXT("물리·마법 방어력 +%s"), *CharInfo_Percent(P.Endurance * LoAStatRules::DefensePerEndurance));
+			break;
 		case ELoACombatStat::Swiftness:
 			Tip = FString::Printf(TEXT("스킬 재사용 대기시간 감소 %s (최대 %s)\n이동·공격 속도 +%s"),
 				*CharInfo_Percent(Stats.CooldownReduction), *CharInfo_Percent(LoAStatRules::MaxCooldownReduction), *CharInfo_Percent(SpeedBonus));
@@ -675,14 +685,144 @@ void UCharacterInfoWidget::Refresh()
 		}
 	}
 
-	if (DetailText)
+	RefreshDetailPanel(Stats);
+}
+
+UWidget* UCharacterInfoWidget::BuildDetailPanel()
+{
+	// 로아 [전체 효과 정보] — 제목 띠 + [공격][방어] 탭 + 줄 목록(이름 ······ 값). 활동 탭·추가 성장 정보는 없음
+	USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("DetailPanelSize"));
+	Size->SetWidthOverride(CharInfo_DetailWidth);
+	UBorder* Back = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DetailPanelBack"));
+	Back->SetBrushColor(CharInfo_SectionColor);
+	Back->SetPadding(FMargin(8.f));
+	Size->SetContent(Back);
+	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("DetailPanelColumn"));
+	Back->SetContent(Column);
+
+	// 제목 띠 (금빛 밑줄)
+	UBorder* TitleFrame = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DetailTitleFrame"));
+	TitleFrame->SetBrushColor(CharInfo_FrameColor);
+	TitleFrame->SetPadding(FMargin(0.f, 0.f, 0.f, 1.5f));
+	UBorder* TitleBar = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DetailTitleBar"));
+	TitleBar->SetBrushColor(FLinearColor(0.16f, 0.13f, 0.08f, 1.f));
+	TitleBar->SetPadding(FMargin(6.f, 6.f));
+	TitleBar->SetHorizontalAlignment(HAlign_Center);
+	TitleBar->SetContent(MakeText(TEXT("전체 효과 정보"), 12, CharInfo_Gold, TEXT("DetailTitle")));
+	TitleFrame->SetContent(TitleBar);
+	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(TitleFrame)) S->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
+
+	// [공격] [방어]
+	UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("DetailTabs"));
+	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(Tabs)) S->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
+	auto MakeTab = [this, Tabs](const TCHAR* Name, const TCHAR* Label, UTextBlock*& OutText, float LeftPad) -> UButton*
 	{
-		DetailText->SetText(FText::FromString(FString::Printf(
-			TEXT("치명타 적중률  %s\n치명타 피해  %s\n특화 (캐스팅 스킬 피해)  +%s\n재사용 대기시간 감소  %s\n이동 속도  +%s\n공격·캐스팅 속도  +%s\n제압 (그로기 대상 피해)  +%s\n피해 증가 (합)  +%s\n피해 증가 (곱)  x%.4f"),
-			*CharInfo_Percent(Stats.CritRate), *CharInfo_Percent(Stats.CritDamage), *CharInfo_Percent(SpecBonus),
-			*CharInfo_Percent(Stats.CooldownReduction), *CharInfo_Percent(SpeedBonus), *CharInfo_Percent(Stats.AttackSpeedMultiplier - 1.f),
-			*CharInfo_Percent(DominationBonus), *CharInfo_Percent(Stats.AdditiveDamageBonus), Stats.MultiplicativeDamage)));
+		UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), FName(Name));
+		CharInfo_FlatButtonStyle(Button, 0.06f);
+		OutText = MakeText(Label, 11, CharInfo_DimColor);
+		Button->SetContent(OutText);
+		if (UHorizontalBoxSlot* S = Tabs->AddChildToHorizontalBox(Button))
+		{
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetPadding(FMargin(LeftPad, 0.f, 0.f, 0.f));
+		}
+		return Button;
+	};
+	UTextBlock* AttackText = nullptr;
+	UTextBlock* DefenseText = nullptr;
+	DetailAttackTab = MakeTab(TEXT("DetailAttackTab"), TEXT("공격"), AttackText, 0.f);
+	DetailDefenseTab = MakeTab(TEXT("DetailDefenseTab"), TEXT("방어"), DefenseText, 4.f);
+	DetailAttackTabText = AttackText;
+	DetailDefenseTabText = DefenseText;
+	DetailAttackTab->OnClicked.AddDynamic(this, &UCharacterInfoWidget::HandleDetailAttackTab);
+	DetailDefenseTab->OnClicked.AddDynamic(this, &UCharacterInfoWidget::HandleDetailDefenseTab);
+
+	DetailRows = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("DetailRows"));
+	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(DetailRows)) S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+
+	SetDetailTab(0);
+	return Size;
+}
+
+void UCharacterInfoWidget::SetDetailTab(int32 Tab)
+{
+	DetailTab = Tab;
+	auto Style = [](UButton* Button, UTextBlock* Text, bool bActive)
+	{
+		if (!Button || !Text) return;
+		CharInfo_FlatButtonStyle(Button, bActive ? 0.18f : 0.04f);
+		Text->SetColorAndOpacity(FSlateColor(bActive ? CharInfo_Gold : CharInfo_DimColor));
+	};
+	Style(DetailAttackTab, DetailAttackTabText, Tab == 0);
+	Style(DetailDefenseTab, DetailDefenseTabText, Tab == 1);
+	const UStatComponent* Comp = StatComponent.Get();
+	RefreshDetailPanel(Comp ? Comp->GetStats() : FCombatStats());
+}
+
+void UCharacterInfoWidget::RefreshDetailPanel(const FCombatStats& Stats)
+{
+	if (!DetailRows) return;
+	DetailRows->ClearChildren();
+
+	auto AddRow = [this](const FString& Label, const FString& Value, const FString& Tip = FString())
+	{
+		UBorder* Row = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+		Row->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.f));
+		Row->SetPadding(FMargin(6.f, 5.f));
+		if (!Tip.IsEmpty()) Row->SetToolTipText(FText::FromString(Tip));
+		UHorizontalBox* Line = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		Row->SetContent(Line);
+		if (UHorizontalBoxSlot* S = Line->AddChildToHorizontalBox(MakeText(Label, 10, CharInfo_LabelColor)))
+		{
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetVerticalAlignment(VAlign_Center);
+		}
+		if (UHorizontalBoxSlot* S = Line->AddChildToHorizontalBox(MakeText(Value, 10, CharInfo_ValueColor)))
+		{
+			S->SetVerticalAlignment(VAlign_Center);
+		}
+		DetailRows->AddChild(Row);
+	};
+	auto Number = [](double V) { return LoAItems::FormatWithCommas(static_cast<int64>(FMath::RoundToDouble(V))); };
+
+	// 지금 실제로 계산에 쓰는 것만 — 로아 화면의 적중률·진화형 피해·방어 관통·계열 피해 등은 아직 없음
+	if (DetailTab == 0)
+	{
+		const UStatComponent* Comp = StatComponent.Get();
+		const EPrimaryStat PrimaryType = Comp ? Comp->GetPrimaryStatType() : EPrimaryStat::Intelligence;
+		AddRow(StaticEnum<EPrimaryStat>()->GetDisplayNameTextByValue(static_cast<int64>(PrimaryType)).ToString(), Number(Stats.PrimaryStat));
+		AddRow(TEXT("무기 공격력"), Number(Stats.WeaponPower));
+		AddRow(TEXT("추가 피해"), CharInfo_Percent(Stats.AdditiveDamageBonus), TEXT("피해 증가(합) — 서로 더한 뒤 한 번 곱한다"));
+		AddRow(TEXT("적에게 주는 피해"), CharInfo_Percent(Stats.MultiplicativeDamage - 1.f), TEXT("피해 증가(곱) — 각자 따로 곱한다"));
+		AddRow(TEXT("공격 속도"), CharInfo_Percent(Stats.AttackSpeedMultiplier), TEXT("기본공격·캐스팅 속도 (신속)"));
+		AddRow(TEXT("이동 속도"), CharInfo_Percent(Stats.MoveSpeedMultiplier), TEXT("신속"));
+		AddRow(TEXT("치명타 적중률"), CharInfo_Percent(Stats.CritRate));
+		AddRow(TEXT("치명타 피해"), CharInfo_Percent(Stats.CritDamage));
+		AddRow(TEXT("재사용 대기시간 감소"), CharInfo_Percent(Stats.CooldownReduction),
+			FString::Printf(TEXT("신속 — 최대 %s"), *CharInfo_Percent(LoAStatRules::MaxCooldownReduction)));
+		AddRow(TEXT("캐스팅·차지 스킬 피해 증가"), CharInfo_Percent(Stats.SpecializationMultiplier - 1.f), TEXT("특화 — 종말의 날·천벌·익스플로전"));
+		AddRow(TEXT("무력화 대상 피해량 증가"), CharInfo_Percent(Stats.DominationMultiplier - 1.f), TEXT("제압 — 그로기 중인 보스"));
 	}
+	else
+	{
+		AddRow(TEXT("최대 생명력"), Number(Stats.MaxHP),
+			FString::Printf(TEXT("캐릭터 기본 %s + 장비 %s"), *Number(Stats.BaseHP), *Number(Stats.EquipmentHP)));
+		AddRow(TEXT("체력"), Number(Stats.Vitality), TEXT("최대 생명력 = 체력 × 생명 활성력 계수"));
+		AddRow(TEXT("물리 방어력"), Number(Stats.PhysDefense), TEXT("장비 방어력 × 직업 방어 계수 × 인내"));
+		AddRow(TEXT("마법 방어력"), Number(Stats.MagicDefense), TEXT("장비 방어력 × 직업 방어 계수 × 인내"));
+		AddRow(TEXT("받는 물리 피해 감소"), CharInfo_Percent(Stats.PhysDamageReduction), TEXT("물리 방어력 / (물리 방어력 + 6,500)"));
+		AddRow(TEXT("받는 마법 피해 감소"), CharInfo_Percent(Stats.MagicDamageReduction), TEXT("마법 방어력 / (마법 방어력 + 6,500)"));
+	}
+}
+
+void UCharacterInfoWidget::HandleDetailAttackTab()
+{
+	SetDetailTab(0);
+}
+
+void UCharacterInfoWidget::HandleDetailDefenseTab()
+{
+	SetDetailTab(1);
 }
 
 void UCharacterInfoWidget::RefreshGearSlots()
@@ -721,7 +861,7 @@ void UCharacterInfoWidget::RefreshGearSlots()
 			W.PartText->SetColorAndOpacity(FSlateColor(CharInfo_ValueColor));
 			W.PartText->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
-		W.RefineText->SetText(FText::FromString(FString::Printf(TEXT("+%d"), Instance->RefineLevel)));
+		W.RefineText->SetText(FText::FromString(LoAItems::GetEquipmentBadge(*Instance)));
 		W.RefineText->SetVisibility(ESlateVisibility::HitTestInvisible);
 		W.Frame->SetBrushColor(CharInfo_Gold);
 		W.Frame->SetToolTipText(FText::Format(NSLOCTEXT("CharInfo", "EquippedSlotTip", "{0}\n\n우클릭: 해제"),
@@ -746,9 +886,15 @@ void UCharacterInfoWidget::HandleCloseClicked()
 void UCharacterInfoWidget::HandleDetailClicked()
 {
 	bDetailOpen = !bDetailOpen;
-	if (DetailBox)
+	if (DetailPanel)
 	{
-		DetailBox->SetVisibility(bDetailOpen ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		DetailPanel->SetVisibility(bDetailOpen ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		// 창은 가운데 정렬(Alignment 0.5)이라 오른쪽 칸만큼 넓어지면 왼쪽으로 밀린다 — 그만큼 오른쪽으로 옮겨 본문 자리를 유지
+		if (UCanvasPanelSlot* PanelSlot = Panel ? Cast<UCanvasPanelSlot>(Panel->Slot) : nullptr)
+		{
+			const float Shift = (CharInfo_DetailWidth + 10.f) * 0.5f;
+			PanelSlot->SetPosition(PanelSlot->GetPosition() + FVector2D(bDetailOpen ? Shift : -Shift, 0.f));
+		}
 	}
 	if (DetailButtonText)
 	{

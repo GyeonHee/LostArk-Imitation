@@ -63,6 +63,9 @@ private:
 
 	void HandleInventoryChanged(int32 Index);
 	void HandleSillingChanged(int64 NewAmount);
+	void HandleGoldChanged(int64 NewAmount);
+	/** 착용 장비가 바뀜 — 장비 칸 툴팁의 ▲▼(착용 중 장비와 비교)를 다시 계산 */
+	void HandleEquipmentChanged();
 	void RefreshSlot(int32 Index);
 	void RefreshAll();
 
@@ -81,11 +84,20 @@ private:
 	TWeakObjectPtr<UInventoryComponent> Inventory;
 	FDelegateHandle InventoryChangedHandle;
 	FDelegateHandle SillingChangedHandle;
+	FDelegateHandle GoldChangedHandle;
+	FDelegateHandle EquipmentChangedHandle;
+	TWeakObjectPtr<class UEquipmentComponent> WatchedEquipment;
 
 	// 하단 화폐 줄 — 은화 아이콘 + 실링 (세 자리 쉼표)
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> SillingText;
 
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> GoldText;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TSoftObjectPtr<class UTexture2D> SillingIcon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/Item/T_Silling.T_Silling")));
+
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	TSoftObjectPtr<class UTexture2D> GoldIcon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/Item/T_Gold.T_Gold")));
 };

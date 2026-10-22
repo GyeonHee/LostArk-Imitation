@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "Skill/SkillManagerComponent.h"
 #include "Data/CharacterDataAsset.h"
+#include "Stat/LoADamageTypes.h"
 #include "LoACharacter.generated.h"
 
 class UCameraComponent;
@@ -152,6 +153,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stats")
 	float MaxHP;
+
+	// BeginPlay가 끝나 HP를 한 번 채운 뒤 true — 그 뒤 최대 HP가 바뀌어도 현재 HP는 유지(장비 착용·해제)
+	bool bHPSettled = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
 	float MP;
@@ -307,8 +311,9 @@ public:
 	void ExecuteDash(const FVector& TargetLocation);
 	virtual void ExecuteDash_Implementation(const FVector& TargetLocation);
 
+	/** 피해 적용 — 물리/마법이면 보스 패턴 배율 × (1 - 그 방어력 감소율), True면 그대로. 광폭화 배율은 전부 */
 	UFUNCTION(BlueprintCallable, Category="Stats")
-	virtual void ReceiveDamage(float DamageAmount);
+	virtual void ReceiveDamage(float DamageAmount, ELoADamageKind Kind = ELoADamageKind::Magical);
 
 	/** 같은 종류(Source)의 장판 틱 데미지가 여러 개 겹쳐도 Interval(실제 시간)당 한 번만 받게 — 이번 틱에 맞아도 되면 true.
 	 *  예: 거울 카운터의 불길이 여러 줄 겹친 곳에 서 있어도 한 줄분만 들어온다 */

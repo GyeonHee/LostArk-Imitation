@@ -218,6 +218,17 @@ float AEchidnaBoss::GetEnrageTimeScale(const UObject* WorldContext)
 	return Scale;
 }
 
+float AEchidnaBoss::GetIncomingDamageScale(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	if (!World) return 1.f;
+	for (TActorIterator<AEchidnaBoss> It(World); It; ++It)
+	{
+		return It->IncomingDamageScale;
+	}
+	return 1.f;
+}
+
 float AEchidnaBoss::GetEnrageDamageMultiplier(const UObject* WorldContext)
 {
 	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;

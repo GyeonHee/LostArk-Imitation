@@ -1,4 +1,5 @@
 #include "Raid/EchidnaFlytrapZoneActor.h"
+#include "Stat/LoADamageTypes.h"
 #include "Raid/EchidnaBoss.h"
 #include "Raid/HexArena.h"
 #include "LoACharacter.h"
@@ -209,7 +210,7 @@ void AEchidnaFlytrapZoneActor::EatCharactersOnTile()
 		FIntPoint CharCoord;
 		if (!HexArena->WorldToTileCoord(It->GetActorLocation(), CharCoord) || CharCoord != Coord) continue;
 
-		UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * EatDamageRatio, InstigatorController.Get(), this, UDamageType::StaticClass());
+		UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * EatDamageRatio, InstigatorController.Get(), this, ULoATrueDamageType::StaticClass());
 		It->SetHeldByPattern(true);
 		UE_LOG(LogTemp, Log, TEXT("[Flytrap] (%d,%d) %s 잡아먹힘"), Coord.X, Coord.Y, *It->GetName());
 	}

@@ -15,6 +15,7 @@ class LOA_API UCharacterDataAsset : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	// 미사용 — 최대 HP는 StatComponent가 (BaseVitality + 장비 체력) × HPPerVitality로 계산한다. DA 없이 쓸 때의 초기값만
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats")
 	float MaxHP = 100000.f;
 
@@ -39,28 +40,35 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
 	EPrimaryStat PrimaryStatType = EPrimaryStat::Intelligence;
 
-	// 맨몸 스탯 — 시작 장비 1640 세트(재련 +10: 방어구 지능 합 180,000 / 무기공격력 90,000)를 입으면
-	// 지능 200,000 / 무기공격력 100,000 = 장비 도입 전 기준 스펙(공격력 7,190,431)과 같아진다
+	// 맨몸 스탯 — 로아 70레벨 기본 주 스탯 477(무기 공격력은 장비에서만). 시작 1640 세트(+10)를 입으면
+	// 지능 284,958 / 무기 공격력 100,036 → 표시 공격력 68,928
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double BasePrimaryStat = 20000.0;
+	double BasePrimaryStat = 477.0;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double BaseWeaponPower = 10000.0;
+	double BaseWeaponPower = 0.0;
 
-	// 최대 HP = MaxHP + 체력 × HPPerVitality. 졸업까지 최대 HP +15%까지만 오르게 할 것(짤패턴 피격 허용 횟수 유지)
+	// 맨몸 체력 — 캐릭터 기본 HP = BaseVitality × HPPerVitality (23,423). 시작 세트(+10, 체력 36,465)를 입으면 최대 생명력 100,000
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double BaseVitality = 0.0;
+	double BaseVitality = 11154.0;
 
+	// 생명 활성력 계수 — 최대 생명력 = 체력 × 이 값. 로아 직업별 hpCon(Maxroll 게임 데이터): 소서리스 2.1, 버서커 2.2, 건슬링어 2.0 …
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	float HPPerVitality = 1.f;
+	float HPPerVitality = 2.1f;
 
-	// K — 로아식 공격력(sqrt 값, 시작 스펙 57,735)을 이 프로젝트 스케일(보스 HP 47억)로 올리는 배율.
-	// 124.541921 × 57,735 = 공격력 7,190,431. 시작 치명 280(치명률 10.024%, 치명피해 200%)의 기대값 ×1.10024를 곱하면
-	// 예전 고정 공격력 7,911,200과 같아 평균 DPS가 그대로다. 전투 특성을 바꾸면 이 값도 다시 역산할 것
+	// 방어 계수 — 방어력 = 장비 방어력 × 이 값. 로아 직업별 defCoefficient: 소서리스 0.95, 디스트로이어 1.15, 바드 0.9 …
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double AttackPowerScale = 124.541921;
+	float DefenseCoefficient = 0.95f;
 
-	// 시작 전투 특성 포인트 (생성자에서 치명 280) — 6단계에서 시작 장신구로 옮긴다
+	// K — 로아식 공격력(sqrt 값)을 이 프로젝트 스케일(보스 HP 47억)로 올리는 배율.
+	// 1~5단계: 124.541921 (시작 치명 280 → 기대값 ×1.10024).
+	// 6단계: 시작 장신구 치명 750 + 특화 750 → 치명 기대값 ×1.2685, 특화 ×1.375가 딜의 약 61%(종말·익스·천벌, 기본공격 포함 기준)에 붙어 ×1.228.
+	// 124.541921 × 1.10024 / (1.2685 × 1.228) = 87.966 — 1640 시작 세트의 평균 DPS가 그대로다. 시작 특성을 바꾸면 다시 역산할 것
+	// 2026-10-22 로아 장비 표 적용: 시작 표시 공격력 57,735 → 68,928이라 87.966 × 57,735 / 68,928 = 73.682 (1640 DPS 그대로)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
+	double AttackPowerScale = 73.682;
+
+	// 시작 전투 특성 포인트 — 6단계부터 0 (시작 장신구 치명 750 + 특화 750이 대신 준다)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Combat")
 	FCombatStatPoints BaseCombatStats;
 

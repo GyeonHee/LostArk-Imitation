@@ -1,5 +1,6 @@
 #include "UI/ShopWidget.h"
 #include "Item/InventoryComponent.h"
+#include "Item/EquipmentComponent.h"
 #include "Item/ItemTypes.h"
 #include "LoAPlayerController.h"
 #include "Blueprint/WidgetTree.h"
@@ -226,7 +227,7 @@ void UShopEntryWidget::SetEntry(const FShopItemEntry* Entry)
 	ApplyFrame();
 }
 
-void UShopEntryWidget::SetSellEntry(FName ItemId, int32 Count, int64 TotalPrice)
+void UShopEntryWidget::SetSellEntry(FName ItemId, int32 Count, int64 TotalPrice, const FEquipmentInstance* Equipment)
 {
 	if (!NameText) TakeWidget();
 	const FItemDefinition* Def = (ItemId.IsNone() || Count <= 0) ? nullptr : LoAItems::Find(ItemId);
@@ -239,12 +240,15 @@ void UShopEntryWidget::SetSellEntry(FName ItemId, int32 Count, int64 TotalPrice)
 			IconImage->SetBrushFromTexture(Texture);
 		}
 		IconImage->SetVisibility(ESlateVisibility::HitTestInvisible);
-		IconCountText->SetText(FText::AsNumber(Count));
+		// 장비는 개수 대신 재련 단계(+10), 툴팁은 장비 설명 — 소지품 칸과 같은 표기
+		IconCountText->SetText(Equipment ? FText::FromString(LoAItems::GetEquipmentBadge(*Equipment)) : FText::AsNumber(Count));
 		IconCountText->SetVisibility(ESlateVisibility::HitTestInvisible);
 		NameText->SetText(Def->DisplayName);
 		PriceText->SetText(FText::FromString(LoAItems::FormatWithCommas(TotalPrice)));
 		CoinImage->SetVisibility(ESlateVisibility::HitTestInvisible);
-		SetToolTipText(FText::Format(NSLOCTEXT("Shop", "SellEntryTooltip", "{0} x{1}\n우클릭: 판매 목록에서 빼기"), Def->DisplayName, FText::AsNumber(Count)));
+		SetToolTipText(Equipment
+			? FText::Format(NSLOCTEXT("Shop", "SellEquipTooltip", "{0}\n우클릭: 판매 목록에서 빼기"), UEquipmentComponent::DescribeEquipment(*Equipment))
+			: FText::Format(NSLOCTEXT("Shop", "SellEntryTooltip", "{0} x{1}\n우클릭: 판매 목록에서 빼기"), Def->DisplayName, FText::AsNumber(Count)));
 	}
 	else
 	{
@@ -1166,7 +1170,8 @@ void UShopWidget::RefreshEntries()
 			if (Reserve.IsValidIndex(i))
 			{
 				const FItemDefinition* Def = LoAItems::Find(Reserve[i].ItemId);
-				EntryWidgets[i]->SetSellEntry(Reserve[i].ItemId, Reserve[i].Count, Def ? Def->SellPrice * Reserve[i].Count : 0);
+				const FEquipmentInstance* Equipment = Reserve[i].EquipmentId.IsValid() ? Inventory->FindEquipment(Reserve[i].EquipmentId) : nullptr;
+				EntryWidgets[i]->SetSellEntry(Reserve[i].ItemId, Reserve[i].Count, Def ? Def->SellPrice * Reserve[i].Count : 0, Equipment);
 			}
 			else
 			{
@@ -1346,6 +1351,6 @@ void UShopDialogueWidget::HandleExitClicked()
 {
 	if (ALoAPlayerController* PC = GetOwningPlayer<ALoAPlayerController>())
 	{
-		PC->CloseShop();
+		PC->CloseNPCMenu();
 	}
 }

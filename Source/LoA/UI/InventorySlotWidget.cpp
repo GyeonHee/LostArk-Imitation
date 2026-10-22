@@ -112,7 +112,7 @@ void UInventorySlotWidget::Refresh(const FInventorySlot& InSlot)
 		FText Tooltip = Def->DisplayName;
 		if (Equipment)
 		{
-			CountText->SetText(FText::FromString(FString::Printf(TEXT("+%d"), Equipment->RefineLevel)));
+			CountText->SetText(FText::FromString(LoAItems::GetEquipmentBadge(*Equipment)));
 			CountText->SetVisibility(ESlateVisibility::HitTestInvisible);
 
 			const APawn* Pawn = GetOwningPlayerPawn();

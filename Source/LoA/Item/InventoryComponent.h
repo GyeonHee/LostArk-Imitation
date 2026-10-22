@@ -8,6 +8,7 @@
 /** 칸 하나가 바뀜 — Index가 INDEX_NONE이면 전부(정렬·불러오기) */
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnInventorySlotChanged, int32 /*Index*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnSillingChanged, int64 /*NewAmount*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnGoldChanged, int64 /*NewAmount*/);
 DECLARE_MULTICAST_DELEGATE(FOnSellReserveChanged);
 
 /** 상점 판매 목록에 올려 둔 아이템 — 소지품 칸에서 빠져 여기 있다가 판매되거나 원래 칸으로 돌아간다 */
@@ -16,6 +17,7 @@ struct FSellReserveEntry
 	FName ItemId;
 	int32 Count = 0;
 	int32 SourceIndex = INDEX_NONE;  // 원래 있던 소지품 칸
+	FGuid EquipmentId;               // 장비면 그 인스턴스 (Count는 1) — 판매되면 인스턴스 맵에서도 지운다
 };
 
 /**
@@ -99,10 +101,13 @@ public:
 
 	FOnInventorySlotChanged OnSlotChanged;
 
-	// ── 실링(은화) — 칸을 차지하지 않는 화폐. 나중에 상점에서 회복약 등을 산다 ──
+	/** 칸·장비 인스턴스·실링을 GameInstance에 복사 (디스크엔 안 씀). 판매 목록에 올린 게 있으면 그건 칸에서 빠진 상태라 false */
+	bool WriteToGameInstance() const;
+
+	// ── 실링(은화) — 칸을 차지하지 않는 화폐. 상점(회복약·숨결, 나중에 잡화상점)에서 쓴다 ──
 	/** 저장 데이터에 실링이 없을 때(첫 실행) 주는 양 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Currency")
-	int64 StartingSilling = 100000000;
+	int64 StartingSilling = 2000000;  // 5단계 — 숨결(실링 구매)로 재련 확률을 사는 걸 무한정 못 하게 1억에서 낮춤
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Currency")
 	int64 GetSilling() const { return Silling; }
@@ -115,6 +120,31 @@ public:
 	bool SpendSilling(int64 Amount);
 
 	FOnSillingChanged OnSillingChanged;
+
+	// ── 골드 — 칸을 차지하지 않는 두 번째 화폐. 재련 비용으로 쓰고 레이드 클리어 보상으로 받는다 ──
+	/** 저장 데이터에 골드가 없을 때 주는 양 — 별도 플래그(bHasGold)라 골드 이전 저장 파일에도 한 번 지급 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Currency")
+	int64 StartingGold = 10000;
+
+	/** 장비 성장 재료(운명의 파편) 첫 지급량 — 별도 플래그라 기존 저장 파일에도 한 번. 시작 세트 +10 → +11 성장 두어 번 분량 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
+	int32 StartingFateFragments = 3000;
+
+	/** 운명의 파편 추가 지급 (테스트용, bHasFragmentGift로 한 번) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
+	int32 FragmentGiftAmount = 100000;
+
+	UFUNCTION(BlueprintPure, Category = "Inventory|Currency")
+	int64 GetGold() const { return Gold; }
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Currency")
+	void AddGold(int64 Amount);
+
+	/** 모자라면 아무것도 안 빼고 false — 재련용 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Currency")
+	bool SpendGold(int64 Amount);
+
+	FOnGoldChanged OnGoldChanged;
 
 	// ── 상점 판매 목록 — 올리면 소지품에서 빠지고, 비우기·상점 닫기·EndPlay(저장 전)에 원래 칸으로 돌아간다 ──
 	static constexpr int32 MaxSellReserve = 12;
@@ -148,6 +178,8 @@ private:
 	bool bLoaded = false;
 
 	int64 Silling = 0;
+
+	int64 Gold = 0;
 
 	TArray<FSellReserveEntry> SellReserve;
 

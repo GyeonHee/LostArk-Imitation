@@ -14,7 +14,11 @@
 #include "LoAGameInstance.h"
 #include "Lobby/RepairStationActor.h"
 #include "Lobby/ShopNPCActor.h"
+#include "Lobby/RefineNPCActor.h"
 #include "UI/ShopWidget.h"
+#include "UI/RefineWidget.h"
+#include "Item/RefineLibrary.h"
+#include "Item/RaidReward.h"
 #include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraActor.h"
@@ -121,6 +125,16 @@ void ALoAPlayerController::BeginPlay()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[HUD] 위젯 생성 건너뜀 - HUDWidgetClass: %s, IsLocal: %d"),
 			HUDWidgetClass ? TEXT("설정됨") : TEXT("미설정"), IsLocalController());
+	}
+
+	// 대기 지역 — 소지품이 가득 차 못 받았던 레이드 보상이 있으면 칸이 생길 때마다 지급 (2초마다 확인)
+	if (IsLocalController() && !UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()))
+	{
+		const ULoAGameInstance* RewardGI = GetGameInstance<ULoAGameInstance>();
+		if (RewardGI && RewardGI->PendingRewards.Num() > 0)
+		{
+			GetWorldTimerManager().SetTimer(PendingRewardTimer, this, &ALoAPlayerController::TryDeliverPendingRewards, 2.f, true, 1.f);
+		}
 	}
 
 	// OnPossess가 BeginPlay 전에 이미 호출된 경우를 대비해 여기서도 바인딩 시도
@@ -351,7 +365,7 @@ void ALoAPlayerController::LoAKillSelf()
 	{
 		UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAKillSelf"));
 		bCheatUsedThisRaid = true;
-		Char->ReceiveDamage(Char->GetMaxHP() * 10.f);
+		Char->ReceiveDamage(Char->GetMaxHP() * 10.f, ELoADamageKind::Fixed);
 	}
 }
 
@@ -372,7 +386,7 @@ void ALoAPlayerController::OnPlayerDied()
 		AbandonWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	CloseShop();
+	CloseNPCMenu();
 	SetInventoryOpen(false);
 	SetCharacterInfoOpen(false);
 
@@ -493,12 +507,27 @@ void ALoAPlayerController::OnBossDefeated()
 		: FText::Format(NSLOCTEXT("Clear", "ClearTime", "클리어 시간  {0}    (최고 기록 {1})"), FormatTime(Total),
 			FormatTime(FMath::Max(0, FMath::FloorToInt(BestSeconds))));
 
+	// ── 보상 — 굴리자마자 대기 보상으로 저장(클리어 화면에서 게임을 꺼도 남게) → 소지품에 넣고 다시 저장 ──
+	// 첫 클리어 보너스는 테스트 명령을 쓴 판엔 안 준다(최고 기록과 같은 규칙)
+	bClearFirstReward = GI && !GI->bFirstClearRewarded && !bCheatUsedThisRaid;
+	bClearBonusTaken = false;
+	ClearRewards = LoARaidReward::RollEchidna(bClearFirstReward);
+	if (GI)
+	{
+		if (bClearFirstReward) GI->bFirstClearRewarded = true;
+		LoARaidReward::Merge(GI->PendingRewards, ClearRewards);
+		GI->SaveToDisk();
+	}
+	TArray<FLoARewardItem> Delivered;
+	bClearRewardLeftover = DeliverPendingRewardsNow(Delivered) > 0;
+
 	ClearWidget = CreateWidget<UClearWidget>(this, UClearWidget::StaticClass());
 	if (ClearWidget)
 	{
 		ClearWidget->AddToViewport(30);
 		ClearWidget->SetTexts(ClearHeadlineText, ResultLine);
 		ClearWidget->SetRenderOpacity(0.f);
+		RefreshClearRewardWidget();
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Clear] 던전 클리어 (%d초) — %.1f초 뒤 정비소로 복귀"), Total, ClearReturnDelay);
@@ -526,6 +555,93 @@ void ALoAPlayerController::UpdateClear(float DeltaSeconds)
 		bClearTravelling = true;
 		ReturnToLobby();
 	}
+}
+
+int32 ALoAPlayerController::DeliverPendingRewardsNow(TArray<FLoARewardItem>& OutDelivered)
+{
+	ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>();
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!GI) return 0;
+	if (!Char || !Char->Inventory) return GI->PendingRewards.Num();
+
+	const int32 Left = GI->DeliverPendingRewards(Char->Inventory, OutDelivered);
+	if (OutDelivered.Num() > 0)
+	{
+		// 소지품·장비·대기 보상을 한 번에 디스크로 — 소지품에 넣고 대기 보상에서 뺀 상태가 같이 저장돼야 중복·유실이 없다
+		if (Char->Equipment) Char->Equipment->SaveNow();
+		else GI->SaveToDisk();
+	}
+	for (const FLoARewardItem& Item : OutDelivered)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Reward] 지급 %s x%lld"), *Item.ItemId.ToString(), Item.Count);
+	}
+	if (Left > 0) UE_LOG(LogTemp, Log, TEXT("[Reward] 소지품이 가득 차 %d줄이 대기 보상으로 남음"), Left);
+	return Left;
+}
+
+void ALoAPlayerController::TryDeliverPendingRewards()
+{
+	TArray<FLoARewardItem> Delivered;
+	const int32 Left = DeliverPendingRewardsNow(Delivered);
+	if (Delivered.Num() > 0)
+	{
+		ShowTimedNotice(NSLOCTEXT("Reward", "PendingTitle", "보관 중이던 레이드 보상을 받았습니다."),
+			Left > 0 ? NSLOCTEXT("Reward", "PendingLeft", "소지품이 가득 차 아직 남은 보상이 있습니다.") : FText::GetEmpty(), 3.f);
+	}
+	if (Left == 0) GetWorldTimerManager().ClearTimer(PendingRewardTimer);
+}
+
+void ALoAPlayerController::RefreshClearRewardWidget()
+{
+	if (!ClearWidget) return;
+	FText Note;
+	if (bClearRewardLeftover)
+	{
+		Note = NSLOCTEXT("Clear", "RewardLeftover", "소지품이 가득 차 일부 보상은 정비소에서 칸이 생기면 지급됩니다.");
+	}
+	else if (bClearFirstReward)
+	{
+		Note = FText::Format(NSLOCTEXT("Clear", "RewardFirst", "첫 클리어 보상 — 기본 보상 ×{0}"), FText::AsNumber(LoARaidReward::FirstClearMultiplier));
+	}
+	ClearWidget->SetRewards(ClearRewards, Note);
+
+	const ALoACharacter* Char = GetPawn<ALoACharacter>();
+	const bool bAffordable = Char && Char->Inventory && Char->Inventory->GetGold() >= LoARaidReward::BonusCost;
+	ClearWidget->SetBonusState(true, bClearBonusTaken, bAffordable, LoARaidReward::BonusCost);
+}
+
+void ALoAPlayerController::RequestClearBonus()
+{
+	if (!bClearActive || bClearTravelling || bClearBonusTaken) return;
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>();
+	if (!Char || !Char->Inventory || !GI) return;
+
+	if (!Char->Inventory->SpendGold(LoARaidReward::BonusCost))
+	{
+		ShowTimedNotice(NSLOCTEXT("Clear", "BonusTitle", "더보기"), NSLOCTEXT("Clear", "BonusNoGold", "골드가 부족합니다."));
+		return;
+	}
+	bClearBonusTaken = true;
+	const TArray<FLoARewardItem> Bonus = LoARaidReward::MakeBonus(ClearRewards);
+	LoARaidReward::Merge(GI->PendingRewards, Bonus);
+	LoARaidReward::Merge(ClearRewards, Bonus);
+	TArray<FLoARewardItem> Delivered;
+	bClearRewardLeftover = DeliverPendingRewardsNow(Delivered) > 0;
+	if (Delivered.Num() == 0)
+	{
+		// 전부 대기 보상으로 갔어도 골드 차감은 저장돼야 한다
+		if (Char->Equipment) Char->Equipment->SaveNow();
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Reward] 더보기 — %lld 골드"), LoARaidReward::BonusCost);
+	RefreshClearRewardWidget();
+}
+
+void ALoAPlayerController::RequestClearLeave()
+{
+	if (!bClearActive || bClearTravelling) return;
+	bClearTravelling = true;
+	ReturnToLobby();
 }
 
 void ALoAPlayerController::MoveToRepairStationIfReturning(APawn* InPawn)
@@ -915,7 +1031,7 @@ void ALoAPlayerController::OnSkillTreeToggle()
 	if (!SkillTreeWidget) return;
 
 	// 보스 맵 진입 연출 중·사망 후·상점 중엔 스킬창도 못 연다
-	if (bRaidIntroActive || bDefeatActive || bShopOpen) return;
+	if (bRaidIntroActive || bDefeatActive || bNPCMenuOpen) return;
 
 	// 0.3초 내 중복 호출 무시 (SetWidgetToFocus 시 Enhanced Input 재평가로 인한 이중 발동 방지)
 	const float Now = GetWorld()->GetTimeSeconds();
@@ -948,6 +1064,11 @@ void ALoAPlayerController::OnPlayerHPChanged(float NewHP)
 {
 	if (HUDViewModel)
 	{
+		// 최대 HP는 장비·스탯으로 바뀐다 — HP 알림마다 같이 넘긴다(예전엔 바인딩할 때 한 번만 넣어 "100151 / 23423"이 됐음)
+		if (const ALoACharacter* Char = GetPawn<ALoACharacter>())
+		{
+			HUDViewModel->SetMaxHP(Char->GetMaxHP());
+		}
 		HUDViewModel->SetHP(NewHP);
 	}
 }
@@ -1294,13 +1415,13 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 void ALoAPlayerController::OnInputStarted()
 {
 	// 거리 안의 NPC를 우클릭(= 이동 버튼) — 걷지 않고 대화(상점)
-	if (!bShopOpen)
+	if (!bNPCMenuOpen)
 	{
-		AShopNPCActor* NPC = HoveredNPC.Get();
+		AInteractableNPCActor* NPC = HoveredNPC.Get();
 		if (NPC && NPC == InRangeNPC.Get())
 		{
-			OpenShop(NPC);
-			if (bShopOpen)
+			OpenNPCMenu(NPC);
+			if (bNPCMenuOpen)
 			{
 				bMovePressSuppressed = true;
 				return;
@@ -1636,7 +1757,7 @@ bool ALoAPlayerController::ConsumeHUDSlotPress()
 	if (bSlotPressActive) return true;
 
 	// 상점 중 — 캐릭터는 붙잡혀 있고, 어떤 클릭도 이동·기본공격으로 쓰지 않는다
-	if (bShopOpen) return true;
+	if (bNPCMenuOpen) return true;
 
 	// 소지품 창 위 — 보통은 UMG가 먼저 먹지만 혹시 새어 들어와도 이동·기본공격으로 쓰지 않는다
 	if (InventoryWidget && InventoryWidget->IsCursorOverPanel()) return true;
@@ -2012,7 +2133,7 @@ bool ALoAPlayerController::IsCharacterInfoOpen() const
 void ALoAPlayerController::OnCharacterInfoToggle()
 {
 	// 보스 맵 진입 연출 중·사망 후·상점 대화 중엔 못 연다
-	if (bRaidIntroActive || bDefeatActive || bShopOpen) return;
+	if (bRaidIntroActive || bDefeatActive || bNPCMenuOpen) return;
 	SetCharacterInfoOpen(!IsCharacterInfoOpen());
 }
 
@@ -2146,6 +2267,15 @@ void ALoAPlayerController::LoAGiveSilling(int64 Amount)
 	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAGiveSilling %lld — 현재 %s 실링"), Amount, *LoAItems::FormatWithCommas(Char->Inventory->GetSilling()));
 }
 
+void ALoAPlayerController::LoAGiveGold(int64 Amount)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Inventory) return;
+	if (Amount >= 0) Char->Inventory->AddGold(Amount);
+	else Char->Inventory->SpendGold(-Amount);
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAGiveGold %lld — 현재 %s 골드"), Amount, *LoAItems::FormatWithCommas(Char->Inventory->GetGold()));
+}
+
 void ALoAPlayerController::LoAStats()
 {
 	ALoACharacter* Char = GetPawn<ALoACharacter>();
@@ -2206,6 +2336,51 @@ void ALoAPlayerController::LoASetStat(const FString& Target, double Value)
 	LoAStats();
 }
 
+void ALoAPlayerController::LoASetRefine(const FString& Slot, int32 RefineLevel)
+{
+	ALoACharacter* Char = GetPawn<ALoACharacter>();
+	if (!Char || !Char->Equipment) return;
+
+	TArray<EEquipSlot> Targets;
+	if (Slot.Equals(TEXT("All"), ESearchCase::IgnoreCase))
+	{
+		for (int32 i = 0; i < LoAEquipRules::GearSlotCount; ++i) Targets.Add(static_cast<EEquipSlot>(i));
+	}
+	else
+	{
+		const int64 EnumValue = StaticEnum<EEquipSlot>()->GetValueByNameString(Slot);
+		if (EnumValue == INDEX_NONE || EnumValue >= static_cast<int64>(EEquipSlot::MAX))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Cheat] LoASetRefine — 모르는 부위 '%s' (All/Helmet/Shoulder/Chest/Pants/Gloves/Weapon)"), *Slot);
+			return;
+		}
+		Targets.Add(static_cast<EEquipSlot>(EnumValue));
+	}
+
+	int32 Changed = 0;
+	for (const EEquipSlot Target : Targets)
+	{
+		if (Char->Equipment->DebugSetRefine(Target, RefineLevel)) ++Changed;
+	}
+
+	bCheatUsedThisRaid = true;
+	const FString Line = FString::Printf(TEXT("[Cheat] LoASetRefine %s %d — %d부위 변경, 장착 아이템 레벨 %.2f"),
+		*Slot, FMath::Clamp(RefineLevel, 0, LoAEquipRules::MaxRefineLevel), Changed, Char->Equipment->GetItemLevel());
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+	ClientMessage(Line);
+}
+
+void ALoAPlayerController::LoARefineSim(int32 TargetLevel, int32 Runs)
+{
+	double Average = 0.0;
+	int32 Worst = 0;
+	LoARefine::Simulate(TargetLevel, FMath::Clamp(Runs, 1, 1000000), Average, Worst);
+	const FString Line = FString::Printf(TEXT("[Cheat] LoARefineSim +%d (기본 %.0f%%) x%d — 평균 %.2f회, 최악 %d회"),
+		TargetLevel, LoARefine::GetBaseChance(TargetLevel) * 100.f, Runs, Average, Worst);
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+	ClientMessage(Line);
+}
+
 // ─── 상점 NPC ───────────────────────────────────────────────────────────────
 
 void ALoAPlayerController::UpdateNPCInteraction()
@@ -2213,11 +2388,11 @@ void ALoAPlayerController::UpdateNPCInteraction()
 	APawn* MyPawn = GetPawn();
 
 	// 거리 안 가장 가까운 NPC
-	AShopNPCActor* Nearest = nullptr;
+	AInteractableNPCActor* Nearest = nullptr;
 	float NearestDistSq = TNumericLimits<float>::Max();
-	if (MyPawn && !bShopOpen)
+	if (MyPawn && !bNPCMenuOpen)
 	{
-		for (TActorIterator<AShopNPCActor> It(GetWorld()); It; ++It)
+		for (TActorIterator<AInteractableNPCActor> It(GetWorld()); It; ++It)
 		{
 			if (!It->IsPawnInRange(MyPawn)) continue;
 			const float DistSq = FVector::DistSquared2D(It->GetActorLocation(), MyPawn->GetActorLocation());
@@ -2231,47 +2406,47 @@ void ALoAPlayerController::UpdateNPCInteraction()
 	InRangeNPC = Nearest;
 
 	// 커서 아래 NPC — 창 위에 커서가 있으면 무시
-	AShopNPCActor* Hovered = nullptr;
-	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel())
+	AInteractableNPCActor* Hovered = nullptr;
+	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel()) || (RefineWidget && RefineWidget->IsCursorOverPanel())
 		|| (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel())
 		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
-	if (!bShopOpen && !bCursorOverUI)
+	if (!bNPCMenuOpen && !bCursorOverUI)
 	{
 		FHitResult Hit;
 		if (GetHitResultUnderCursor(ECC_Visibility, false, Hit))
 		{
-			Hovered = Cast<AShopNPCActor>(Hit.GetActor());
+			Hovered = Cast<AInteractableNPCActor>(Hit.GetActor());
 		}
 	}
 	HoveredNPC = Hovered;
 
-	for (TActorIterator<AShopNPCActor> It(GetWorld()); It; ++It)
+	for (TActorIterator<AInteractableNPCActor> It(GetWorld()); It; ++It)
 	{
-		AShopNPCActor* NPC = *It;
-		NPC->SetHighlighted(!bShopOpen && (NPC == Nearest || NPC == Hovered));
-		NPC->SetPromptVisible(!bShopOpen && NPC == Nearest);
+		AInteractableNPCActor* NPC = *It;
+		NPC->SetHighlighted(!bNPCMenuOpen && (NPC == Nearest || NPC == Hovered));
+		NPC->SetPromptVisible(!bNPCMenuOpen && NPC == Nearest);
 	}
 }
 
 void ALoAPlayerController::OnInteractKey()
 {
-	if (bShopOpen) return;
-	if (AShopNPCActor* NPC = InRangeNPC.Get())
+	if (bNPCMenuOpen) return;
+	if (AInteractableNPCActor* NPC = InRangeNPC.Get())
 	{
-		OpenShop(NPC);
+		OpenNPCMenu(NPC);
 	}
 }
 
-void ALoAPlayerController::OpenShop(AShopNPCActor* NPC)
+void ALoAPlayerController::OpenNPCMenu(AInteractableNPCActor* NPC)
 {
-	if (bShopOpen || !NPC || !IsLocalController()) return;
+	if (bNPCMenuOpen || !NPC || !IsLocalController()) return;
 	if (bRaidIntroActive || bDefeatActive || bClearActive || bLevelTravelPending) return;
 
 	ALoACharacter* Char = GetPawn<ALoACharacter>();
 	if (!Char || Char->IsActionLocked() || Char->IsCharmed() || !NPC->IsPawnInRange(Char)) return;
 
-	bShopOpen = true;
-	ActiveShopNPC = NPC;
+	bNPCMenuOpen = true;
+	ActiveNPC = NPC;
 
 	// 하던 이동 멈추고 상점 동안 제자리 — 플레이어는 NPC를 바라봄
 	CancelAutoMove();
@@ -2286,14 +2461,14 @@ void ALoAPlayerController::OpenShop(AShopNPCActor* NPC)
 
 	// 카메라 줌인 — NPC가 화면 오른쪽에 오도록 (카메라 오른쪽 = Yaw + 90)
 	const float CameraYaw = ToNPC.IsNearlyZero() ? 0.f : ToNPC.Rotation().Yaw - 90.f;
-	Char->SetCameraZoomOverride(NPC->ShopCameraArmLength);
-	Char->SetCameraRotationOverride(FRotator(NPC->ShopCameraPitch, CameraYaw, 0.f));
+	Char->SetCameraZoomOverride(NPC->MenuCameraArmLength);
+	Char->SetCameraRotationOverride(FRotator(NPC->MenuCameraPitch, CameraYaw, 0.f));
 
 	// HUD는 숨기고, 열려 있던 스킬창·캐릭터 정보 창은 닫는다
 	SetCharacterInfoOpen(false);
 	if (HUDWidget)
 	{
-		HUDVisibilityBeforeShop = static_cast<uint8>(HUDWidget->GetVisibility());
+		HUDVisibilityBeforeNPCMenu = static_cast<uint8>(HUDWidget->GetVisibility());
 		HUDWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	if (SkillTreeWidget && SkillTreeWidget->GetVisibility() != ESlateVisibility::Collapsed)
@@ -2313,33 +2488,61 @@ void ALoAPlayerController::OpenShop(AShopNPCActor* NPC)
 		ShopDialogueWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
 
-	// 왼쪽 상점 창 + 바로 오른쪽 소지품 (둘 다 따로 끌 수 있음)
-	if (!ShopWidget)
+	// NPC 종류별 창
+	if (AShopNPCActor* ShopNPC = Cast<AShopNPCActor>(NPC))
 	{
-		ShopWidget = CreateWidget<UShopWidget>(this, UShopWidget::StaticClass());
+		// 왼쪽 상점 창 + 바로 오른쪽 소지품 (둘 다 따로 끌 수 있음)
+		if (!ShopWidget)
+		{
+			ShopWidget = CreateWidget<UShopWidget>(this, UShopWidget::StaticClass());
+		}
+		if (ShopWidget)
+		{
+			if (!ShopWidget->IsInViewport()) ShopWidget->AddToViewport(9);
+			ShopWidget->OpenShop(ShopNPC->ShopItems, ShopNPC->CartSlotMaxCount, Char->Inventory.Get());
+			ShopWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		SetInventoryOpen(true);
+		if (InventoryWidget)
+		{
+			InventoryWidget->SetPanelPlacement(FVector2D(0.5f, 0.5f), FVector2D(0.f, 0.5f), FVector2D(4.f, -40.f));
+		}
 	}
-	if (ShopWidget)
+	else if (Cast<ARefineNPCActor>(NPC))
 	{
-		if (!ShopWidget->IsInViewport()) ShopWidget->AddToViewport(9);
-		ShopWidget->OpenShop(NPC->ShopItems, NPC->CartSlotMaxCount, Char->Inventory.Get());
-		ShopWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
-	SetInventoryOpen(true);
-	if (InventoryWidget)
-	{
-		InventoryWidget->SetPanelPlacement(FVector2D(0.5f, 0.5f), FVector2D(0.f, 0.5f), FVector2D(4.f, -40.f));
+		// 가운데 재련 창 (소지품은 안 띄움 — 재료 보유량은 창 안에 나온다)
+		SetInventoryOpen(false);
+		if (!RefineWidget)
+		{
+			RefineWidget = CreateWidget<URefineWidget>(this, URefineWidget::StaticClass());
+		}
+		if (RefineWidget)
+		{
+			if (!RefineWidget->IsInViewport()) RefineWidget->AddToViewport(9);
+			RefineWidget->OpenRefine(Char->Equipment.Get(), Char->Inventory.Get());
+			RefineWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Refine] 재련 창 생성 실패"));
+		}
 	}
 
 	NPC->SetHighlighted(false);
 	NPC->SetPromptVisible(false);
-	UE_LOG(LogTemp, Log, TEXT("[Shop] %s 상점 열림"), *NPC->NPCName.ToString());
+	UE_LOG(LogTemp, Log, TEXT("[NPC] %s 메뉴 열림"), *NPC->NPCName.ToString());
 }
 
-void ALoAPlayerController::CloseShop()
+bool ALoAPlayerController::IsShopOpen() const
 {
-	if (!bShopOpen) return;
-	bShopOpen = false;
-	ActiveShopNPC = nullptr;
+	return bNPCMenuOpen && ShopWidget && Cast<AShopNPCActor>(ActiveNPC.Get()) != nullptr;
+}
+
+void ALoAPlayerController::CloseNPCMenu()
+{
+	if (!bNPCMenuOpen) return;
+	bNPCMenuOpen = false;
+	ActiveNPC = nullptr;
 
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
 	{
@@ -2350,12 +2553,17 @@ void ALoAPlayerController::CloseShop()
 
 	if (HUDWidget)
 	{
-		HUDWidget->SetVisibility(static_cast<ESlateVisibility>(HUDVisibilityBeforeShop));
+		HUDWidget->SetVisibility(static_cast<ESlateVisibility>(HUDVisibilityBeforeNPCMenu));
 	}
 	if (ShopWidget)
 	{
 		ShopWidget->CloseShop();
 		ShopWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (RefineWidget)
+	{
+		RefineWidget->CloseRefine();
+		RefineWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	if (ShopDialogueWidget)
 	{
@@ -2366,12 +2574,12 @@ void ALoAPlayerController::CloseShop()
 	{
 		InventoryWidget->ResetPanelPlacement();
 	}
-	UE_LOG(LogTemp, Log, TEXT("[Shop] 상점 닫힘"));
+	UE_LOG(LogTemp, Log, TEXT("[NPC] 메뉴 닫힘"));
 }
 
 void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, bool bShift)
 {
-	if (bShopOpen && ShopWidget)
+	if (IsShopOpen())
 	{
 		ShopWidget->HandleInventoryRightClick(InventoryIndex, bShift);
 		return;

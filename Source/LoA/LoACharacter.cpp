@@ -2,6 +2,7 @@
 
 #include "LoACharacter.h"
 #include "Raid/EchidnaBoss.h"
+#include "Engine/DamageEvents.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Camera/CameraComponent.h"
 #include "Components/DecalComponent.h"
@@ -106,11 +107,11 @@ void ALoACharacter::HandleStatsChanged(const FCombatStats& NewStats)
 
 	if (!FMath::IsNearlyEqual(MaxHP, NewStats.MaxHP))
 	{
-		const float Ratio = MaxHP > 0.f ? HP / MaxHP : 1.f;
 		MaxHP = NewStats.MaxHP;
 		if (!bIsDead)
 		{
-			HP = FMath::Clamp(MaxHP * Ratio, 1.f, MaxHP);
+			// 스폰 중(장비가 처음 들어오는 동안)엔 꽉 채우고, 그 뒤엔 로아처럼 장비를 바꿔도 현재 HP는 그대로 — 최대치만 바뀐다(줄면 잘림)
+			HP = bHPSettled ? FMath::Clamp(HP, 1.f, MaxHP) : MaxHP;
 		}
 		OnHPChanged.Broadcast(HP);
 	}
@@ -124,6 +125,14 @@ void ALoACharacter::HandleStatsChanged(const FCombatStats& NewStats)
 void ALoACharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 컴포넌트 BeginPlay(장비 장착 → 스탯 재계산)가 끝났다 — 여기까지는 최대 HP로 채우고, 이후 장비 변경은 현재 HP를 건드리지 않음
+	if (!bIsDead)
+	{
+		HP = MaxHP;
+		OnHPChanged.Broadcast(HP);
+	}
+	bHPSettled = true;
 
 	if (CameraBoom)
 	{
@@ -230,13 +239,29 @@ float ALoACharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 	AController* EventInstigator, AActor* DamageCauser)
 {
 	Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
-	ReceiveDamage(DamageAmount);
+	// 피해 종류는 DamageTypeClass로 — 아무것도 안 넘긴 패턴(UDamageType)은 마법
+	ELoADamageKind Kind = ELoADamageKind::Magical;
+	if (const UClass* TypeClass = DamageEvent.DamageTypeClass.Get())
+	{
+		if (TypeClass->IsChildOf(ULoATrueDamageType::StaticClass())) Kind = ELoADamageKind::Fixed;
+		else if (TypeClass->IsChildOf(ULoAPhysicalDamageType::StaticClass())) Kind = ELoADamageKind::Physical;
+	}
+	ReceiveDamage(DamageAmount, Kind);
 	return DamageAmount;
 }
 
-void ALoACharacter::ReceiveDamage(float DamageAmount)
+void ALoACharacter::ReceiveDamage(float DamageAmount, ELoADamageKind Kind)
 {
 	if (IsImmune()) return;
+
+	// 로아 방어력 — 받는 피해 × (1 - 방어력 / (방어력 + 6500)). 패턴 수치는 "1640 시작 세트가 맞는 양"으로 적혀 있어서
+	// 보스 배율(IncomingDamageScale)로 방어 전 크기로 되돌린 뒤 깎는다 → 시작 세트는 예전과 같은 양, 재련할수록 덜 아프다
+	if (Kind != ELoADamageKind::Fixed && StatComponent)
+	{
+		const FCombatStats& S = StatComponent->GetStats();
+		const float Reduction = Kind == ELoADamageKind::Physical ? S.PhysDamageReduction : S.MagicDamageReduction;
+		DamageAmount *= AEchidnaBoss::GetIncomingDamageScale(this) * (1.f - Reduction);
+	}
 
 	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다
 	DamageAmount *= AEchidnaBoss::GetEnrageDamageMultiplier(this);

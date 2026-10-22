@@ -1,4 +1,5 @@
 #include "Raid/EchidnaSwingZoneActor.h"
+#include "Stat/LoADamageTypes.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoACharacter.h"
 #include "LoA.h"
@@ -109,7 +110,7 @@ void AEchidnaSwingZoneActor::Explode()
 		const float Dist = FVector::Dist2D(It->GetActorLocation(), Center);
 		if (Dist > SafeRadius)
 		{
-			UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * DamageRatio, InstigatorController.Get(), this, UDamageType::StaticClass());
+			UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * DamageRatio, InstigatorController.Get(), this, ULoATrueDamageType::StaticClass());
 			UE_LOG(LogLoA, Log, TEXT("[SwingZone] %s 피격 — 안전 원 밖 (거리 %.0f > %.0f)"), *It->GetName(), Dist, SafeRadius);
 		}
 	}

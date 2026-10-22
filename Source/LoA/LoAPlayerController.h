@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 //#include "Templates/SubclassOf.h"
 #include "GameFramework/PlayerController.h"
+#include "Item/RaidReward.h"
 #include "LoAPlayerController.generated.h"
 
 enum class EEquipSlot : uint8;
@@ -307,15 +308,34 @@ private:
 	// ── 보스 처치 / 던전 클리어 ────────────────────────────────
 	// 보스 HP 0(AEchidnaBoss::OnDefeated): 플레이어 무적 + 클리어 화면(UClearWidget, 흑백 아님) → ClearReturnDelay초 뒤 정비소 복귀
 protected:
+	// 클리어 화면이 떠 있는 시간 — 전리품을 보고 [더보기]를 고를 여유. [정비소로 이동]으로 바로 넘어갈 수 있다
 	UPROPERTY(EditDefaultsOnly, Category = "Clear")
-	float ClearReturnDelay = 3.f;
+	float ClearReturnDelay = 12.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Clear")
 	FText ClearHeadlineText = NSLOCTEXT("Clear", "Headline", "욕망의 주인, 에키드나를 처치하였습니다.");
 
+public:
+	/** 클리어 화면 [더보기] — 실링을 내고 재료 +50% (한 번만) */
+	void RequestClearBonus();
+	/** 클리어 화면 [정비소로 이동] — 카운트다운을 기다리지 않고 복귀 */
+	void RequestClearLeave();
+
 private:
 	void OnBossDefeated();
 	void UpdateClear(float DeltaSeconds);
+
+	// 대기 보상(GameInstance::PendingRewards)을 지금 소지품에 넣고 저장. 반환 = 아직 남은 줄 수
+	int32 DeliverPendingRewardsNow(TArray<FLoARewardItem>& OutDelivered);
+	// 대기 지역 — 소지품이 가득 차 못 받은 보상을 주기적으로 다시 넣어 본다
+	void TryDeliverPendingRewards();
+	void RefreshClearRewardWidget();
+	FTimerHandle PendingRewardTimer;
+
+	TArray<FLoARewardItem> ClearRewards;   // 이번 클리어에 받은 보상 (더보기 포함, 화면 표시용)
+	bool bClearFirstReward = false;
+	bool bClearBonusTaken = false;
+	bool bClearRewardLeftover = false;            // 소지품이 가득 차 일부가 대기 보상으로 남음
 
 	// 사망·클리어 공통 — 정비소 복귀 표시 후 대기 지역으로
 	void ReturnToLobby();
@@ -357,6 +377,10 @@ public:
 	UFUNCTION(Exec)
 	void LoAGiveSilling(int64 Amount);
 
+	/** 테스트용 콘솔 명령 — 골드 추가(음수면 차감). 예) LoAGiveGold 50000 */
+	UFUNCTION(Exec)
+	void LoAGiveGold(int64 Amount);
+
 	/** 테스트용 콘솔 명령 — 현재 스탯(기본 스탯·전투 특성·계산 결과)을 로그로 */
 	UFUNCTION(Exec)
 	void LoAStats();
@@ -369,6 +393,15 @@ public:
 	/** 테스트용 콘솔 명령 — 데미지 미터를 비우고 Seconds초 뒤 결과를 로그(CSV)로. 예) LoADpsTest 60 */
 	UFUNCTION(Exec)
 	void LoADpsTest(float Seconds);
+
+	/** 테스트용 콘솔 명령 — 장착 장비 재련 단계를 바로 설정(저장됨). 부위 이름은 EEquipSlot 또는 All.
+	 *  예) LoASetRefine All 15 / LoASetRefine Weapon 20 */
+	UFUNCTION(Exec)
+	void LoASetRefine(const FString& Slot, int32 RefineLevel);
+
+	/** 테스트용 콘솔 명령 — TargetLevel 단계를 Runs번 시뮬레이션해 평균·최악 시도 횟수 (확률표 검증). 예) LoARefineSim 25 10000 */
+	UFUNCTION(Exec)
+	void LoARefineSim(int32 TargetLevel, int32 Runs);
 
 	// ── 소지품 창 (I키) ──
 	void SetInventoryOpen(bool bOpen);
@@ -385,12 +418,14 @@ public:
 	/** 소지품 칸을 창 밖에 놓았을 때(UInventoryWidget) — 커서가 HUD 배틀아이템 칸 위면 그 칸에 등록 */
 	void HandleInventoryDropOutside(int32 InventoryIndex);
 
-	// ── 상점 NPC (대기 지역) ──
-	/** 상점 열기 — 카메라 줌인, 하단 대화창, 왼쪽 상점 창 + 오른쪽 소지품. 캐릭터는 닫을 때까지 붙잡힘 */
-	void OpenShop(class AShopNPCActor* NPC);
-	/** 상점 닫기 (대화창 [나가기]) — 카메라·HUD 원래대로 */
-	void CloseShop();
-	bool IsShopOpen() const { return bShopOpen; }
+	// ── 대기 지역 NPC (상점·재련) ──
+	/** NPC 메뉴 열기 — 공통(붙잡힘·카메라 줌인·HUD 숨김·하단 대화창) 후 NPC 종류에 맞는 창:
+	 *  상점 = 왼쪽 상점 창 + 오른쪽 소지품 / 재련 = 가운데 재련 창. 닫을 때까지 캐릭터는 붙잡힘 */
+	void OpenNPCMenu(class AInteractableNPCActor* NPC);
+	/** NPC 메뉴 닫기 (대화창 [나가기]) — 카메라·HUD 원래대로 */
+	void CloseNPCMenu();
+	bool IsNPCMenuOpen() const { return bNPCMenuOpen; }
+	bool IsShopOpen() const;
 
 	/** 소지품 칸 우클릭 — 상점이 열려 있으면 판매 목록에 올림(Shift = 묶음 판매). 상점 밖에선 아직 아무것도 안 함 */
 	void HandleInventorySlotRightClick(int32 InventoryIndex, bool bShift);
@@ -575,14 +610,17 @@ protected:
 	void UpdateNPCInteraction();
 	void OnInteractKey();
 
-	TWeakObjectPtr<class AShopNPCActor> InRangeNPC;   // 상호작용 거리 안 가장 가까운 NPC
-	TWeakObjectPtr<class AShopNPCActor> HoveredNPC;   // 커서 아래 NPC
-	TWeakObjectPtr<class AShopNPCActor> ActiveShopNPC;
-	bool bShopOpen = false;
-	uint8 HUDVisibilityBeforeShop = 0;  // ESlateVisibility (헤더에 UMG 타입 include 안 하려고 정수로)
+	TWeakObjectPtr<class AInteractableNPCActor> InRangeNPC;   // 상호작용 거리 안 가장 가까운 NPC
+	TWeakObjectPtr<class AInteractableNPCActor> HoveredNPC;   // 커서 아래 NPC
+	TWeakObjectPtr<class AInteractableNPCActor> ActiveNPC;    // 메뉴를 연 NPC
+	bool bNPCMenuOpen = false;
+	uint8 HUDVisibilityBeforeNPCMenu = 0;  // ESlateVisibility (헤더에 UMG 타입 include 안 하려고 정수로)
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UShopWidget> ShopWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class URefineWidget> RefineWidget;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UShopDialogueWidget> ShopDialogueWidget;

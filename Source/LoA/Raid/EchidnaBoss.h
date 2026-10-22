@@ -203,6 +203,13 @@ public:
 	// 월드의 보스 중 하나라도 광폭화 중이면 그 데미지 배율, 아니면 1
 	static float GetEnrageDamageMultiplier(const UObject* WorldContext);
 
+	// 플레이어 방어력 전 피해 배율 — 패턴 수치(ST_Echidna 등)는 "1640 시작 세트(마법 방어력 32,352 → 피해 -83.27%)가 맞는 양"이라
+	// (32,352 + 6,500) / 6,500 = 5.977을 곱해 방어 전 크기로 되돌린다. 보스가 없으면 1
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
+	float IncomingDamageScale = 5.977f;
+
+	static float GetIncomingDamageScale(const UObject* WorldContext);
+
 	FOnBossEnraged OnEnraged;
 
 	// ── 정산 게이지 ──────────────────────────────────────────

@@ -19,6 +19,7 @@ void UInventoryComponent::BeginPlay()
 	EnsureLoaded();
 	OnSlotChanged.Broadcast(INDEX_NONE);
 	OnSillingChanged.Broadcast(Silling);
+	OnGoldChanged.Broadcast(Gold);
 }
 
 void UInventoryComponent::EnsureLoaded()
@@ -53,6 +54,21 @@ void UInventoryComponent::EnsureLoaded()
 	}
 	// 실링은 따로 플래그 — 실링이 생기기 전 저장 파일(소지품만 있음)에도 처음 한 번은 지급
 	Silling = (GI && GI->bHasSilling) ? FMath::Max<int64>(0, GI->Silling) : FMath::Max<int64>(0, StartingSilling);
+	// 골드도 따로 플래그 — 골드가 생기기 전 저장 파일에도 처음 한 번은 지급
+	Gold = (GI && GI->bHasGold) ? FMath::Max<int64>(0, GI->Gold) : FMath::Max<int64>(0, StartingGold);
+
+	// 운명의 파편 — 장비 성장이 생기기 전 저장 파일에도 한 번
+	if (GI && !GI->bHasStarterFragments)
+	{
+		GI->bHasStarterFragments = true;
+		AddItem(LoAItems::FateFragment, StartingFateFragments);
+	}
+	// 테스트용 추가 지급 (2026-10-22) — 저장 파일마다 한 번
+	if (GI && !GI->bHasFragmentGift)
+	{
+		GI->bHasFragmentGift = true;
+		AddItem(LoAItems::FateFragment, FragmentGiftAmount);
+	}
 }
 
 FGuid UInventoryComponent::CreateEquipment(FName ItemId, int32 RefineLevel, int32 Quality)
@@ -65,6 +81,12 @@ FGuid UInventoryComponent::CreateEquipment(FName ItemId, int32 RefineLevel, int3
 	Instance.ItemId = ItemId;
 	Instance.RefineLevel = FMath::Clamp(RefineLevel, 0, LoAEquipRules::MaxRefineLevel);
 	Instance.Quality = FMath::Clamp(Quality, 0, 100);
+	// 장신구는 만들 때 특성을 굴린다 (시작 장신구는 장비 컴포넌트가 고정값으로 덮어씀)
+	if (Def->IsAccessory())
+	{
+		Instance.RefineLevel = 0;
+		Instance.StatRolls = LoAItems::RollAccessoryStats(*Def);
+	}
 	Equipments.Add(Instance.InstanceId, Instance);
 	return Instance.InstanceId;
 }
@@ -112,6 +134,21 @@ void UInventoryComponent::AddSilling(int64 Amount)
 	OnSillingChanged.Broadcast(Silling);
 }
 
+void UInventoryComponent::AddGold(int64 Amount)
+{
+	if (Amount <= 0) return;
+	Gold = FMath::Min<int64>(Gold + Amount, MAX_int64 / 2);
+	OnGoldChanged.Broadcast(Gold);
+}
+
+bool UInventoryComponent::SpendGold(int64 Amount)
+{
+	if (Amount < 0 || Gold < Amount) return false;
+	Gold -= Amount;
+	OnGoldChanged.Broadcast(Gold);
+	return true;
+}
+
 bool UInventoryComponent::SpendSilling(int64 Amount)
 {
 	if (Amount < 0 || Silling < Amount) return false;
@@ -125,16 +162,30 @@ void UInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 판매 목록에 올려 둔 채로 끝나도(상점을 안 닫고 종료·레벨 이동) 아이템이 사라지지 않게 저장 전에 되돌린다
 	UnreserveAllSell();
 
-	if (ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr)
+	if (WriteToGameInstance())
 	{
-		GI->InventorySlots = Slots;
-		GI->EquipmentInstances = Equipments;
-		GI->bHasInventory = true;
-		GI->Silling = Silling;
-		GI->bHasSilling = true;
-		GI->SaveToDisk();
+		GetWorld()->GetGameInstance<ULoAGameInstance>()->SaveToDisk();
 	}
 	Super::EndPlay(EndPlayReason);
+}
+
+bool UInventoryComponent::WriteToGameInstance() const
+{
+	ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr;
+	if (!GI || !bLoaded) return false;
+	if (SellReserve.Num() > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 판매 목록에 아이템이 있어 저장 건너뜀"));
+		return false;
+	}
+	GI->InventorySlots = Slots;
+	GI->EquipmentInstances = Equipments;
+	GI->bHasInventory = true;
+	GI->Silling = Silling;
+	GI->bHasSilling = true;
+	GI->Gold = Gold;
+	GI->bHasGold = true;
+	return true;
 }
 
 const FInventorySlot& UInventoryComponent::GetSlot(int32 Index) const
@@ -420,9 +471,11 @@ bool UInventoryComponent::ReserveForSell(int32 Index, int32 Count, FText& OutFai
 		return false;
 	}
 
-	FSellReserveEntry* Entry = SellReserve.FindByPredicate([&](const FSellReserveEntry& E)
+	// 장비는 인스턴스마다 따로 한 줄 — 같은 칸에 나중에 들어온 같은 종류 장비와 합치면 안 된다
+	const FGuid EquipmentId = Source.EquipmentId;
+	FSellReserveEntry* Entry = EquipmentId.IsValid() ? nullptr : SellReserve.FindByPredicate([&](const FSellReserveEntry& E)
 	{
-		return E.SourceIndex == Index && E.ItemId == Source.ItemId;
+		return E.SourceIndex == Index && E.ItemId == Source.ItemId && !E.EquipmentId.IsValid();
 	});
 	if (!Entry)
 	{
@@ -434,6 +487,7 @@ bool UInventoryComponent::ReserveForSell(int32 Index, int32 Count, FText& OutFai
 		Entry = &SellReserve.AddDefaulted_GetRef();
 		Entry->ItemId = Source.ItemId;
 		Entry->SourceIndex = Index;
+		Entry->EquipmentId = EquipmentId;
 	}
 
 	Entry->Count += RemoveFromSlot(Index, Count);
@@ -445,6 +499,24 @@ void UInventoryComponent::UnreserveSell(int32 ReserveIndex)
 {
 	if (!SellReserve.IsValidIndex(ReserveIndex)) return;
 	FSellReserveEntry& Entry = SellReserve[ReserveIndex];
+
+	// 장비 — 원래 칸이 비었으면 거기, 아니면 첫 빈 칸
+	if (Entry.EquipmentId.IsValid())
+	{
+		if (Slots.IsValidIndex(Entry.SourceIndex) && Slots[Entry.SourceIndex].IsEmpty())
+		{
+			SetSlotEquipment(Entry.SourceIndex, Entry.EquipmentId);
+		}
+		else if (PlaceEquipmentInEmptySlot(Entry.EquipmentId) == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Inventory] 판매 목록 되돌리기 — 소지품이 가득 차 장비가 목록에 남음"));
+			return;
+		}
+		SellReserve.RemoveAt(ReserveIndex);
+		OnSellReserveChanged.Broadcast();
+		return;
+	}
+
 	int32 Remaining = Entry.Count;
 	const int32 MaxStack = GetMaxStack(Entry.ItemId);
 
@@ -511,6 +583,10 @@ int64 UInventoryComponent::SellReserved()
 {
 	const int64 Total = GetSellReserveValue();
 	if (SellReserve.Num() == 0) return 0;
+	for (const FSellReserveEntry& Entry : SellReserve)
+	{
+		if (Entry.EquipmentId.IsValid()) Equipments.Remove(Entry.EquipmentId);
+	}
 	SellReserve.Reset();
 	AddSilling(Total);
 	OnSellReserveChanged.Broadcast();

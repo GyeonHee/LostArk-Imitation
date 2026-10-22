@@ -59,8 +59,8 @@ void UStatComponent::InitializeFromData(const UCharacterDataAsset* Data)
 	BasePrimaryStat  = Data->BasePrimaryStat;
 	BaseWeaponPower  = Data->BaseWeaponPower;
 	BaseVitality     = Data->BaseVitality;
-	BaseMaxHP        = Data->MaxHP;
 	HPPerVitality    = Data->HPPerVitality;
+	DefenseCoefficient = Data->DefenseCoefficient;
 	AttackPowerScale = Data->AttackPowerScale;
 	BaseCritRate     = Data->BaseCritRate;
 	BaseCombatStats  = Data->BaseCombatStats;
@@ -108,6 +108,8 @@ void UStatComponent::RecalculateStats()
 
 	float ExtraCritRate = 0.f;
 	float ExtraCritDamage = 0.f;
+	double GearPhysDefense = 0.0;
+	double GearMagicDefense = 0.0;
 
 	for (const TPair<FName, TArray<FStatModifier>>& Pair : ModifiersBySource)
 	{
@@ -122,6 +124,8 @@ void UStatComponent::RecalculateStats()
 			case EStatModifierTarget::CritDamage:           ExtraCritDamage += static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::AdditiveDamage:       New.AdditiveDamageBonus += static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::MultiplicativeDamage: New.MultiplicativeDamage *= 1.f + static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::PhysDefense:          GearPhysDefense += Mod.Value; break;
+			case EStatModifierTarget::MagicDefense:         GearMagicDefense += Mod.Value; break;
 			default:
 				New.CombatPoints.Add(Stat_ToCombatStat(Mod.Target), FMath::RoundToInt32(Mod.Value));
 				break;
@@ -133,9 +137,19 @@ void UStatComponent::RecalculateStats()
 	New.DisplayAttackPower = FMath::Sqrt(FMath::Max(0.0, New.PrimaryStat * New.WeaponPower / 6.0));
 	New.AttackPower = FMath::RoundToDouble(New.DisplayAttackPower * AttackPowerScale);
 
-	New.MaxHP = FMath::Max(1.f, BaseMaxHP + static_cast<float>(New.Vitality) * HPPerVitality);
+	// 최대 생명력 — 로아: 체력 × 직업 생명 활성력 계수. 맨몸 체력(BaseVitality)분이 캐릭터 기본 HP
+	New.BaseHP = static_cast<float>(BaseVitality * HPPerVitality);
+	New.EquipmentHP = static_cast<float>((New.Vitality - BaseVitality) * HPPerVitality);
+	New.MaxHP = FMath::Max(1.f, static_cast<float>(New.Vitality * HPPerVitality));
 
 	const FCombatStatPoints& P = New.CombatPoints;
+
+	// 방어력 — 로아: 장비 방어력 × 직업 방어 계수 × (1 + 인내). 받는 피해 감소 = 방어력 / (방어력 + 6500)
+	const double DefenseScale = DefenseCoefficient * (1.0 + P.Endurance * LoAStatRules::DefensePerEndurance);
+	New.PhysDefense = FMath::RoundToDouble(GearPhysDefense * DefenseScale);
+	New.MagicDefense = FMath::RoundToDouble(GearMagicDefense * DefenseScale);
+	New.PhysDamageReduction = static_cast<float>(New.PhysDefense / (New.PhysDefense + LoAStatRules::DefenseConstant));
+	New.MagicDamageReduction = static_cast<float>(New.MagicDefense / (New.MagicDefense + LoAStatRules::DefenseConstant));
 	New.CritRate                 = FMath::Clamp(BaseCritRate + P.Crit * LoAStatRules::CritRatePerPoint + ExtraCritRate, 0.f, 1.f);
 	New.CritDamage               = LoAStatRules::BaseCritDamage + ExtraCritDamage;
 	New.SpecializationMultiplier = 1.f + P.Specialization * LoAStatRules::SpecializationPerPoint;
@@ -143,7 +157,7 @@ void UStatComponent::RecalculateStats()
 	New.MoveSpeedMultiplier      = 1.f + P.Swiftness * LoAStatRules::SpeedPerSwiftness;
 	New.AttackSpeedMultiplier    = New.MoveSpeedMultiplier;
 	New.DominationMultiplier     = 1.f + P.Domination * LoAStatRules::DominationPerPoint;
-	// 인내·숙련은 효과 없음 — 포인트만 들고 있다
+	// 숙련은 효과 없음 — 포인트만 들고 있다
 
 	Stats = New;
 	OnStatsChanged.Broadcast(Stats);
@@ -159,6 +173,8 @@ TArray<FString> UStatComponent::DescribeStats() const
 		*PrimaryEnum->GetDisplayNameTextByValue(static_cast<int64>(PrimaryStatType)).ToString(),
 		Stats.PrimaryStat, Stats.WeaponPower, Stats.Vitality,
 		Stats.AttackPower, Stats.DisplayAttackPower, AttackPowerScale, Stats.MaxHP));
+	Lines.Add(FString::Printf(TEXT("최대 생명력 %.0f (기본 %.0f + 장비 %.0f) / 물리 방어력 %.0f (피해 -%.2f%%) / 마법 방어력 %.0f (피해 -%.2f%%)"),
+		Stats.MaxHP, Stats.BaseHP, Stats.EquipmentHP, Stats.PhysDefense, Stats.PhysDamageReduction * 100.f, Stats.MagicDefense, Stats.MagicDamageReduction * 100.f));
 	Lines.Add(FString::Printf(TEXT("치명 %d / 특화 %d / 신속 %d / 제압 %d / 인내 %d / 숙련 %d"),
 		P.Crit, P.Specialization, P.Swiftness, P.Domination, P.Endurance, P.Expertise));
 	Lines.Add(FString::Printf(TEXT("치명률 %.2f%% / 치명피해 %.0f%% / 특화 x%.4f / 쿨감 %.2f%% / 속도 x%.4f / 제압 x%.4f / 피해 합 +%.2f%% 곱 x%.4f"),
