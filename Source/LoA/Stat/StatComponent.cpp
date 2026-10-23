@@ -52,6 +52,12 @@ float UStatComponent::GetCastSpeedMultiplierOf(const AActor* Actor)
 	return Comp ? FMath::Max(0.01f, Comp->GetStats().AttackSpeedMultiplier * Comp->GetStats().CastSpeedMultiplier) : 1.f;
 }
 
+float UStatComponent::GetChargeSpeedMultiplierOf(const AActor* Actor)
+{
+	const UStatComponent* Comp = Find(Actor);
+	return Comp ? FMath::Max(0.01f, Comp->GetStats().AttackSpeedMultiplier * Comp->GetStats().ChargeSpeedMultiplier) : 1.f;
+}
+
 void UStatComponent::SetSkillGemBonuses(const TMap<FName, float>& DamageBonus, const TMap<FName, float>& CooldownReduction)
 {
 	SkillGemDamage = DamageBonus;
@@ -145,6 +151,8 @@ void UStatComponent::RecalculateStats()
 	float SpeedBonus = 0.f;
 	float ExtraCooldownKeep = 1.f;   // (1 - 각인 쿨감)들의 곱
 	float MoveSpeedToDamage = 0.f;
+	double DefensePercent = 0.0;
+	float AttackSpeedBonus = 0.f;
 	double GearPhysDefense = 0.0;
 	double GearMagicDefense = 0.0;
 
@@ -174,6 +182,23 @@ void UStatComponent::RecalculateStats()
 			case EStatModifierTarget::CastSpeed:            New.CastSpeedMultiplier += static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::MoveSpeedToDamage:    MoveSpeedToDamage += static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::DamagePenaltyChance:  New.DamagePenaltyChance += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::LowTargetHPDamage:    New.LowTargetHPDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::LowTargetHPThreshold: New.LowTargetHPThreshold = FMath::Max(New.LowTargetHPThreshold, static_cast<float>(Mod.Value)); break;
+			case EStatModifierTarget::HighSelfHPDamage:     New.HighSelfHPDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::LowSelfHPDamage:      New.LowSelfHPDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ChargeSkillDamage:    New.ChargeSkillDamageMultiplier *= 1.f + static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ChargeSpeed:          New.ChargeSpeedMultiplier += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::PushedDamageReduction: New.PushedDamageReduction += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CrisisEvasionCooldown: New.CrisisEvasionCooldown = static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::MaxMPBonus:           New.MaxMPMultiplier += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaSkillDamage:      New.ManaSkillDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::FortitudeMax:         New.FortitudeMax += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::DivineChance:         New.DivineChance += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::DefensePercent:       DefensePercent += Mod.Value; break;
+			case EStatModifierTarget::GroggyTargetDamage:   New.GroggyTargetDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::AttackSpeedBonus:     AttackSpeedBonus += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::EmergencyRescueCooldown: New.EmergencyRescueCooldown = static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::SkillDamage:          New.SkillDamageMultiplier *= 1.f + static_cast<float>(Mod.Value); break;
 			default:
 				New.CombatPoints.Add(Stat_ToCombatStat(Mod.Target), FMath::RoundToInt32(Mod.Value));
 				break;
@@ -195,7 +220,8 @@ void UStatComponent::RecalculateStats()
 	const FCombatStatPoints& P = New.CombatPoints;
 
 	// 방어력 — 로아: 장비 방어력 × 직업 방어 계수 × (1 + 인내). 받는 피해 감소 = 방어력 / (방어력 + 6500)
-	const double DefenseScale = DefenseCoefficient * (1.0 + P.Endurance * LoAStatRules::DefensePerEndurance);
+	// 중갑 착용·에테르 포식자의 방어력 %는 인내와 합연산
+	const double DefenseScale = DefenseCoefficient * (1.0 + P.Endurance * LoAStatRules::DefensePerEndurance + DefensePercent);
 	New.PhysDefense = FMath::RoundToDouble(GearPhysDefense * DefenseScale);
 	New.MagicDefense = FMath::RoundToDouble(GearMagicDefense * DefenseScale);
 	New.PhysDamageReduction = static_cast<float>(New.PhysDefense / (New.PhysDefense + LoAStatRules::DefenseConstant));
@@ -207,7 +233,8 @@ void UStatComponent::RecalculateStats()
 	const float SwiftCooldown = P.Swiftness * LoAStatRules::CooldownPerSwiftness;
 	New.CooldownReduction        = FMath::Clamp(1.f - (1.f - SwiftCooldown) * ExtraCooldownKeep, 0.f, LoAStatRules::MaxCooldownReduction);
 	New.MoveSpeedMultiplier      = 1.f + FMath::Clamp(P.Swiftness * LoAStatRules::SpeedPerSwiftness + SpeedBonus, 0.f, LoAStatRules::MaxSpeedBonus);
-	New.AttackSpeedMultiplier    = New.MoveSpeedMultiplier;
+	// 공격 속도 = 이동속도 몫 + 공격 속도만 바꾸는 효과(질량 증가 -10%) — 상한은 같은 40%
+	New.AttackSpeedMultiplier    = FMath::Max(0.1f, 1.f + FMath::Clamp(P.Swiftness * LoAStatRules::SpeedPerSwiftness + SpeedBonus, 0.f, LoAStatRules::MaxSpeedBonus) + AttackSpeedBonus);
 	New.DominationMultiplier     = 1.f + P.Domination * LoAStatRules::DominationPerPoint;
 	// 돌격대장 — 이동속도 증가량(%)의 N%만큼 피해, 별도 곱연산
 	if (MoveSpeedToDamage > 0.f)

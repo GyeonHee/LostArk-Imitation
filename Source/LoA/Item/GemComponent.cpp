@@ -11,7 +11,7 @@
 
 namespace
 {
-	constexpr int32 Gem_StarterLevel = 5;
+	constexpr int32 Gem_StarterLevel = 7;  // 2026-10-23 Lv5 → Lv7 (유저 요청) — 예전 저장 파일은 BeginPlay에서 한 번 올려 줌
 	constexpr int32 Gem_StarterDamageCount = 6;
 	constexpr int32 Gem_StarterCooldownCount = 5;
 }
@@ -64,6 +64,18 @@ void UGemComponent::BeginPlay()
 			}
 			GI->GemFuseInputs = FuseInputs;
 		}
+		// 7레벨 미만으로 장착된 보석은 한 번 7레벨로 (시작 보석을 Lv5 → Lv7로 바꿀 때 기존 저장 파일용)
+		if (GI->bHasStarterGems && !GI->bGemsUpgradedToLv7)
+		{
+			for (FGemSlot& Slot : Slots)
+			{
+				EGemType Type;
+				int32 Level;
+				if (LoAGems::ParseGemId(Slot.GemItemId, Type, Level) && Level < Gem_StarterLevel) Slot.GemItemId = LoAGems::MakeGemId(Type, Gem_StarterLevel);
+			}
+			UE_LOG(LogTemp, Log, TEXT("[Gem] 장착 보석을 Lv%d로 올림 (한 번)"), Gem_StarterLevel);
+		}
+		GI->bGemsUpgradedToLv7 = true;
 		if (!GI->bHasStarterGems)
 		{
 			GrantStarterGems();

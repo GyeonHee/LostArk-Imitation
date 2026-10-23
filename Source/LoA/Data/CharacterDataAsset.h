@@ -69,8 +69,9 @@ public:
 	// 2026-10-23 장신구 주 스탯(시작 최하 등급 지능 61,427): 68,928 → 75,994라 73.682 × 68,928 / 75,994 = 66.830
 	// 2026-10-23 7단계 시작 보석(Lv5 겁화 6·작열 5)·각인(유물 0단계 원한·아드·예둔·저받·타대) 기대 DPS ×2.4187 → 66.830 / 2.4187 = 27.631
 	//   (아드레날린은 스킬 사용 빈도로 평균 약 2.8중첩·치명 보너스 없음으로 계산 — 실측은 허수아비 LoADpsTest로)
+	// 2026-10-23 허수아비 실측 3,300만(목표 2,670만) + 시작 보석 Lv5 → Lv7(×1.1415) → 27.631 × (26.7 / 33.0) / 1.1415 = 19.585
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double AttackPowerScale = 27.631;
+	double AttackPowerScale = 19.585;
 
 	// 시작 전투 특성 포인트 — 6단계부터 0 (시작 장신구 치명 750 + 특화 750이 대신 준다)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Combat")

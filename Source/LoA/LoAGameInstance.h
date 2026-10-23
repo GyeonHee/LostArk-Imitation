@@ -112,6 +112,14 @@ public:
 	UPROPERTY(Transient)
 	TArray<FName> GemFuseInputs;
 
+	// 장착 보석을 한 번 Lv7로 올렸는지 (시작 보석 Lv5 → Lv7, 2026-10-23)
+	UPROPERTY(Transient)
+	bool bGemsUpgradedToLv7 = false;
+
+	// 각인서 권수를 새 규칙(0/20, 5권마다 +1)으로 옮겼는지 — 예전엔 1권 = 배움이라 1권씩 많았다
+	UPROPERTY(Transient)
+	bool bEngravingBooksV2 = false;
+
 	// 현재 저장 구조 버전 — ULoASaveGame::SaveVersion
 	// 1 = 장비, 2 = 레이드 보상(대기 보상·첫 클리어) + 실링 상한 조정 + 골드
 	static constexpr int32 CurrentSaveVersion = 2;

@@ -34,7 +34,7 @@ TSharedRef<SWidget> UEngravingPageWidget::RebuildWidget()
 		UBorder* PresetLabel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		PresetLabel->SetBrushColor(SectionColor);
 		PresetLabel->SetPadding(FMargin(8.f, 3.f));
-		PresetLabel->SetContent(MakeText(WidgetTree, TEXT("각인 프리셋"), 10, Label));
+		PresetLabel->SetContent(MakeText(WidgetTree, TEXT("각인 프리셋"), 10, UiLabel));
 		if (UVerticalBoxSlot* S = Left->AddChildToVerticalBox(PresetLabel)) S->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 
 		BoardBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
@@ -112,11 +112,11 @@ void UEngravingPageWidget::Refresh()
 		Head->SetPadding(FMargin(8.f, 4.f));
 		UHorizontalBox* HeadRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		Head->SetContent(HeadRow);
-		if (UHorizontalBoxSlot* S = HeadRow->AddChildToHorizontalBox(MakeText(WidgetTree, Def->Name.ToString(), 11, Orange)))
+		if (UHorizontalBoxSlot* S = HeadRow->AddChildToHorizontalBox(MakeText(WidgetTree, Def->Name.ToString(), 11, UiOrange)))
 		{
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		}
-		HeadRow->AddChildToHorizontalBox(MakeText(WidgetTree, FString::Printf(TEXT("◆ x %d"), Level), 11, Orange));
+		HeadRow->AddChildToHorizontalBox(MakeText(WidgetTree, FString::Printf(TEXT("◆ x %d"), Level), 11, UiOrange));
 		if (UScrollBoxSlot* S = Cast<UScrollBoxSlot>(EffectList->AddChild(Head))) S->SetPadding(FMargin(0.f, 4.f, 6.f, 0.f));
 
 		TArray<TPair<FString, FString>> Lines;
@@ -130,11 +130,11 @@ void UEngravingPageWidget::Refresh()
 			Row->SetPadding(FMargin(8.f, 4.f));
 			UHorizontalBox* RowBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 			Row->SetContent(RowBox);
-			if (UHorizontalBoxSlot* S = RowBox->AddChildToHorizontalBox(MakeText(WidgetTree, Line.Key, 10, Label)))
+			if (UHorizontalBoxSlot* S = RowBox->AddChildToHorizontalBox(MakeText(WidgetTree, Line.Key, 10, UiLabel)))
 			{
 				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			}
-			RowBox->AddChildToHorizontalBox(MakeText(WidgetTree, Line.Value, 10, Label));
+			RowBox->AddChildToHorizontalBox(MakeText(WidgetTree, Line.Value, 10, UiLabel));
 			if (UScrollBoxSlot* S = Cast<UScrollBoxSlot>(EffectList->AddChild(Row))) S->SetPadding(FMargin(0.f, 0.f, 6.f, 0.f));
 		}
 	}

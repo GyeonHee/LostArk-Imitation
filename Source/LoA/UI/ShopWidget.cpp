@@ -213,6 +213,11 @@ void UShopEntryWidget::SetEntry(const FShopItemEntry* Entry)
 		IconImage->SetVisibility(ESlateVisibility::HitTestInvisible);
 		NameText->SetText(Def->DisplayName);
 		PriceText->SetText(FText::FromString(LoAItems::FormatWithCommas(Entry->Price)));
+		// 골드 가격이면 금화 아이콘
+		if (const UShopWidget* Shop = Owner.Get())
+		{
+			if (UTexture2D* Coin = (Entry->bGoldPrice ? Shop->GoldIcon : Shop->SillingIcon).LoadSynchronous()) CoinImage->SetBrushFromTexture(Coin);
+		}
 		CoinImage->SetVisibility(ESlateVisibility::HitTestInvisible);
 		SetToolTipText(FText::Format(NSLOCTEXT("Shop", "EntryTooltip", "{0}\n우클릭: 1개 담기 / Shift+우클릭: 수량 선택"), Def->DisplayName));
 	}
@@ -822,7 +827,7 @@ void UShopWidget::AddToCart(int32 EntryIndex, int32 Count)
 	for (FShopCartSlot& CartSlot : Cart)
 	{
 		if (Remaining <= 0) break;
-		if (CartSlot.ItemId != Entry.ItemId || CartSlot.Count >= CartSlotMax) continue;
+		if (CartSlot.ItemId != Entry.ItemId || CartSlot.bGold != Entry.bGoldPrice || CartSlot.Count >= CartSlotMax) continue;
 		const int32 Add = FMath::Min(Remaining, CartSlotMax - CartSlot.Count);
 		CartSlot.Count += Add;
 		Remaining -= Add;
@@ -834,6 +839,7 @@ void UShopWidget::AddToCart(int32 EntryIndex, int32 Count)
 		if (!CartSlot.IsEmpty()) continue;
 		CartSlot.ItemId = Entry.ItemId;
 		CartSlot.UnitPrice = Entry.Price;
+		CartSlot.bGold = Entry.bGoldPrice;
 		CartSlot.Count = FMath::Min(Remaining, CartSlotMax);
 		Remaining -= CartSlot.Count;
 	}
@@ -845,12 +851,12 @@ void UShopWidget::AddToCart(int32 EntryIndex, int32 Count)
 	RefreshCart();
 }
 
-int64 UShopWidget::GetCartTotal() const
+int64 UShopWidget::GetCartTotal(bool bGold) const
 {
 	int64 Total = 0;
 	for (const FShopCartSlot& CartSlot : Cart)
 	{
-		if (!CartSlot.IsEmpty()) Total += CartSlot.UnitPrice * CartSlot.Count;
+		if (!CartSlot.IsEmpty() && CartSlot.bGold == bGold) Total += CartSlot.UnitPrice * CartSlot.Count;
 	}
 	return Total;
 }
@@ -868,13 +874,24 @@ void UShopWidget::RefreshTotals()
 {
 	if (!TotalText || !BalanceText) return;
 	const bool bSell = CurrentTab == EShopTab::Sell;
-	const int64 Total = bSell ? (Inventory.IsValid() ? Inventory->GetSellReserveValue() : 0) : GetCartTotal();
+	const int64 Total = bSell ? (Inventory.IsValid() ? Inventory->GetSellReserveValue() : 0) : GetCartTotal(false);
 	const int64 Silling = Inventory.IsValid() ? Inventory->GetSilling() : 0;
 	const int64 Balance = bSell ? Silling + Total : Silling - Total;
-	TotalText->SetText(FText::FromString(LoAItems::FormatWithCommas(Total)));
-	BalanceText->SetText(FText::FromString(LoAItems::FormatWithCommas(Balance)));
+	// 골드 물건이 담겨 있으면 "실링 · 골드" 둘 다 (판매는 실링만)
+	const int64 GoldTotal = bSell ? 0 : GetCartTotal(true);
+	const int64 GoldBalance = (Inventory.IsValid() ? Inventory->GetGold() : 0) - GoldTotal;
+	if (GoldTotal > 0)
+	{
+		TotalText->SetText(FText::FromString(FString::Printf(TEXT("%s 실링 · %s 골드"), *LoAItems::FormatWithCommas(Total), *LoAItems::FormatWithCommas(GoldTotal))));
+		BalanceText->SetText(FText::FromString(FString::Printf(TEXT("%s 실링 · %s 골드"), *LoAItems::FormatWithCommas(Balance), *LoAItems::FormatWithCommas(GoldBalance))));
+	}
+	else
+	{
+		TotalText->SetText(FText::FromString(LoAItems::FormatWithCommas(Total)));
+		BalanceText->SetText(FText::FromString(LoAItems::FormatWithCommas(Balance)));
+	}
 	// 모자라면 빨갛게
-	BalanceText->SetColorAndOpacity(FSlateColor(Balance < 0 ? ShopShortColor : ShopBalanceColor));
+	BalanceText->SetColorAndOpacity(FSlateColor(Balance < 0 || GoldBalance < 0 ? ShopShortColor : ShopBalanceColor));
 }
 
 void UShopWidget::HandleSillingChanged(int64 NewAmount)
@@ -900,8 +917,9 @@ void UShopWidget::HandleBuyClicked()
 	}
 
 	UInventoryComponent* Inv = Inventory.Get();
-	const int64 Total = GetCartTotal();
-	if (!Inv || Total <= 0)
+	const int64 Total = GetCartTotal(false);
+	const int64 GoldTotal = GetCartTotal(true);
+	if (!Inv || Total + GoldTotal <= 0)
 	{
 		if (Inv && Total <= 0)
 		{
@@ -925,6 +943,11 @@ void UShopWidget::HandleBuyClicked()
 		Notify(NSLOCTEXT("Shop", "NotEnough", "실링이 부족합니다."));
 		return;
 	}
+	if (Inv->GetGold() < GoldTotal)
+	{
+		Notify(NSLOCTEXT("Shop", "NotEnoughGold", "골드가 부족합니다."));
+		return;
+	}
 
 	TMap<FName, int32> Totals;
 	for (const FShopCartSlot& CartSlot : Cart)
@@ -937,7 +960,8 @@ void UShopWidget::HandleBuyClicked()
 		return;
 	}
 
-	Inv->SpendSilling(Total);
+	if (Total > 0) Inv->SpendSilling(Total);
+	if (GoldTotal > 0) Inv->SpendGold(GoldTotal);
 	for (const TPair<FName, int32>& Pair : Totals)
 	{
 		Inv->AddItem(Pair.Key, Pair.Value);

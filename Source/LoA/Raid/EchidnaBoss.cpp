@@ -1,4 +1,5 @@
 #include "EchidnaBoss.h"
+#include "Stat/EngravingComponent.h"
 #include "BossDirectionIndicatorComponent.h"
 #include "EchidnaBossAIController.h"
 #include "UI/DamageNumberActor.h"
@@ -269,7 +270,7 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 	// 이 프로젝트는 감쇠를 쓰지 않으므로 들어온 원본 값을 그대로 적용한다 — ALoACharacter::TakeDamage와 동일
 	// 치명·제압은 여기서 타수마다 굴린다 (시전 시점에 굴리면 범위 안 모든 타격이 같은 결과가 됨)
 	bool bCritical = false;
-	const float FinalDamage = ULoADamageLibrary::ResolveIncomingHit(DamageAmount, EventInstigator, IsGroggy(), bCritical);
+	const float FinalDamage = ULoADamageLibrary::ResolveIncomingHit(DamageAmount, EventInstigator, IsGroggy(), bCritical, MaxHP > 0.0 ? static_cast<float>(HP / MaxHP) : 1.f);  // 대상 HP 비율 = 약자 무시
 	if (!bDefeated)
 	{
 		ULoADamageLibrary::ReportDamageDealt(EventInstigator, this, DamageCauser, FinalDamage, bCritical, false);
@@ -455,6 +456,7 @@ bool AEchidnaBoss::TryCounter(AActor* Attacker)
 
 	StartGroggy(CounterGroggyDuration);
 	OnCountered.Broadcast(Attacker);
+	if (UEngravingComponent* Engravings = Attacker->FindComponentByClass<UEngravingComponent>()) Engravings->NotifyCounterSuccess();  // 분쇄의 주먹
 	return true;
 }
 

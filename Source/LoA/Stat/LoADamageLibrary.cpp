@@ -6,6 +6,7 @@
 #include "LoAPlayerController.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
+#include "LoACharacter.h"
 
 namespace
 {
@@ -37,15 +38,19 @@ namespace
 		return Row && (Row->InputType == ESkillInputType::Cast || Row->InputType == ESkillInputType::Charge);
 	}
 
-	// 속전속결 대상 — 캐스팅·차지·홀딩 스킬 (종말의 날·천벌·익스플로전·혹한의 부름)
-	bool Damage_IsCastOrHoldSkill(const AActor* Attacker, FName SkillRowName)
+	const FSkillData* Damage_FindRow(const AActor* Attacker, FName SkillRowName)
 	{
 		Attacker = Damage_ResolvePawn(Attacker);
 		const USkillManagerComponent* SkillManager = Attacker ? Attacker->FindComponentByClass<USkillManagerComponent>() : nullptr;
-		if (!SkillManager || !SkillManager->SkillDataTable || SkillRowName.IsNone()) return false;
+		if (!SkillManager || !SkillManager->SkillDataTable || SkillRowName.IsNone()) return nullptr;
+		return SkillManager->SkillDataTable->FindRow<FSkillData>(SkillRowName, TEXT("Damage"), false);
+	}
 
-		const FSkillData* Row = SkillManager->SkillDataTable->FindRow<FSkillData>(SkillRowName, TEXT("CastSkill"), false);
-		return Row && (Row->InputType == ESkillInputType::Cast || Row->InputType == ESkillInputType::Charge || Row->InputType == ESkillInputType::Hold);
+	bool Damage_IsBasicAttack(const AActor* Attacker, FName SkillRowName)
+	{
+		Attacker = Damage_ResolvePawn(Attacker);
+		const USkillManagerComponent* SkillManager = Attacker ? Attacker->FindComponentByClass<USkillManagerComponent>() : nullptr;
+		return SkillManager && !SkillRowName.IsNone() && SkillRowName == SkillManager->GetSlotRowName(USkillManagerComponent::BasicAttackSlotIndex);
 	}
 }
 
@@ -59,11 +64,28 @@ float ULoADamageLibrary::CalcOutgoingDamage(const AActor* Attacker, float Coeffi
 
 	const FCombatStats& Stats = StatComp->GetStats();
 	const bool bSpecialization = Damage_IsSpecializationSkill(Attacker, SkillRowName);
-	const bool bCastSkill = Damage_IsCastOrHoldSkill(Attacker, SkillRowName);
+	// 스킬 종류별 각인 — 속전속결(캐스팅·홀딩) / 슈퍼 차지(차지) / 마나 효율 증가(마나 소모) / 추진력(기본공격 제외)
+	const FSkillData* Row = Damage_FindRow(Attacker, SkillRowName);
+	const bool bCastOrHold = Row && (Row->InputType == ESkillInputType::Cast || Row->InputType == ESkillInputType::Hold);
+	const bool bCharge = Row && Row->InputType == ESkillInputType::Charge;
+	const bool bManaSkill = Row && Row->ManaCost > 0.f;
+	const bool bBasicAttack = Damage_IsBasicAttack(Attacker, SkillRowName);
+	// 내 HP 조건 — 안정된 상태(65% 이상) / 달인의 저력(50% 이하)
+	double SelfHP = 1.0;
+	if (const ALoACharacter* Char = Cast<ALoACharacter>(Damage_ResolvePawn(Attacker)))
+	{
+		SelfHP = Char->GetMaxHP() > 0.f ? Char->GetHP() / Char->GetMaxHP() : 1.0;
+	}
+	const double SelfHPMultiplier = (SelfHP >= LoAStatRules::HighSelfHPThreshold ? 1.0 + Stats.HighSelfHPDamage : 1.0)
+		* (SelfHP <= LoAStatRules::LowSelfHPThreshold ? 1.0 + Stats.LowSelfHPDamage : 1.0);
 	// 보석(겁화)은 그 스킬에만, 각인 곱연산은 전부 MultiplicativeDamage에 들어 있다
 	const double Damage = Stats.AttackPower * Coefficient
 		* (bSpecialization ? Stats.SpecializationMultiplier : 1.0)
-		* (bCastSkill ? Stats.CastSkillDamageMultiplier : 1.0)
+		* (bCastOrHold ? Stats.CastSkillDamageMultiplier : 1.0)
+		* (bCharge ? Stats.ChargeSkillDamageMultiplier : 1.0)
+		* (bManaSkill ? 1.0 + Stats.ManaSkillDamage : 1.0)
+		* (bBasicAttack ? 1.0 : Stats.SkillDamageMultiplier)
+		* SelfHPMultiplier
 		* StatComp->GetSkillDamageMultiplier(SkillRowName)
 		* (1.0 + Stats.AdditiveDamageBonus)
 		* Stats.MultiplicativeDamage;
@@ -74,7 +96,7 @@ float ULoADamageLibrary::CalcOutgoingDamage(const AActor* Attacker, float Coeffi
 	return static_cast<float>(Damage);
 }
 
-float ULoADamageLibrary::ResolveIncomingHit(float BaseDamage, const AActor* Instigator, bool bTargetGroggy, bool& bOutCritical)
+float ULoADamageLibrary::ResolveIncomingHit(float BaseDamage, const AActor* Instigator, bool bTargetGroggy, bool& bOutCritical, float TargetHPRatio)
 {
 	bOutCritical = false;
 
@@ -94,7 +116,12 @@ float ULoADamageLibrary::ResolveIncomingHit(float BaseDamage, const AActor* Inst
 	}
 	if (bTargetGroggy)
 	{
-		Damage *= Stats.DominationMultiplier;
+		Damage *= Stats.DominationMultiplier * (1.0 + Stats.GroggyTargetDamage);  // 제압 + 부러진 뼈
+	}
+	// 약자 무시 — 대상 HP가 문턱 이하
+	if (Stats.LowTargetHPDamage > 0.f && TargetHPRatio <= Stats.LowTargetHPThreshold)
+	{
+		Damage *= 1.0 + Stats.LowTargetHPDamage;
 	}
 	// 예리한 둔기 — 일정 확률로 피해 -20% (치명과 따로 굴림)
 	if (Stats.DamagePenaltyChance > 0.f && FMath::FRand() < Stats.DamagePenaltyChance)

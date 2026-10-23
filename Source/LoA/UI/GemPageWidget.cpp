@@ -54,7 +54,7 @@ TSharedRef<SWidget> UGemPageWidget::RebuildWidget()
 		UBorder* PresetLabel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		PresetLabel->SetBrushColor(SectionColor);
 		PresetLabel->SetPadding(FMargin(8.f, 3.f));
-		PresetLabel->SetContent(MakeText(WidgetTree, TEXT("보석 프리셋"), 10, Label));
+		PresetLabel->SetContent(MakeText(WidgetTree, TEXT("보석 프리셋"), 10, UiLabel));
 		if (UVerticalBoxSlot* S = Left->AddChildToVerticalBox(PresetLabel)) S->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 
 		UBorder* BoardBack = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
@@ -67,7 +67,7 @@ TSharedRef<SWidget> UGemPageWidget::RebuildWidget()
 		Board = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
 		BoardBack->SetContent(Board);
 
-		StatusText = MakeText(WidgetTree, TEXT("소지품의 보석을 우클릭하면 장착할 스킬을 고를 수 있습니다. 장착한 보석 우클릭 = 빼기"), 9, Dim);
+		StatusText = MakeText(WidgetTree, TEXT("소지품의 보석을 우클릭하면 장착할 스킬을 고를 수 있습니다. 장착한 보석 우클릭 = 빼기"), 9, UiDim);
 		if (UVerticalBoxSlot* S = Left->AddChildToVerticalBox(StatusText))
 		{
 			S->SetHorizontalAlignment(HAlign_Center);
@@ -90,7 +90,7 @@ TSharedRef<SWidget> UGemPageWidget::RebuildWidget()
 		UHorizontalBox* SortRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		if (UVerticalBoxSlot* S = Right->AddChildToVerticalBox(SortRow)) S->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
 		SortRow->AddChildToHorizontalBox(MakeButton(WidgetTree, TEXT("기본 정렬"), 10, SectionColor));
-		AttackTotalText = MakeText(WidgetTree, TEXT(""), 11, Green);
+		AttackTotalText = MakeText(WidgetTree, TEXT(""), 11, UiGreen);
 		if (UHorizontalBoxSlot* S = SortRow->AddChildToHorizontalBox(AttackTotalText))
 		{
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -117,7 +117,7 @@ TSharedRef<SWidget> UGemPageWidget::RebuildWidget()
 		Picker->SetContent(PickerBox);
 		UVerticalBox* PickerColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		PickerBox->SetContent(PickerColumn);
-		PickerTitle = MakeText(WidgetTree, TEXT(""), 12, Gold);
+		PickerTitle = MakeText(WidgetTree, TEXT(""), 12, UiGold);
 		if (UVerticalBoxSlot* S = PickerColumn->AddChildToVerticalBox(PickerTitle)) S->SetPadding(FMargin(0.f, 0.f, 0.f, 8.f));
 		PickerList = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		PickerColumn->AddChildToVerticalBox(PickerList);
@@ -201,7 +201,7 @@ void UGemPageWidget::Refresh()
 		UVerticalBox* Cell = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		USizeBox* Ring = MakeRingIcon(WidgetTree, Gem_Circle, bHas ? (Type == EGemType::Damage ? DamageGem : CooldownGem) : RingIdle, Icon);
 		if (UVerticalBoxSlot* S = Cell->AddChildToVerticalBox(Ring)) S->SetHorizontalAlignment(HAlign_Center);
-		UTextBlock* LevelText = MakeText(WidgetTree, bHas ? FString::Printf(TEXT("Lv.%d"), Level) : TEXT(""), 10, Label);
+		UTextBlock* LevelText = MakeText(WidgetTree, bHas ? FString::Printf(TEXT("Lv.%d"), Level) : TEXT(""), 10, UiLabel);
 		if (UVerticalBoxSlot* S = Cell->AddChildToVerticalBox(LevelText)) S->SetHorizontalAlignment(HAlign_Center);
 		if (bHas)
 		{
@@ -246,13 +246,13 @@ void UGemPageWidget::Refresh()
 		EffectLine->AddChildToHorizontalBox(MakeText(WidgetTree, SkillName, 10, SkillYellow));
 		EffectLine->AddChildToHorizontalBox(MakeText(WidgetTree, Type == EGemType::Damage
 			? FString::Printf(TEXT(" 피해 %.2f%% 증가"), LoAGems::GetEffect(Type, Level) * 100.f)
-			: FString::Printf(TEXT(" 재사용 대기시간 %.2f%% 감소"), LoAGems::GetEffect(Type, Level) * 100.f), 10, Label));
+			: FString::Printf(TEXT(" 재사용 대기시간 %.2f%% 감소"), LoAGems::GetEffect(Type, Level) * 100.f), 10, UiLabel));
 		if (Atk > 0.f)
 		{
 			UHorizontalBox* Extra = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 			if (UVerticalBoxSlot* S = RowColumn->AddChildToVerticalBox(Extra)) S->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f));
-			Extra->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("추가 효과  "), 10, Label));
-			Extra->AddChildToHorizontalBox(MakeText(WidgetTree, FString::Printf(TEXT("기본 공격력 %.2f%% 증가"), Atk * 100.f), 10, Green));
+			Extra->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("추가 효과  "), 10, UiLabel));
+			Extra->AddChildToHorizontalBox(MakeText(WidgetTree, FString::Printf(TEXT("기본 공격력 %.2f%% 증가"), Atk * 100.f), 10, UiGreen));
 		}
 		if (UScrollBoxSlot* S = Cast<UScrollBoxSlot>(EffectList->AddChild(Row))) S->SetPadding(FMargin(0.f, 0.f, 6.f, 4.f));
 	}
@@ -312,7 +312,7 @@ void UGemPageWidget::Notify(const FText& Message) const
 	if (StatusText)
 	{
 		StatusText->SetText(Message);
-		StatusText->SetColorAndOpacity(FSlateColor(Gold));
+		StatusText->SetColorAndOpacity(FSlateColor(UiGold));
 	}
 }
 

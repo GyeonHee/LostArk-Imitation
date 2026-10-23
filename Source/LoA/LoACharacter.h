@@ -201,6 +201,19 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Death")
 	bool bInvulnerable = false;
 
+	// ── 각인 피격 효과 (7단계) ──
+	double DivineReadyTime = 0.0;          // 여신의 가호 다음 발동 가능 시각
+	double CrisisReadyTime = 0.0;          // 위기 모면
+	bool bCrisisActive = false;            // 위기 모면 무적 중 — 받는 피해를 모아 끝날 때 40% 회복
+	float CrisisAccumulated = 0.f;
+	FTimerHandle CrisisTimer;
+	void EndCrisisEvasion();
+	double RescueReadyTime = 0.0;          // 긴급구조
+	float ShieldHP = 0.f;
+	FTimerHandle RescueTimer;
+	void EndEmergencyRescue();
+	float BaseMaxMP = 0.f;                 // DA 값 — 최대 마나 증가 각인이 여기에 곱한다
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Knockdown")
 	bool bIsKnockedDown = false;
 
@@ -436,6 +449,9 @@ public:
 	// 사망했거나 무적이면 데미지·CC를 받지 않는다
 	UFUNCTION(BlueprintPure, Category="Death")
 	bool IsImmune() const { return bIsDead || bInvulnerable; }
+
+	/** 긴급구조 보호막 남은 양 (0 = 없음) */
+	float GetShieldHP() const { return ShieldHP; }
 
 	// 쓰러지는 애니메이션 등 연출 훅
 	UFUNCTION(BlueprintImplementableEvent, Category="Death")

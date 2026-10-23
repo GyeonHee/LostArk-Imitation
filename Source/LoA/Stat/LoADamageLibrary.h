@@ -37,7 +37,7 @@ public:
 	 * @param bOutCritical   치명타가 터졌는지 — 데미지 숫자 표시에 쓴다
 	 */
 	UFUNCTION(BlueprintCallable, Category="Damage")
-	static float ResolveIncomingHit(float BaseDamage, const AActor* Instigator, bool bTargetGroggy, bool& bOutCritical);
+	static float ResolveIncomingHit(float BaseDamage, const AActor* Instigator, bool bTargetGroggy, bool& bOutCritical, float TargetHPRatio = 1.f);
 
 	/**
 	 * 스킬이 스폰한 데미지 액터(메테오·장판·발사체 등)에 어느 스킬인지 표시해 둔다.

@@ -74,6 +74,24 @@ enum class EStatModifierTarget : uint8
 	CastSpeed            UMETA(DisplayName="캐스팅·홀딩 속도"),     // 0.2 = 캐스팅·차지 진행 +20%
 	MoveSpeedToDamage    UMETA(DisplayName="이동속도 → 피해"),      // 0.48 = 이동속도 증가량의 48%만큼 피해 (돌격대장)
 	DamagePenaltyChance  UMETA(DisplayName="피해 감소 확률"),       // 0.1 = 10% 확률로 피해 -20% (예리한 둔기)
+	// ── 각인 43종 (2026-10-23) ──
+	LowTargetHPDamage    UMETA(DisplayName="체력 낮은 적 피해"),    // 약자 무시 — 대상 HP가 문턱 이하면 ×(1+값)
+	LowTargetHPThreshold UMETA(DisplayName="체력 낮은 적 문턱"),    // 0.4 = 40% 이하
+	HighSelfHPDamage     UMETA(DisplayName="내 체력 높을 때 피해"),  // 안정된 상태 — 내 HP 65% 이상
+	LowSelfHPDamage      UMETA(DisplayName="내 체력 낮을 때 피해"),  // 달인의 저력 — 내 HP 50% 이하
+	ChargeSkillDamage    UMETA(DisplayName="차지 스킬 피해"),       // 슈퍼 차지
+	ChargeSpeed          UMETA(DisplayName="차지 속도"),            // 슈퍼 차지 +40%
+	PushedDamageReduction UMETA(DisplayName="밀려날 때 받는 피해 감소"), // 굳은 의지 — 넉다운·끌려감 중
+	CrisisEvasionCooldown UMETA(DisplayName="위기 모면 쿨타임"),      // 초 (0이면 없음)
+	MaxMPBonus           UMETA(DisplayName="최대 마나"),            // 최대 마나 증가
+	ManaSkillDamage      UMETA(DisplayName="마나 소모 스킬 피해"),   // 마나 효율 증가
+	FortitudeMax         UMETA(DisplayName="잃은 체력 비례 피해 감소"), // 불굴 — 최대치
+	DivineChance         UMETA(DisplayName="여신의 가호 확률"),      // 여신의 가호
+	DefensePercent       UMETA(DisplayName="방어력 %"),             // 중갑 착용·에테르 포식자
+	GroggyTargetDamage   UMETA(DisplayName="무력화 대상 피해"),       // 부러진 뼈 — 그로기 중인 보스
+	AttackSpeedBonus     UMETA(DisplayName="공격 속도"),            // 질량 증가 -10% (이동속도와 별개)
+	EmergencyRescueCooldown UMETA(DisplayName="긴급구조 쿨타임"),     // 초 (0이면 없음)
+	SkillDamage          UMETA(DisplayName="스킬 피해(기본공격 제외)"), // 추진력
 };
 
 USTRUCT(BlueprintType)
@@ -139,6 +157,23 @@ struct FCombatStats
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float GetUpCooldownReduction = 0.f;    // 0~0.9
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MPRegenMultiplier = 1.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float DamagePenaltyChance = 0.f;       // 이 확률로 피해 × (1 - DamagePenaltyRatio)
+
+	// ── 각인 43종 조건부 효과 — 판정 시점에 조건을 본다(대상 HP·내 HP·마나 소모·그로기 등) ──
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float LowTargetHPDamage = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float LowTargetHPThreshold = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float HighSelfHPDamage = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float LowSelfHPDamage = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ChargeSkillDamageMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ChargeSpeedMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float PushedDamageReduction = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float CrisisEvasionCooldown = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MaxMPMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaSkillDamage = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float FortitudeMax = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float DivineChance = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float GroggyTargetDamage = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float EmergencyRescueCooldown = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float SkillDamageMultiplier = 1.f;  // 기본공격 제외
 };
 
 // 전투 특성 1포인트당 효과 — 직업과 무관한 게임 규칙이라 에셋이 아니라 코드에 둔다
@@ -159,4 +194,15 @@ namespace LoAStatRules
 	constexpr float MaxCooldownReduction    = 0.80f;
 	constexpr float BaseCritDamage          = 2.0f;      // 기본 치명타 피해 200%
 	constexpr float DamagePenaltyRatio      = 0.20f;     // 예리한 둔기 — 걸리면 피해 -20%
+	// 각인 조건 (로아 수치)
+	constexpr float HighSelfHPThreshold     = 0.65f;     // 안정된 상태
+	constexpr float LowSelfHPThreshold      = 0.50f;     // 달인의 저력
+	constexpr float DivineReduction         = 0.46f;     // 여신의 가호 — 받는 피해 -46%
+	constexpr float DivineCooldown          = 10.f;
+	constexpr float CrisisDuration          = 3.f;       // 위기 모면 무적
+	constexpr float CrisisHealRatio         = 0.40f;     // 무적 중 받은 피해의 40% 회복
+	constexpr float RescueHPThreshold       = 0.30f;     // 긴급구조 — HP 30% 미만
+	constexpr float RescueShieldRatio       = 0.50f;     // 최대 HP 50% 보호막
+	constexpr float RescueDuration          = 6.f;
+	constexpr float RescueHealRatio         = 0.50f;     // 남은 보호막의 50% 회복
 }

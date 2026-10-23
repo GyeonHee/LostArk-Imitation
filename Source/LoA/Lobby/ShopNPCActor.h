@@ -13,9 +13,13 @@ struct FShopItemEntry
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shop")
 	FName ItemId;
 
-	// 개당 가격 (실링)
+	// 개당 가격 (bGoldPrice면 골드, 아니면 실링)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shop", meta = (ClampMin = "0"))
 	int64 Price = 1;
+
+	// 골드로 사는 물건 (보석 상자 등)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shop")
+	bool bGoldPrice = false;
 };
 
 /**

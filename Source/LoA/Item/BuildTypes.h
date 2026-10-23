@@ -5,6 +5,7 @@
 #include "BuildTypes.generated.h"
 
 struct FItemDefinition;
+class UInventoryComponent;
 
 /**
  * 7단계 — 보석·각인 (로아 T4 그대로, 2026-10-23)
@@ -59,6 +60,14 @@ namespace LoAGems
 	LOA_API FString DescribeGem(EGemType Type, int32 Level);
 
 	void RegisterItems(TMap<FName, FItemDefinition>& Map);
+
+	/** 보석 상자 — 1레벨 보석 BoxGemCount개(겁화·작열 랜덤). 상점에서 골드로 산다 */
+	extern LOA_API const FName GemBox;
+	constexpr int32 BoxGemCount = 10;
+	constexpr int64 BoxGoldPrice = 1000;
+
+	/** 소지품 칸의 보석 상자를 연다 — 보석은 칸마다 1개라 빈 칸이 BoxGemCount개 있어야 함 */
+	LOA_API bool OpenGemBox(UInventoryComponent* Inventory, int32 SlotIndex, FText& OutFailReason);
 }
 
 /** 각인 하나의 정의 — 효과는 LoAEngravings가 단계별로 계산 */
@@ -68,6 +77,7 @@ struct FEngravingDefinition
 	FText Name;
 	FName BookItemId;   // "유물 <이름> 각인서"
 	FString IconName;   // /Game/LostArk/UI/Engraving/ 텍스처 이름 (없으면 창에서 색 네모)
+	bool bHasEffect = true;  // 이 게임에 그 시스템이 있어 실제로 효과가 있는가 (없으면 장착만 됨)
 };
 
 namespace LoAEngravings
@@ -75,11 +85,19 @@ namespace LoAEngravings
 	constexpr int32 SlotCount = 5;
 	constexpr int32 MaxLevel = 4;
 	constexpr int32 BooksPerLevel = 5;
-	constexpr int32 MaxBooks = 1 + BooksPerLevel * MaxLevel;  // 1권으로 배우고(0단계) 5권마다 +1 → 21권이면 4단계
+	constexpr int32 MaxBooks = BooksPerLevel * MaxLevel;  // 로아처럼 0 / 20권 — 5권마다 +1단계, 20권이면 4단계 (처음부터 전부 유물 0단계로 장착 가능)
 
 	// 런타임 중첩 각인 — 효과 계산에 중첩 수가 필요하다
 	extern LOA_API const FName Adrenaline;
 	extern LOA_API const FName MagickStream;
+	extern LOA_API const FName EtherPredator;   // 스킬 사용마다(4초에 한 번) +1중첩, 90초, 최대 30 — 로아의 "에테르 획득"을 스킬 사용으로 대신
+	extern LOA_API const FName CrushingFist;    // 카운터 성공 → 3초 공격력
+	extern LOA_API const FName Propulsion;      // 대시 → 5초 스킬 피해
+	constexpr int32 EtherMaxStacks = 30;
+	constexpr float EtherDuration = 90.f;
+	constexpr float EtherGainCooldown = 4.f;
+	constexpr float CrushingFistDuration = 3.f;
+	constexpr float PropulsionDuration = 5.f;
 	constexpr int32 AdrenalineMaxStacks = 6;
 	constexpr float AdrenalineDuration = 6.f;
 	constexpr float AdrenalineAttackPerStack = 0.009f;
@@ -91,7 +109,10 @@ namespace LoAEngravings
 	LOA_API const FEngravingDefinition* Find(FName Id);
 	LOA_API const FEngravingDefinition* FindByBook(FName BookItemId);
 
-	/** 읽은 권수 → 단계 (0권 = 안 배움 → -1) */
+	/** 첫 번째 효과 수치 (그 단계) — 위기 모면 쿨타임 등 */
+	LOA_API float GetValueA(FName Id, int32 Level);
+
+	/** 읽은 권수 → 단계 0~4 (0권도 유물 0단계) */
 	LOA_API int32 LevelFromBooks(int32 BooksRead);
 
 	/** 장착만 해도 붙는 효과 (중첩 각인은 중첩과 무관한 부분만) */

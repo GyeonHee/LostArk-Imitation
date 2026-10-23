@@ -25,12 +25,10 @@ AShopNPCActor::AShopNPCActor()
 	Lava.Price = 1000;
 	ShopItems.Add(Lava);
 
-	// 1레벨 보석 (7단계) — 합성 재료. 가격은 임시
-	for (const EGemType Type : { EGemType::Damage, EGemType::Cooldown })
-	{
-		FShopItemEntry Gem;
-		Gem.ItemId = LoAGems::MakeGemId(Type, 1);
-		Gem.Price = 3000;
-		ShopItems.Add(Gem);
-	}
+	// 1레벨 보석 상자 (7단계) — 골드. 1레벨 10개 = 1,000골드(개당 100). 7레벨 1개 = 1레벨 729개 = 상자 73개 ≒ 클리어 12회분 골드
+	FShopItemEntry GemBoxEntry;
+	GemBoxEntry.ItemId = LoAGems::GemBox;
+	GemBoxEntry.Price = LoAGems::BoxGoldPrice;
+	GemBoxEntry.bGoldPrice = true;
+	ShopItems.Add(GemBoxEntry);
 }

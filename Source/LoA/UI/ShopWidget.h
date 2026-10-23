@@ -22,6 +22,7 @@ struct FShopCartSlot
 	FName ItemId;
 	int32 Count = 0;
 	int64 UnitPrice = 0;
+	bool bGold = false;  // 골드 가격 (보석 상자 등)
 
 	bool IsEmpty() const { return ItemId.IsNone() || Count <= 0; }
 };
@@ -112,6 +113,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Shop")
 	TSoftObjectPtr<UTexture2D> SillingIcon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/Item/T_Silling.T_Silling")));
 
+	UPROPERTY(EditAnywhere, Category = "Shop")
+	TSoftObjectPtr<UTexture2D> GoldIcon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/LostArk/UI/Item/T_Gold.T_Gold")));
+
 	static constexpr int32 CartSlotCount = 10;
 	static constexpr int32 EntryColumns = 2;
 	static constexpr int32 EntryRows = 6;
@@ -139,7 +143,7 @@ private:
 	void AddToCart(int32 EntryIndex, int32 Count);
 	void RefreshCart();
 	void RefreshTotals();
-	int64 GetCartTotal() const;
+	int64 GetCartTotal(bool bGold) const;  // bGold = 골드 물건만, 아니면 실링 물건만
 
 	void OpenQuantityPopup(EPopupMode Mode, int32 TargetIndex, int32 MaxQuantity);
 	void CloseQuantityPopup();

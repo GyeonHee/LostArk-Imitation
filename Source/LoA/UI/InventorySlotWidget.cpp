@@ -145,7 +145,7 @@ void UInventorySlotWidget::Refresh(const FInventorySlot& InSlot)
 			const UEquipmentComponent* Worn = Pawn ? Pawn->FindComponentByClass<UEquipmentComponent>() : nullptr;
 			Tooltip = UEquipmentComponent::DescribeEquipment(*Equipment, Worn ? Worn->GetEquipped(Def->EquipSlot) : nullptr);
 		}
-		else if (Def->Category == EItemCategory::Gem)
+		else if (Def->Category == EItemCategory::Gem && InSlot.ItemId != LoAGems::GemBox)
 		{
 			// 보석 — 칸마다 1개라 개수 대신 레벨 (로아 소지품의 Lv.N)
 			EGemType GemType;

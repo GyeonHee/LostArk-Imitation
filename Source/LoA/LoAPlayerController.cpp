@@ -59,6 +59,11 @@
 #include "UI/CharacterInfoWidget.h"
 #include "UI/EngravingSetupWidget.h"
 #include "UI/GemFuseWidget.h"
+#include "UI/SkillTooltipWidget.h"
+#include "UI/SkillTreeEntry_ViewModel.h"
+#include "Components/ListView.h"
+#include "Blueprint/IUserObjectListEntry.h"
+#include "Blueprint/WidgetTree.h"
 #include "Item/GemComponent.h"
 #include "Stat/EngravingComponent.h"
 #include "UI/CharacterPreviewActor.h"
@@ -180,6 +185,13 @@ void ALoAPlayerController::BeginPlay()
 			GemFuseWidget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		UE_LOG(LogTemp, Log, TEXT("[Gem] 보석 합성 창 생성 %s"), GemFuseWidget ? TEXT("성공") : TEXT("실패"));
+
+		SkillTooltipWidget = CreateWidget<USkillTooltipWidget>(this, USkillTooltipWidget::StaticClass());
+		if (SkillTooltipWidget)
+		{
+			SkillTooltipWidget->AddToViewport(50);
+			SkillTooltipWidget->HideTooltip();
+		}
 
 		FActorSpawnParameters PreviewParams;
 		PreviewParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -1429,6 +1441,7 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	}
 	UpdateEnrageTimer();
 	UpdateScreenFog(DeltaSeconds);
+	UpdateSkillTooltip();
 
 	if (ALoACharacter* Char = Cast<ALoACharacter>(ControlledPawn); Char && Char->IsActionLocked())
 	{
@@ -1848,6 +1861,50 @@ bool ALoAPlayerController::FindHUDSlotUnderCursor(int32& OutGroup, int32& OutInd
 		|| TestGroup(HUDItemBorders, UE_ARRAY_COUNT(HUDItemBorders), HUDGroupItem)
 		|| TestGroup(HUDBattleBorders, UE_ARRAY_COUNT(HUDBattleBorders), HUDGroupBattle)
 		|| TestGroup(HUDOtherBorders, UE_ARRAY_COUNT(HUDOtherBorders), HUDGroupOther);
+}
+
+FName ALoAPlayerController::FindSkillTreeRowUnderCursor() const
+{
+	if (!SkillTreeWidget || !SkillTreeWidget->IsInViewport() || !SkillTreeWidget->IsVisible() || !SkillTreeWidget->WidgetTree) return NAME_None;
+	const FVector2D Cursor = FSlateApplication::Get().GetCursorPos();
+	FName Found = NAME_None;
+	// WBP_SkillTree 안의 ListView — 보이는 줄 위젯마다 커서를 비교하고, 줄에 붙은 뷰모델에서 행 이름을 읽는다
+	SkillTreeWidget->WidgetTree->ForEachWidget([&](UWidget* Widget)
+	{
+		UListView* List = Found.IsNone() ? Cast<UListView>(Widget) : nullptr;
+		if (!List) return;
+		for (UUserWidget* Entry : List->GetDisplayedEntryWidgets())
+		{
+			if (!Entry || !Entry->GetCachedGeometry().IsUnderLocation(Cursor)) continue;
+			if (const USkillTreeEntry_ViewModel* VM = Cast<USkillTreeEntry_ViewModel>(List->GetListObjectFromEntry(*Entry)))
+			{
+				Found = VM->GetRowName();
+			}
+			break;
+		}
+	});
+	return Found;
+}
+
+void ALoAPlayerController::UpdateSkillTooltip()
+{
+	if (!SkillTooltipWidget) return;
+	const ALoACharacter* Char = GetPawn<ALoACharacter>();
+	USkillManagerComponent* Skills = Char ? Char->SkillManager.Get() : nullptr;
+	FName Row = NAME_None;
+	if (Skills && FSlateApplication::IsInitialized() && !bSlotDragging && !bRaidIntroActive)
+	{
+		// 스킬트리 창이 위에 있으니 먼저, 아니면 HUD 스킬 칸(Q~F)·대시·기상
+		Row = FindSkillTreeRowUnderCursor();
+		int32 Group = -1, Index = -1;
+		if (Row.IsNone() && FindHUDSlotUnderCursor(Group, Index))
+		{
+			if (Group == HUDGroupSkill) Row = Skills->GetSlotRowName(Index);
+			else if (Group == HUDGroupOther) Row = Index == 0 ? Skills->DashRowName : Skills->GetUpRowName;
+		}
+	}
+	if (Row.IsNone()) SkillTooltipWidget->HideTooltip();
+	else SkillTooltipWidget->ShowSkill(Row, Skills);
 }
 
 bool ALoAPlayerController::ConsumeHUDSlotPress()
@@ -2751,6 +2808,24 @@ void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, b
 	{
 		const FName ItemId = Char->Inventory->GetSlot(InventoryIndex).ItemId;
 		const FItemDefinition* Def = LoAItems::Find(ItemId);
+		// 보석 상자 — 우클릭으로 열기 (1레벨 보석 10개)
+		if (ItemId == LoAGems::GemBox)
+		{
+			const double BoxNow = GetWorld()->GetTimeSeconds();
+			if (InventoryIndex == LastEquipClickIndex && BoxNow - LastEquipClickTime < 0.3) return;  // 빠른 연타로 두 개 열지 않게
+			LastEquipClickIndex = InventoryIndex;
+			LastEquipClickTime = BoxNow;
+			FText Fail;
+			if (LoAGems::OpenGemBox(Char->Inventory.Get(), InventoryIndex, Fail))
+			{
+				ShowTimedNotice(NSLOCTEXT("Gem", "BoxTitle", "보석 상자"), FText::FromString(FString::Printf(TEXT("1레벨 보석 %d개를 얻었습니다."), LoAGems::BoxGemCount)));
+			}
+			else if (!Fail.IsEmpty())
+			{
+				ShowTimedNotice(NSLOCTEXT("Gem", "BoxTitle", "보석 상자"), Fail);
+			}
+			return;
+		}
 		if (Def && Def->Category == EItemCategory::Gem)
 		{
 			// 합성 창이 열려 있으면 재료로, 아니면 로아처럼 캐릭터 정보 [보석] 탭을 연 채로 우클릭 → 스킬을 골라 장착
@@ -2780,7 +2855,7 @@ void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, b
 				if (Char->Engravings->ReadBook(Eng->Id, Fail))
 				{
 					const int32 Books = Char->Engravings->GetBooksRead(Eng->Id);
-					ShowTimedNotice(NSLOCTEXT("Engraving", "BookTitle", "각인서"), FText::FromString(FString::Printf(TEXT("%s — 유물 %d단계 (읽은 각인서 %d / %d권)"),
+					ShowTimedNotice(NSLOCTEXT("Engraving", "BookTitle", "각인서"), FText::FromString(FString::Printf(TEXT("%s — 유물 %d단계 (각인서 %d / %d)"),
 						*Eng->Name.ToString(), Char->Engravings->GetLevel(Eng->Id), Books, LoAEngravings::MaxBooks)));
 				}
 				else if (!Fail.IsEmpty())

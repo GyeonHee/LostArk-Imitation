@@ -42,6 +42,16 @@ public:
 
 	int32 GetAdrenalineStacks() const { return AdrenalineStacks; }
 	int32 GetMagickStreamStacks() const { return MagickStreamStacks; }
+	int32 GetEtherStacks() const { return EtherStacks; }
+
+	/** 카운터 성공 — 분쇄의 주먹 (보스 카운터·거울 카운터가 부른다) */
+	void NotifyCounterSuccess();
+
+	/** 이동기(대시) 사용 — 추진력 */
+	void NotifyMovementSkill();
+
+	/** 장착 중인지 */
+	bool IsEquipped(FName EngravingId) const { return Equipped.Contains(EngravingId); }
 
 	FOnEngravingsChanged OnEngravingsChanged;
 
@@ -61,10 +71,16 @@ private:
 	FTimerHandle AdrenalineTimer;
 	FTimerHandle MagickStreamTimer;
 
+	int32 EtherStacks = 0;
+	double LastEtherGainTime = -1000.0;
+	FTimerHandle EtherTimer;
+	bool bCrushingFistActive = false;
+	FTimerHandle CrushingFistTimer;
+	bool bPropulsionActive = false;
+	FTimerHandle PropulsionTimer;
+
 	UInventoryComponent* GetInventory() const;
 	UStatComponent* GetStats() const;
-
-	bool IsEquipped(FName EngravingId) const { return Equipped.Contains(EngravingId); }
 
 	void HandleSkillUsed(int32 SlotIndex);
 	void ExpireAdrenaline();

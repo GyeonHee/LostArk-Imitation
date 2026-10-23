@@ -1,4 +1,5 @@
 #include "Raid/EchidnaMirrorWallActor.h"
+#include "Stat/EngravingComponent.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoACharacter.h"
 #include "LoA.h"
@@ -444,6 +445,7 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 		if (AttackerCharacter->SkillManager)
 		{
 			AttackerCharacter->SkillManager->ResetCounterSkillCooldowns();
+			if (AttackerCharacter->Engravings) AttackerCharacter->Engravings->NotifyCounterSuccess();  // 분쇄의 주먹
 		}
 	}
 

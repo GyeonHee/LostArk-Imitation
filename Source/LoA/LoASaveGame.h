@@ -112,6 +112,14 @@ public:
 	UPROPERTY()
 	TArray<FName> GemFuseInputs;
 
+	// 장착 보석을 한 번 Lv7로 올렸는지 (시작 보석 Lv5 → Lv7, 2026-10-23)
+	UPROPERTY()
+	bool bGemsUpgradedToLv7 = false;
+
+	// 각인서 권수를 새 규칙(0/20, 5권마다 +1)으로 옮겼는지 — 예전엔 1권 = 배움이라 1권씩 많았다
+	UPROPERTY()
+	bool bEngravingBooksV2 = false;
+
 	// 레이드 보상 중 소지품이 가득 차 아직 못 받은 것 — 대기 지역에서 칸이 생기면 지급 (버전 2~)
 	UPROPERTY()
 	TArray<FLoARewardItem> PendingRewards;

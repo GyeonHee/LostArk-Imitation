@@ -27,13 +27,13 @@ namespace LoABuildUI
 	inline const FLinearColor PanelColor(0.028f, 0.032f, 0.045f, 0.97f);
 	inline const FLinearColor SectionColor(0.055f, 0.06f, 0.08f, 1.f);
 	inline const FLinearColor RowColor(0.075f, 0.08f, 0.10f, 1.f);
-	inline const FLinearColor Gold(0.93f, 0.80f, 0.52f, 1.f);
-	inline const FLinearColor Orange(1.f, 0.55f, 0.18f, 1.f);         // 각인 이름 (로아 주황)
+	inline const FLinearColor UiGold(0.93f, 0.80f, 0.52f, 1.f);
+	inline const FLinearColor UiOrange(1.f, 0.55f, 0.18f, 1.f);         // 각인 이름 (로아 주황)
 	inline const FLinearColor SkillYellow(1.f, 0.85f, 0.25f, 1.f);    // 보석 효과의 스킬 이름
-	inline const FLinearColor Green(0.55f, 0.95f, 0.35f, 1.f);        // "기본 공격력 총합"
-	inline const FLinearColor Frame(0.42f, 0.36f, 0.22f, 1.f);
-	inline const FLinearColor Label(0.82f, 0.82f, 0.84f, 1.f);
-	inline const FLinearColor Dim(0.45f, 0.45f, 0.48f, 1.f);
+	inline const FLinearColor UiGreen(0.55f, 0.95f, 0.35f, 1.f);        // "기본 공격력 총합"
+	inline const FLinearColor UiFrame(0.42f, 0.36f, 0.22f, 1.f);
+	inline const FLinearColor UiLabel(0.82f, 0.82f, 0.84f, 1.f);
+	inline const FLinearColor UiDim(0.45f, 0.45f, 0.48f, 1.f);
 	inline const FLinearColor ButtonColor(0.12f, 0.13f, 0.17f, 1.f);
 	inline const FLinearColor ButtonOnColor(0.36f, 0.29f, 0.14f, 1.f);
 	inline const FLinearColor PresetOn(0.70f, 0.12f, 0.10f, 1.f);     // 프리셋 1 (로아 빨간 칸)
@@ -100,11 +100,11 @@ namespace LoABuildUI
 	{
 		FString Text;
 		for (int32 i = 0; i < LoAEngravings::MaxLevel; ++i) Text += i < Level ? TEXT("◆") : TEXT("◇");
-		return MakeText(Tree, Text, Size, Level > 0 ? Orange : Dim);
+		return MakeText(Tree, Text, Size, Level > 0 ? UiOrange : UiDim);
 	}
 
 	/** 클릭 판정용 버튼 — Border + 가운데 글자 */
-	inline UBorder* MakeButton(UWidgetTree* Tree, const FString& Text, int32 Size, const FLinearColor& Fill, const FLinearColor& TextColor = Label)
+	inline UBorder* MakeButton(UWidgetTree* Tree, const FString& Text, int32 Size, const FLinearColor& Fill, const FLinearColor& TextColor = UiLabel)
 	{
 		UBorder* Button = Tree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		Button->SetBrushColor(Fill);
@@ -121,7 +121,7 @@ namespace LoABuildUI
 		UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		for (int32 i = 0; i < Count; ++i)
 		{
-			UBorder* Cell = MakeButton(Tree, i == 0 ? TEXT("1") : FString::FromInt(i + 1), 11, i == 0 ? PresetOn : SectionColor, i == 0 ? FLinearColor::White : Dim);
+			UBorder* Cell = MakeButton(Tree, i == 0 ? TEXT("1") : FString::FromInt(i + 1), 11, i == 0 ? PresetOn : SectionColor, i == 0 ? FLinearColor::White : UiDim);
 			if (i > 0) Cell->SetToolTipText(NSLOCTEXT("Build", "PresetSoon", "프리셋은 아직 1번만 쓸 수 있습니다"));
 			USizeBox* Box = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 			Box->SetWidthOverride(CellWidth);
@@ -180,7 +180,7 @@ namespace LoABuildUI
 			const int32 Level = (Def && Engravings) ? FMath::Max(0, Engravings->GetLevel(Id)) : 0;
 
 			UVerticalBox* Cell = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-			UTextBlock* Name = MakeText(Tree, Def ? Def->Name.ToString() : TEXT(""), 10, Orange);
+			UTextBlock* Name = MakeText(Tree, Def ? Def->Name.ToString() : TEXT(""), 10, UiOrange);
 			Name->SetShadowOffset(FVector2D(1.f, 1.f));
 			Name->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.9f));
 			if (UVerticalBoxSlot* S = Cell->AddChildToVerticalBox(Name)) S->SetHorizontalAlignment(HAlign_Center);

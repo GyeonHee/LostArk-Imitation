@@ -983,14 +983,19 @@
     - 재료 칸 3개는 가운데 고리 **위(궤도)**에 각도(-140° / -40° / 90°)로 놓는다 — 고리 지름 = 판 짧은 변 - 재료 칸 지름 - 16이라 아래 칸이 판 밖으로 안 나감(예전엔 판 비율 위치라 아래 칸이 고리 밖이었음)
     - 버튼 색 3단계(`NativeTick`이 매 프레임 커서 위치로): 보통 / 마우스 올림(밝은 남색) / 누르는 중(금갈색) — 목표 레벨·[합성하기] 둘 다
     - 소지품의 보석 합성 버튼 = UButton 스타일에 바탕 텍스처 3장(`/Game/LostArk/UI/GemIcon/T_GemFuseButton_Normal/Hovered/Pressed`, PIL — Hovered에 아래쪽 타원형 빛이 그려져 있음) + 금색 다이아 `T_GemFuseIcon`. **마우스 올림 빛은 효과가 아니라 Hovered 바탕 그림** — 다른 버튼에도 같은 방법(필요하면 빛만 따로 이미지로 두고 투명도를 Tick에서 보간해 서서히 켜기)
-- **각인 10종**(Maxroll 게임 데이터 engraving 1xxx 유물 0~4, 스톤 0): 원한(보스 피해 18→21%, 받는 피해 +20%) / 아드레날린(스킬 사용 6초 공격력 +0.9% ×6중첩, 최대 시 치명 14→20%) / 예리한 둔기(치명피해 44→52%, 10% 확률 피해 -20%) / 저주받은 인형(피해 14→17%, 회복 -25%) / 타격의 대가(14→17%, 소서리스 타대라 전 스킬) / 속전속결(캐스팅·차지 속도 +20%, 캐스팅·차지·홀딩 피해 18→21%) / 돌격대장(이속 증가량의 40→48%) / 정기 흡수(공·이속 13→16%, 신속과 합쳐 상한 40%) / 마나의 흐름(마나 회복 +2% ×10중첩, 최대 시 쿨감 7→10% 곱연산) / 탈출의 명수(기상 쿨 23→27%)
-  - 단계 = 읽은 유물 각인서 권수: 1권 = 배움(유물 0단계), 이후 5권마다 +1, 21권이면 4단계(최대) — 로아의 영웅·전설 단계는 생략
+- **각인 43종 = 로아 T4 전투 각인 전체** (2026-10-23 10종 → 43종, `LoAEngravings` `Eng_Rows` 표 — 유물 0·4단계 값, 중간 단계는 등간격 보간. 게임 데이터도 등간격): 이 게임에 시스템이 있는 30종은 실제 효과, 없는 13종(구슬동자·급소 타격·실드 관통·폭발물 전문가·강화 방패·강령술·선수필승·번개의 분노·승부사·바리케이드·각성·시선 집중·전문의)은 장착·각인서는 되지만 효과 없음(설명에 이유, 카드 이름이 바랜 주황 — `FEngravingDefinition::bHasEffect`)
+  - 조건부 효과는 판정 시점에 본다: 약자 무시(대상 HP — `ResolveIncomingHit`의 `TargetHPRatio`, 보스가 넘김) / 안정된 상태·달인의 저력(내 HP — `CalcOutgoingDamage`) / 마나 효율 증가(DT `ManaCost` > 0) / 추진력(기본공격 제외) / 부러진 뼈(그로기 대상) / 슈퍼 차지(차지 — `GetChargeSpeedMultiplierOf`) / 속전속결은 이제 캐스팅·홀딩만
+  - 피격 쪽(`ALoACharacter::ReceiveDamage`): 굳은 의지(넉다운·끌려감 중) / 불굴(잃은 HP 비례) / 여신의 가호(확률 -46%, 10초) / 위기 모면(치명 피해 → 3초 무적, 그동안 받은 피해 40% 회복 — **Fixed 즉사 기믹은 안 막음**) / 긴급구조(HP 30% 미만 → 최대 HP 50% 보호막 6초, 남은 보호막 50% 회복)
+  - 발동형(`UEngravingComponent`): 에테르 포식자(로아의 에테르 줍기 대신 스킬 사용, 4초에 한 번 +1, 90초, 최대 30) / 분쇄의 주먹(`NotifyCounterSuccess` — 보스 카운터·거울 카운터) / 추진력(`NotifyMovementSkill` — 대시)
+  - 기타: 최대 마나 증가(DA MaxMP × 배율, 비율 유지) / 중갑 착용(방어력 %) / 질량 증가(공격 속도만 -10% — `AttackSpeedBonus`) / 기습·결투의 대가(백·헤드 추가분은 소서리스 해당 없음, 피해 증가분만) / 정밀 단도
+  - 단계 = 읽은 유물 각인서 권수 **0 / 20 — 5권마다 ◆ 하나**(유물 0 → 4단계, 2026-10-24 로아처럼 바꿈). 43종 모두 처음부터 유물 0단계로 장착 가능(배우기 단계 없음). 예전 규칙(1권 = 배움, 21권) 저장 파일은 `bEngravingBooksV2` 플래그로 한 번 1권씩 빼서 단계 유지. 로아의 영웅·전설 단계는 생략
   - 각인서 아이템 `EngBook_<Id>`(`EItemCategory::Book`, 아이콘 `/Game/LostArk/UI/Engraving/T_EngravingBook`)
   - 효과는 `UStatComponent` 수정치 "Engraving"(장착만 하면) + "EngravingBuff"(아드레날린·마나의 흐름 중첩). 중첩은 `USkillManagerComponent::OnSkillUsed`(슬롯 0~7의 `StartCooldown`, 기본공격·대시·기상 제외)마다 +1, 지속시간이 끝나면 전부 사라짐
   - 새 수정치 대상(`EStatModifierTarget` 뒤에 추가): AttackPowerPercent / SpeedBonus / CooldownReduction / IncomingDamage / HealingReceived / GetUpCooldown / MPRegen / CastSkillDamage / CastSpeed / MoveSpeedToDamage / DamagePenaltyChance. 적용 지점: 받는 피해 `ReceiveDamage`(Fixed 제외), 회복 `Heal`, 마나 `Tick`, 캐스팅 진행 `GetCastSpeedMultiplierOf`(SkillCast·SkillCharge), 기상 쿨 `StartCooldown`, 예둔 `ResolveIncomingHit`
-- **시작 스펙**(유저 결정): 보석 Lv5 11개(겁화 6 + 작열 5, 계수÷쿨타임이 높은 스킬 순으로 자동 배정) + 각인 유물 0단계 5개(원한·아드레날린·예리한 둔기·저주받은 인형·타격의 대가). 별도 플래그 `bHasStarterGems`/`bHasStarterEngravings`라 기존 저장 파일도 한 번 받음
-  - **K 66.830 → 27.631**: 시작 보석·각인 기대 DPS ×2.4187을 상쇄(아드레날린은 스킬 사용 빈도 0.466회/초 → 평균 약 2.8중첩, 치명 보너스 없음으로 계산). `DA_Sorceress`에도 저장함. **실측은 허수아비 `LoADpsTest`로 확인할 것**
-- **획득**: 레이드 보상 보석 1개(겁화·작열 반반, Lv1~4 = 40/30/20/10%) + 각인서 1~3권(50%, 10종 중 하나) — 첫 클리어 배수·더보기 대상 아님. 상점 Lv1 보석 각 3,000실링(임시 가격)
+- **시작 스펙**(유저 결정): 보석 **Lv7** 11개(2026-10-23 Lv5 → Lv7, 기존 저장 파일은 `bGemsUpgradedToLv7` 플래그로 장착 보석을 한 번 Lv7로)(겁화 6 + 작열 5, 계수÷쿨타임이 높은 스킬 순으로 자동 배정) + 각인 유물 0단계 5개(원한·아드레날린·예리한 둔기·저주받은 인형·타격의 대가). 별도 플래그 `bHasStarterGems`/`bHasStarterEngravings`라 기존 저장 파일도 한 번 받음
+  - **K 66.830 → 27.631 → 19.585** (허수아비 실측 3,300만 → 목표 2,670만 + 보석 Lv5→Lv7 ×1.1415). 처음 값은: 시작 보석·각인 기대 DPS ×2.4187을 상쇄(아드레날린은 스킬 사용 빈도 0.466회/초 → 평균 약 2.8중첩, 치명 보너스 없음으로 계산). `DA_Sorceress`에도 저장함. **실측은 허수아비 `LoADpsTest`로 확인할 것**
+- **보석 상자** `GemBox_Lv1`(1레벨 10개, 겁화·작열 랜덤): 상점에서 **골드 1,000**(`FShopItemEntry::bGoldPrice` — 상점이 실링·골드를 같이 계산, 골드 물건이 담기면 "N 실링 · M 골드"), 소지품 우클릭으로 열기(빈 칸 10개 필요). 7레벨 1개 = 1레벨 729개 = 상자 73개 ≒ 클리어 12회분 골드
+- **획득**: 레이드 보상 보석 1개(겁화·작열 반반, Lv1~4 = 40/30/20/10%) + 각인서 1~3권(50%, 10종 중 하나) — 첫 클리어 배수·더보기 대상 아님. (예전 상점 Lv1 보석 낱개 판매는 보석 상자로 바꿈)
 - **UI = P창(캐릭터 정보) 탭** (처음엔 J키 별도 창으로 잘못 만들었다가 유저 지적으로 이동 — P창에 이미 [장비]/[각인]/[보석] 탭 버튼이 있었음). `UCharacterInfoWidget::SetTab`이 페이지 3개(장비 본문 / `UEngravingPageWidget` / `UGemPageWidget`)를 겹쳐 두고 보이는 것만 바꾼다
   - [보석] (`UI/GemPageWidget`, 로아 보석 탭 배치, 추천 세팅 버튼은 유저 요청으로 뺌 — 그 자리에 [보석 합성]): 프리셋 줄(1번만, 나머지는 툴팁 "아직") + 보석 11개 원(위 2+2 / 가운데 3 / 아래 2+2, 아래 Lv.N, 겁화 주황·작열 보라 테두리, 우클릭 = 빼기) / 오른쪽 "장착 중인 보석 효과"(기본 공격력 총합 + 보석마다 스킬 아이콘·이름·"<스킬> 피해 N% 증가"/"재사용 대기시간 N% 감소" + 추가 효과 기본 공격력)
   - 장착 = **이 탭을 연 채로 소지품의 보석 우클릭** → 페이지 위 스킬 선택 창 → 스킬 클릭 (컨트롤러 `HandleInventorySlotRightClick`이 `CharacterInfoWidget->BeginGemEquip`). 탭이 닫혀 있으면 안내만
@@ -1000,7 +1005,8 @@
   - 공용 조각 `UI/BuildUIHelpers.h`(원 = RoundedBox 브러시, 링 아이콘, ◆ 단계, 프리셋 줄, 각인 판). 버튼은 Border + 각 위젯 `NativeOnMouseButtonDown` 위치 판정
   - 아이콘(PIL 임시, 원형): 보석 `/Game/LostArk/UI/GemIcon/T_Gem_*` (처음 만든 네모 아이콘 `/Game/LostArk/UI/Gem/`은 미사용 — MCP 삭제가 반영 안 돼서 남음, 지워도 됨), 각인 `/Game/LostArk/UI/Engraving/T_Eng_<Id>`(색 원 + 글자 한 자)
 - 저장: `ULoAGameInstance`/`ULoASaveGame`의 `GemSlots`·`EngravingBooks`·`EquippedEngravings`. 바꿀 때마다 소지품과 함께 즉시 디스크 저장(보석이 소지품↔칸을 오가서 어긋나면 사라지거나 늘어남)
-- 아직 없음: P창·스킬트리(K)에 보석 표시, 보석 성장 속도 밸런스(Lv5 → Lv10은 Lv5 243개 분량), 로아 각인의 영웅·전설 단계·어빌리티 스톤
+- **스킬 툴팁** (`UI/SkillTooltipWidget`, ZOrder 50, HitTestInvisible): HUD 스킬 칸(Q~F)·대시·기상 칸, **스킬트리(K) 줄**(WBP_SkillTree의 ListView → 보이는 줄 위젯 → `UListView::GetListObjectFromEntry` → `USkillTreeEntry_ViewModel::GetRowName`) 위에 마우스를 올리면 커서 옆에 — 이름 / [아이콘] 종류·**기본** 재사용 대기시간 / 스킬 레벨·마나 / 설명(cpp 표, `{D}` = 띄운 순간의 스펙 피해, 치명 전) / 기본 캐스팅·차지·홀딩 시간 / 카운터 / 장착 보석. 내용은 마우스를 올린 스킬이 바뀔 때 한 번만 만들고 Tick에선 위치만 옮긴다(배치 전 `ForceLayoutPrepass`) — 쿨감 반영 값은 필요 없다고 해서 뺌(유저 요청). **버그였던 것**: 0.5초마다 통째로 지우고 다시 만들어, 새 내용 크기가 계산되기 전 프레임에 옛 크기로 자리를 잡아 글이 겹쳐 깜빡였음
+- 아직 없음: P창 장비 탭에 보석 표시, 보석 성장 속도 밸런스(Lv5 → Lv10은 Lv5 243개 분량), 로아 각인의 영웅·전설 단계·어빌리티 스톤
 
 ## 레이드 흐름 마무리 — 중단·페이드 이동·디스크 저장·테스트 치트 (2026-09-28)
 

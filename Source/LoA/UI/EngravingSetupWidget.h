@@ -53,6 +53,7 @@ private:
 	void Notify(const FText& Message, bool bError = true) const;
 
 	TWeakObjectPtr<UEngravingComponent> Engravings;
+	FDelegateHandle ChangedHandle;
 	TWeakObjectPtr<UInventoryComponent> Inventory;
 	TArray<FName> Pending;
 

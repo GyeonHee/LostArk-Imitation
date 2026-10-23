@@ -17,7 +17,7 @@ void USkillCharge::OnKeyHeld(AActor* Owner, float DeltaTime)
     if (!bIsActive) return;
 
     // 신속의 공격(캐스팅) 속도만큼 빨리 찬다
-    ElapsedTime += DeltaTime * UStatComponent::GetCastSpeedMultiplierOf(Owner);
+    ElapsedTime += DeltaTime * UStatComponent::GetChargeSpeedMultiplierOf(Owner);
 
     // 최대 차징 도달 → 자동 발동
     if (SkillData.ChargeMaxTime > 0.0f && ElapsedTime >= SkillData.ChargeMaxTime)

@@ -91,6 +91,7 @@ void ALoACharacter::PostInitializeComponents()
 		MaxHP       = CharacterData->MaxHP;
 		HP          = MaxHP;
 		MaxMP       = CharacterData->MaxMP;
+		BaseMaxMP   = MaxMP;
 		MP          = MaxMP;
 		MPRegenRate = CharacterData->MPRegenRate;
 		BaseMoveSpeed = CharacterData->MoveSpeed;
@@ -123,6 +124,19 @@ void ALoACharacter::HandleStatsChanged(const FCombatStats& NewStats)
 	if (UCharacterMovementComponent* CMC = GetCharacterMovement())
 	{
 		CMC->MaxWalkSpeed = BaseMoveSpeed * NewStats.MoveSpeedMultiplier;
+	}
+
+	// 최대 마나 증가 각인 — 현재 마나 비율은 유지
+	if (BaseMaxMP > 0.f)
+	{
+		const float NewMaxMP = BaseMaxMP * NewStats.MaxMPMultiplier;
+		if (!FMath::IsNearlyEqual(NewMaxMP, MaxMP))
+		{
+			const float Ratio = MaxMP > 0.f ? MP / MaxMP : 1.f;
+			MaxMP = NewMaxMP;
+			MP = FMath::Clamp(MaxMP * Ratio, 0.f, MaxMP);
+			OnMPChanged.Broadcast(MP);
+		}
 	}
 }
 
@@ -237,6 +251,7 @@ void ALoACharacter::ExecuteDash_Implementation(const FVector& TargetLocation)
 
 	const FSkillData DashData = SkillManager->GetSlotSkillData(USkillManagerComponent::DashSlotIndex);
 	LaunchCharacter(Dir * DashData.DashImpulse, true, false);
+	if (Engravings) Engravings->NotifyMovementSkill();  // 추진력
 }
 
 float ALoACharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
@@ -270,13 +285,76 @@ void ALoACharacter::ReceiveDamage(float DamageAmount, ELoADamageKind Kind)
 	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다
 	DamageAmount *= AEchidnaBoss::GetEnrageDamageMultiplier(this);
 
+	// ── 각인 피격 효과 ──
+	const FCombatStats* EngStats = StatComponent ? &StatComponent->GetStats() : nullptr;
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (EngStats && Kind != ELoADamageKind::Fixed)
+	{
+		// 굳은 의지 — 밀려날 때(넉다운·끌려감)
+		if (EngStats->PushedDamageReduction > 0.f && (bIsKnockedDown || bIsPulled)) DamageAmount *= 1.f - EngStats->PushedDamageReduction;
+		// 불굴 — 잃은 HP에 비례
+		if (EngStats->FortitudeMax > 0.f && MaxHP > 0.f) DamageAmount *= 1.f - EngStats->FortitudeMax * (1.f - HP / MaxHP);
+		// 여신의 가호 — 확률로 -46% (10초에 한 번)
+		if (EngStats->DivineChance > 0.f && Now >= DivineReadyTime && FMath::FRand() < EngStats->DivineChance)
+		{
+			DamageAmount *= 1.f - LoAStatRules::DivineReduction;
+			DivineReadyTime = Now + LoAStatRules::DivineCooldown;
+		}
+	}
+	// 위기 모면 무적 중 — 피해는 받지 않고 모아 뒀다가 끝날 때 40% 회복
+	if (bCrisisActive)
+	{
+		CrisisAccumulated += DamageAmount;
+		return;
+	}
+	// 긴급구조 보호막이 먼저 받는다
+	if (ShieldHP > 0.f)
+	{
+		const float Absorbed = FMath::Min(ShieldHP, DamageAmount);
+		ShieldHP -= Absorbed;
+		DamageAmount -= Absorbed;
+	}
+	// 위기 모면 — 치명적인 피해를 받으면 3초 무적. "최대 HP × N" 즉사 기믹(Fixed)은 막지 않는다 — 기믹은 기믹으로 풀어야 해서
+	if (EngStats && Kind != ELoADamageKind::Fixed && EngStats->CrisisEvasionCooldown > 0.f && HP - DamageAmount <= 0.f && Now >= CrisisReadyTime)
+	{
+		bCrisisActive = true;
+		CrisisAccumulated = DamageAmount;
+		CrisisReadyTime = Now + EngStats->CrisisEvasionCooldown;
+		GetWorldTimerManager().SetTimer(CrisisTimer, this, &ALoACharacter::EndCrisisEvasion, LoAStatRules::CrisisDuration, false);
+		UE_LOG(LogTemp, Log, TEXT("[Engraving] 위기 모면 발동"));
+		return;
+	}
+
 	HP = FMath::Max(HP - DamageAmount, 0.f);
 	OnHPChanged.Broadcast(HP);
+
+	// 긴급구조 — HP 30% 미만이 되는 순간 최대 HP 50% 보호막 6초
+	if (EngStats && EngStats->EmergencyRescueCooldown > 0.f && HP > 0.f && MaxHP > 0.f && HP / MaxHP < LoAStatRules::RescueHPThreshold && Now >= RescueReadyTime)
+	{
+		ShieldHP = MaxHP * LoAStatRules::RescueShieldRatio;
+		RescueReadyTime = Now + EngStats->EmergencyRescueCooldown;
+		GetWorldTimerManager().SetTimer(RescueTimer, this, &ALoACharacter::EndEmergencyRescue, LoAStatRules::RescueDuration, false);
+		UE_LOG(LogTemp, Log, TEXT("[Engraving] 긴급구조 발동 — 보호막 %.0f"), ShieldHP);
+	}
 
 	if (HP <= 0.f)
 	{
 		Die();
 	}
+}
+
+void ALoACharacter::EndCrisisEvasion()
+{
+	bCrisisActive = false;
+	Heal(CrisisAccumulated * LoAStatRules::CrisisHealRatio);
+	CrisisAccumulated = 0.f;
+}
+
+void ALoACharacter::EndEmergencyRescue()
+{
+	// 6초 뒤 남은 보호막의 50%를 HP로
+	if (ShieldHP > 0.f) Heal(ShieldHP * LoAStatRules::RescueHealRatio);
+	ShieldHP = 0.f;
 }
 
 void ALoACharacter::Die()

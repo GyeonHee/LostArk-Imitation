@@ -499,6 +499,15 @@ protected:
 
 	void OnCharacterInfoToggle();
 
+	// 스킬 툴팁 — HUD 스킬 칸·스킬트리 줄 위에 마우스를 올리면 (ZOrder 50, 맨 위)
+	UPROPERTY(Transient)
+	TObjectPtr<class USkillTooltipWidget> SkillTooltipWidget;
+
+	void UpdateSkillTooltip();
+
+	/** 스킬트리 창 목록에서 커서 아래 줄의 스킬 행 이름 (없으면 None) */
+	FName FindSkillTreeRowUnderCursor() const;
+
 	// 보석 합성 창 — C++ 트리 (ZOrder 10)
 	UPROPERTY(Transient)
 	TObjectPtr<class UGemFuseWidget> GemFuseWidget;

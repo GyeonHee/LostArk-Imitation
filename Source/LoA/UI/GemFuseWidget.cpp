@@ -96,9 +96,9 @@ TSharedRef<SWidget> UGemFuseWidget::RebuildWidget()
 			S->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
 		}
 		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("동일 레벨 보석 3개"), 10, SkillYellow));
-		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("를 합성하여 "), 10, Label));
+		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("를 합성하여 "), 10, UiLabel));
 		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("상위 레벨 보석 1개"), 10, SkillYellow));
-		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT(" 획득"), 10, Label));
+		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT(" 획득"), 10, UiLabel));
 
 		// 판 — 남는 높이를 전부 차지 (재료 칸 위치는 판 크기 비율로)
 		UBorder* BoardBack = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
@@ -136,7 +136,7 @@ TSharedRef<SWidget> UGemFuseWidget::RebuildWidget()
 		Targets.Add({ CloseButton, EHit::Close, 0 });
 		Targets.Add({ FuseButton, EHit::Fuse, 0 });
 
-		StatusText = MakeText(WidgetTree, TEXT(""), 9, Dim);
+		StatusText = MakeText(WidgetTree, TEXT(""), 9, UiDim);
 		StatusText->SetAutoWrapText(true);
 		if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(StatusText)) S->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 	}
@@ -155,7 +155,7 @@ void UGemFuseWidget::Open(UGemComponent* InGems, UWidget* AttachTo)
 	LastResult = NAME_None;
 	RefreshBoard();
 	Notify(NSLOCTEXT("GemFuse", "Guide", "소지품의 보석을 우클릭하거나 끌어다 놓아 올립니다. 재료 칸 우클릭 = 되돌리기"), false);
-	if (StatusText) StatusText->SetColorAndOpacity(FSlateColor(Dim));
+	if (StatusText) StatusText->SetColorAndOpacity(FSlateColor(UiDim));
 }
 
 void UGemFuseWidget::Close()
@@ -250,7 +250,7 @@ void UGemFuseWidget::RefreshBoard()
 	for (int32 i = 0; i < LoAGems::FuseCount; ++i)
 	{
 		const bool bHas = Inputs.IsValidIndex(i);
-		USizeBox* Circle = MakeRingIcon(WidgetTree, Fuse_InputCircle, bHas ? Orange : RingIdle, bHas ? IconOf(Inputs[i]) : nullptr);
+		USizeBox* Circle = MakeRingIcon(WidgetTree, Fuse_InputCircle, bHas ? UiOrange : RingIdle, bHas ? IconOf(Inputs[i]) : nullptr);
 		if (bHas)
 		{
 			EGemType Type;
@@ -263,7 +263,7 @@ void UGemFuseWidget::RefreshBoard()
 		InputTargets.Add({ Circle, EHit::Input, i });
 	}
 
-	USizeBox* Result = MakeRingIcon(WidgetTree, Fuse_ResultCircle, LastResult.IsNone() ? RingIdle : Gold,
+	USizeBox* Result = MakeRingIcon(WidgetTree, Fuse_ResultCircle, LastResult.IsNone() ? RingIdle : UiGold,
 		LastResult.IsNone() ? nullptr : IconOf(LastResult), 5.f);
 	if (!LastResult.IsNone())
 	{
@@ -279,7 +279,7 @@ void UGemFuseWidget::Notify(const FText& Message, bool bError) const
 {
 	if (!StatusText) return;
 	StatusText->SetText(Message);
-	StatusText->SetColorAndOpacity(FSlateColor(bError ? FLinearColor(1.f, 0.45f, 0.35f, 1.f) : Gold));
+	StatusText->SetColorAndOpacity(FSlateColor(bError ? FLinearColor(1.f, 0.45f, 0.35f, 1.f) : UiGold));
 }
 
 bool UGemFuseWidget::IsCursorOverPanel() const

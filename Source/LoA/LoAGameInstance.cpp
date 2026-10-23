@@ -54,6 +54,8 @@ void ULoAGameInstance::LoadFromDisk()
 	EngravingBooks = Save->EngravingBooks;
 	EquippedEngravings = Save->EquippedEngravings;
 	GemFuseInputs = Save->GemFuseInputs;
+	bGemsUpgradedToLv7 = Save->bGemsUpgradedToLv7;
+	bEngravingBooksV2 = Save->bEngravingBooksV2;
 	PendingRewards = Save->PendingRewards;
 	bFirstClearRewarded = Save->bFirstClearRewarded;
 	if (Save->SaveVersion < CurrentSaveVersion)
@@ -104,6 +106,8 @@ void ULoAGameInstance::SaveToDisk()
 	Save->EngravingBooks = EngravingBooks;
 	Save->EquippedEngravings = EquippedEngravings;
 	Save->GemFuseInputs = GemFuseInputs;
+	Save->bGemsUpgradedToLv7 = bGemsUpgradedToLv7;
+	Save->bEngravingBooksV2 = bEngravingBooksV2;
 	Save->PendingRewards = PendingRewards;
 	Save->bFirstClearRewarded = bFirstClearRewarded;
 

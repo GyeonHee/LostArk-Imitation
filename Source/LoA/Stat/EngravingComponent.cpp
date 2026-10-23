@@ -36,8 +36,11 @@ void UEngravingComponent::BeginPlay()
 	{
 		for (const TPair<FName, int32>& Pair : GI->EngravingBooks)
 		{
-			if (LoAEngravings::Find(Pair.Key)) BooksRead.Add(Pair.Key, FMath::Clamp(Pair.Value, 0, LoAEngravings::MaxBooks));
+			// 예전 규칙(1권 = 배움) 저장 파일은 1권씩 빼서 단계를 그대로 유지
+			const int32 Books = GI->bEngravingBooksV2 ? Pair.Value : Pair.Value - 1;
+			if (LoAEngravings::Find(Pair.Key)) BooksRead.Add(Pair.Key, FMath::Clamp(Books, 0, LoAEngravings::MaxBooks));
 		}
+		GI->bEngravingBooksV2 = true;
 		for (int32 i = 0; i < LoAEngravings::SlotCount && i < GI->EquippedEngravings.Num(); ++i)
 		{
 			const FName Id = GI->EquippedEngravings[i];
@@ -48,8 +51,7 @@ void UEngravingComponent::BeginPlay()
 			for (int32 i = 0; i < UE_ARRAY_COUNT(Eng_StarterIds); ++i)
 			{
 				const FName Id(Eng_StarterIds[i]);
-				int32& Books = BooksRead.FindOrAdd(Id);
-				Books = FMath::Max(Books, 1);
+				BooksRead.FindOrAdd(Id);
 				if (!IsEquipped(Id) && Equipped.IsValidIndex(i) && Equipped[i].IsNone()) Equipped[i] = Id;
 			}
 			GI->bHasStarterEngravings = true;
@@ -106,11 +108,6 @@ bool UEngravingComponent::EquipEngraving(int32 SlotIndex, FName EngravingId, FTe
 	if (!UGemComponent::IsBuildChangeAllowed(GetWorld()))
 	{
 		OutFailReason = NSLOCTEXT("Engraving", "NotHere", "레이드 중에는 각인을 바꿀 수 없습니다.");
-		return false;
-	}
-	if (GetLevel(EngravingId) < 0)
-	{
-		OutFailReason = NSLOCTEXT("Engraving", "NotLearned", "아직 배우지 않은 각인입니다. 유물 각인서를 먼저 읽어 주세요.");
 		return false;
 	}
 	const int32 Existing = Equipped.IndexOfByKey(EngravingId);
@@ -203,7 +200,36 @@ void UEngravingComponent::HandleSkillUsed(int32 SlotIndex)
 		MagickStreamStacks = FMath::Min(MagickStreamStacks + 1, LoAEngravings::MagickStreamMaxStacks);
 		World->GetTimerManager().SetTimer(MagickStreamTimer, this, &UEngravingComponent::ExpireMagickStream, LoAEngravings::MagickStreamDuration, false);
 	}
+	// 에테르 포식자 — 로아는 공격하면 에테르가 떨어지고 주우면 중첩. 줍기가 없어 스킬 사용(4초에 한 번)으로 대신
+	if (IsEquipped(LoAEngravings::EtherPredator) && World->GetTimeSeconds() - LastEtherGainTime >= LoAEngravings::EtherGainCooldown)
+	{
+		LastEtherGainTime = World->GetTimeSeconds();
+		bChanged |= EtherStacks < LoAEngravings::EtherMaxStacks;
+		EtherStacks = FMath::Min(EtherStacks + 1, LoAEngravings::EtherMaxStacks);
+		World->GetTimerManager().SetTimer(EtherTimer, FTimerDelegate::CreateWeakLambda(this, [this]() { EtherStacks = 0; ApplyBuffs(); }),
+			LoAEngravings::EtherDuration, false);
+	}
 	if (bChanged) ApplyBuffs();
+}
+
+void UEngravingComponent::NotifyCounterSuccess()
+{
+	UWorld* World = GetWorld();
+	if (!World || !IsEquipped(LoAEngravings::CrushingFist)) return;
+	bCrushingFistActive = true;
+	World->GetTimerManager().SetTimer(CrushingFistTimer, FTimerDelegate::CreateWeakLambda(this, [this]() { bCrushingFistActive = false; ApplyBuffs(); }),
+		LoAEngravings::CrushingFistDuration, false);
+	ApplyBuffs();
+}
+
+void UEngravingComponent::NotifyMovementSkill()
+{
+	UWorld* World = GetWorld();
+	if (!World || !IsEquipped(LoAEngravings::Propulsion)) return;
+	bPropulsionActive = true;
+	World->GetTimerManager().SetTimer(PropulsionTimer, FTimerDelegate::CreateWeakLambda(this, [this]() { bPropulsionActive = false; ApplyBuffs(); }),
+		LoAEngravings::PropulsionDuration, false);
+	ApplyBuffs();
 }
 
 void UEngravingComponent::ExpireAdrenaline()
@@ -230,6 +256,9 @@ void UEngravingComponent::ApplyStatic()
 	// 장착을 뺀 중첩 각인은 중첩도 지운다
 	if (!IsEquipped(LoAEngravings::Adrenaline)) AdrenalineStacks = 0;
 	if (!IsEquipped(LoAEngravings::MagickStream)) MagickStreamStacks = 0;
+	if (!IsEquipped(LoAEngravings::EtherPredator)) EtherStacks = 0;
+	if (!IsEquipped(LoAEngravings::CrushingFist)) bCrushingFistActive = false;
+	if (!IsEquipped(LoAEngravings::Propulsion)) bPropulsionActive = false;
 	OnEngravingsChanged.Broadcast();
 }
 
@@ -244,5 +273,12 @@ void UEngravingComponent::ApplyBuffs()
 	{
 		LoAEngravings::AppendStackModifiers(LoAEngravings::MagickStream, FMath::Max(0, GetLevel(LoAEngravings::MagickStream)), MagickStreamStacks, Mods);
 	}
+	auto Stack = [this, &Mods](FName Id, int32 Stacks)
+	{
+		if (IsEquipped(Id)) LoAEngravings::AppendStackModifiers(Id, FMath::Max(0, GetLevel(Id)), Stacks, Mods);
+	};
+	Stack(LoAEngravings::EtherPredator, EtherStacks);
+	Stack(LoAEngravings::CrushingFist, bCrushingFistActive ? 1 : 0);
+	Stack(LoAEngravings::Propulsion, bPropulsionActive ? 1 : 0);
 	if (UStatComponent* Stats = GetStats()) Stats->SetModifiers(TEXT("EngravingBuff"), Mods);
 }

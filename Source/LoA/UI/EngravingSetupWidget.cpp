@@ -67,11 +67,11 @@ TSharedRef<SWidget> UEngravingSetupWidget::RebuildWidget()
 			S->SetHorizontalAlignment(HAlign_Center);
 			S->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
 		}
-		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("각인 슬롯에 "), 10, Label));
+		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("각인 슬롯에 "), 10, UiLabel));
 		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("우클릭 장착"), 10, SkillYellow));
-		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("하여 최대 "), 10, Label));
+		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("하여 최대 "), 10, UiLabel));
 		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("5개"), 10, SkillYellow));
-		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("까지 각인을 활성화 할 수 있습니다."), 10, Label));
+		Guide->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("까지 각인을 활성화 할 수 있습니다."), 10, UiLabel));
 
 		USizeBox* BodySize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 		BodySize->SetHeightOverride(Setup_BodyHeight);
@@ -100,7 +100,7 @@ TSharedRef<SWidget> UEngravingSetupWidget::RebuildWidget()
 		UBorder* PresetLabel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		PresetLabel->SetBrushColor(SectionColor);
 		PresetLabel->SetPadding(FMargin(8.f, 3.f));
-		PresetLabel->SetContent(MakeText(WidgetTree, TEXT("각인 프리셋"), 10, Label));
+		PresetLabel->SetContent(MakeText(WidgetTree, TEXT("각인 프리셋"), 10, UiLabel));
 		if (UVerticalBoxSlot* S = Right->AddChildToVerticalBox(PresetLabel)) S->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 		BoardBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 		BoardBox->SetWidthOverride(Setup_Board);
@@ -113,7 +113,7 @@ TSharedRef<SWidget> UEngravingSetupWidget::RebuildWidget()
 			S->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 		}
 
-		StatusText = MakeText(WidgetTree, TEXT("각인서는 소지품에서 우클릭해 읽습니다 — 1권 = 배움(유물 0단계), 이후 5권마다 +1단계"), 9, Dim);
+		StatusText = MakeText(WidgetTree, TEXT("각인서는 소지품에서 우클릭해 읽습니다 — 5권마다 ◆ 하나 (유물 0 → 4단계, 20권)"), 9, UiDim);
 		if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(StatusText))
 		{
 			S->SetHorizontalAlignment(HAlign_Center);
@@ -128,8 +128,11 @@ TSharedRef<SWidget> UEngravingSetupWidget::RebuildWidget()
 
 void UEngravingSetupWidget::Open(UEngravingComponent* InEngravings, UInventoryComponent* InInventory)
 {
+	if (UEngravingComponent* Old = Engravings.Get()) Old->OnEngravingsChanged.Remove(ChangedHandle);
 	Engravings = InEngravings;
 	Inventory = InInventory;
+	// 열린 채로 소지품에서 각인서를 읽으면 권수·◆가 바로 바뀌게 (Pending은 그대로)
+	if (InEngravings) ChangedHandle = InEngravings->OnEngravingsChanged.AddWeakLambda(this, [this]() { Refresh(); });
 	Pending = InEngravings ? InEngravings->GetEquipped() : TArray<FName>();
 	Pending.SetNum(LoAEngravings::SlotCount);
 	Refresh();
@@ -156,7 +159,7 @@ void UEngravingSetupWidget::Refresh()
 		Card->SetPadding(FMargin(4.f, 6.f));
 		UVerticalBox* Content = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		Card->SetContent(Content);
-		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(MakeText(WidgetTree, Def.Name.ToString(), 10, bLearned ? Orange : Dim)))
+		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(MakeText(WidgetTree, Def.Name.ToString(), 10, !bLearned ? UiDim : (Def.bHasEffect ? UiOrange : FLinearColor(0.6f, 0.45f, 0.3f, 1.f)))  /* 효과 없는 각인은 바랜 주황 */))
 		{
 			S->SetHorizontalAlignment(HAlign_Center);
 		}
@@ -173,10 +176,13 @@ void UEngravingSetupWidget::Refresh()
 		}
 		const int32 Books = E ? E->GetBooksRead(Def.Id) : 0;
 		const int32 Owned = Inventory.IsValid() ? Inventory->CountItem(Def.BookItemId) : 0;
-		Card->SetToolTipText(FText::FromString(FString::Printf(TEXT("%s  %s\n%s\n\n읽은 각인서 %d / %d권 · 소지 %d권%s"),
-			*Def.Name.ToString(), bLearned ? *FString::Printf(TEXT("유물 %d단계"), Level) : TEXT("(안 배움)"),
-			*LoAEngravings::Describe(Def.Id, FMath::Max(0, Level)), Books, LoAEngravings::MaxBooks, Owned,
-			bLearned ? TEXT("\n\n우클릭: 장착") : TEXT("\n\n각인서 1권을 읽으면 배웁니다"))));
+		Card->SetToolTipText(FText::FromString(FString::Printf(TEXT("%s  유물 %d단계\n%s\n\n각인서 %d / %d · 소지 %d권\n\n우클릭: 장착"),
+			*Def.Name.ToString(), FMath::Max(0, Level), *LoAEngravings::Describe(Def.Id, FMath::Max(0, Level)), Books, LoAEngravings::MaxBooks, Owned)));
+		// 카드 아래 읽은 권수 (로아 "0 / 20")
+		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(MakeText(WidgetTree, FString::Printf(TEXT("%d / %d"), Books, LoAEngravings::MaxBooks), 9, UiDim)))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+		}
 		if (UUniformGridSlot* S = CardGrid->AddChildToUniformGrid(Card, Index / Setup_Columns, Index % Setup_Columns))
 		{
 			S->SetHorizontalAlignment(HAlign_Fill);
@@ -197,7 +203,7 @@ void UEngravingSetupWidget::Notify(const FText& Message, bool bError) const
 {
 	if (!StatusText) return;
 	StatusText->SetText(Message);
-	StatusText->SetColorAndOpacity(FSlateColor(bError ? FLinearColor(1.f, 0.45f, 0.35f, 1.f) : Gold));
+	StatusText->SetColorAndOpacity(FSlateColor(bError ? FLinearColor(1.f, 0.45f, 0.35f, 1.f) : UiGold));
 }
 
 bool UEngravingSetupWidget::IsCursorOverPanel() const

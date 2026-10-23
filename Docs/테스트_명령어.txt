@@ -29,14 +29,22 @@ LoAInvTest                      회복약 묶음 8개를 빈 칸에 흩뿌림 (�
                       Acc_DesireNecklace / Acc_DesireEarring / Acc_DesireRing      (특성·등급 랜덤)
   - 보석 (칸마다 1개) Gem_Dmg_01 ~ Gem_Dmg_10 (겁화 1~10레벨)
                       Gem_Cd_01  ~ Gem_Cd_10  (작열 1~10레벨)
-  - 유물 각인서       EngBook_Grudge(원한) / EngBook_Adrenaline(아드레날린) / EngBook_KeenBlunt(예리한 둔기)
-                      EngBook_CursedDoll(저주받은 인형) / EngBook_HitMaster(타격의 대가) / EngBook_AllOutAttack(속전속결)
-                      EngBook_RaidCaptain(돌격대장) / EngBook_SpiritAbsorption(정기 흡수)
-                      EngBook_MagickStream(마나의 흐름) / EngBook_MasterOfEscape(탈출의 명수)
-                      → 1권 = 배움(유물 0단계), 이후 5권마다 +1단계, 21권 = 4단계
+  - 보석 상자         GemBox_Lv1 (1레벨 보석 10개, 우클릭으로 열기 — 빈 칸 10개 필요)
+  - 유물 각인서       EngBook_<각인ID> — 각인 43종
+                      효과 있음: Grudge(원한) Adrenaline(아드레날린) KeenBlunt(예리한 둔기) CursedDoll(저주받은 인형)
+                        HitMaster(타격의 대가) AllOutAttack(속전속결) RaidCaptain(돌격대장) SpiritAbsorption(정기 흡수)
+                        MagickStream(마나의 흐름) MasterOfEscape(탈출의 명수) Disrespect(약자 무시) EtherPredator(에테르 포식자)
+                        StabilizedStatus(안정된 상태) SuperCharge(슈퍼 차지) StrongWill(굳은 의지) CrisisEvasion(위기 모면)
+                        MaxMPIncrease(최대 마나 증가) MPEfficiency(마나 효율 증가) Fortitude(불굴) CrushingFist(분쇄의 주먹)
+                        MastersTenacity(달인의 저력) DivineProtection(여신의 가호) HeavyArmor(중갑 착용) BrokenBone(부러진 뼈)
+                        AmbushMaster(기습의 대가) MasterBrawler(결투의 대가) MassIncrease(질량 증가) Propulsion(추진력)
+                        EmergencyRescue(긴급구조) PreciseDagger(정밀 단도)
+                      효과 없음: DropsOfEther VitalPointHit ShieldPiercing ExplosiveExpert EnhancedShield Necromancy
+                        PreemptiveStrike LightningFury Contender Barricade Awakening SightFocus Expert
+                      → 0 / 20권 — 5권마다 +1단계 (◆ 하나), 20권 = 유물 4단계
 
   예) 보석 합성 테스트      LoAGiveItem Gem_Dmg_02 3   /   LoAGiveItem Gem_Cd_02 3
-      각인 4단계 만들기     LoAGiveItem EngBook_RaidCaptain 21   (소지품에서 우클릭으로 읽기)
+      각인 4단계 만들기     LoAGiveItem EngBook_RaidCaptain 20   (소지품에서 우클릭으로 읽기)
       재련 재료 넉넉히      LoAGiveItem GuardianStone 5000 / LoAGiveItem DestructionStone 2000 / LoAGiveItem LeapStone 1000
 
 
