@@ -205,8 +205,9 @@ public:
 
 	// 플레이어 방어력 전 피해 배율 — 패턴 수치(ST_Echidna 등)는 "1640 시작 세트(마법 방어력 32,352 → 피해 -83.27%)가 맞는 양"이라
 	// (32,352 + 6,500) / 6,500 = 5.977을 곱해 방어 전 크기로 되돌린다. 보스가 없으면 1
+	// 2026-10-23 최대 생명력 10만 → 19만(로아 1640 실제값)이라 ×1.9 = 11.356 — 패턴 "몇 대 맞으면 죽는가"는 그대로
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
-	float IncomingDamageScale = 5.977f;
+	float IncomingDamageScale = 11.356f;
 
 	static float GetIncomingDamageScale(const UObject* WorldContext);
 

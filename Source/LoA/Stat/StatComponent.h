@@ -43,6 +43,18 @@ public:
 	static float GetAttackSpeedMultiplierOf(const AActor* Actor);
 	static float GetCooldownReductionOf(const AActor* Actor);
 
+	/** 캐스팅·차지 진행 배율 = 공격 속도 × 각인(속전속결) */
+	static float GetCastSpeedMultiplierOf(const AActor* Actor);
+
+	/** 보석(7단계) — 스킬 행 이름별 피해 증가(0.24 = +24%)·쿨타임 감소(0.14 = -14%)를 통째로 교체. 공격력 %는 수정치로 따로 */
+	void SetSkillGemBonuses(const TMap<FName, float>& DamageBonus, const TMap<FName, float>& CooldownReduction);
+
+	float GetSkillDamageMultiplier(FName SkillRowName) const;     // 1 + 겁화
+	float GetSkillCooldownReduction(FName SkillRowName) const;    // 작열 (0~1)
+
+	/** 최종 쿨감 = 1 - (1 - 신속·각인) × (1 - 스킬 보석), 상한 80% */
+	static float GetTotalCooldownReductionOf(const AActor* Actor, FName SkillRowName);
+
 	UFUNCTION(BlueprintPure, Category="Stats")
 	EPrimaryStat GetPrimaryStatType() const { return PrimaryStatType; }
 
@@ -66,6 +78,9 @@ private:
 	FCombatStatPoints BaseCombatStats;
 
 	TMap<FName, TArray<FStatModifier>> ModifiersBySource;
+
+	TMap<FName, float> SkillGemDamage;
+	TMap<FName, float> SkillGemCooldown;
 
 	UPROPERTY(VisibleAnywhere, Category="Stats")
 	FCombatStats Stats;

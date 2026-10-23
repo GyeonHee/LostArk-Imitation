@@ -48,9 +48,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
 	double BaseWeaponPower = 0.0;
 
-	// 맨몸 체력 — 캐릭터 기본 HP = BaseVitality × HPPerVitality (23,423). 시작 세트(+10, 체력 36,465)를 입으면 최대 생명력 100,000
+	// 기본 체력 — 캐릭터 + 아직 없는 장비(어빌리티 스톤·팔찌·엘릭서·카르마 등) 몫을 한 덩어리로.
+	// 로아 1640 소서리스 최대 생명력 약 19만에 맞춤: (40,895 + 시작 장비 36,465 + 시작 장신구 13,116) × 2.1 = 190,000
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double BaseVitality = 11154.0;
+	double BaseVitality = 40895.0;
 
 	// 생명 활성력 계수 — 최대 생명력 = 체력 × 이 값. 로아 직업별 hpCon(Maxroll 게임 데이터): 소서리스 2.1, 버서커 2.2, 건슬링어 2.0 …
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
@@ -65,8 +66,11 @@ public:
 	// 6단계: 시작 장신구 치명 750 + 특화 750 → 치명 기대값 ×1.2685, 특화 ×1.375가 딜의 약 61%(종말·익스·천벌, 기본공격 포함 기준)에 붙어 ×1.228.
 	// 124.541921 × 1.10024 / (1.2685 × 1.228) = 87.966 — 1640 시작 세트의 평균 DPS가 그대로다. 시작 특성을 바꾸면 다시 역산할 것
 	// 2026-10-22 로아 장비 표 적용: 시작 표시 공격력 57,735 → 68,928이라 87.966 × 57,735 / 68,928 = 73.682 (1640 DPS 그대로)
+	// 2026-10-23 장신구 주 스탯(시작 최하 등급 지능 61,427): 68,928 → 75,994라 73.682 × 68,928 / 75,994 = 66.830
+	// 2026-10-23 7단계 시작 보석(Lv5 겁화 6·작열 5)·각인(유물 0단계 원한·아드·예둔·저받·타대) 기대 DPS ×2.4187 → 66.830 / 2.4187 = 27.631
+	//   (아드레날린은 스킬 사용 빈도로 평균 약 2.8중첩·치명 보너스 없음으로 계산 — 실측은 허수아비 LoADpsTest로)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Base")
-	double AttackPowerScale = 73.682;
+	double AttackPowerScale = 27.631;
 
 	// 시작 전투 특성 포인트 — 6단계부터 0 (시작 장신구 치명 750 + 특화 750이 대신 준다)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Stats|Combat")

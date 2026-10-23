@@ -415,6 +415,14 @@ public:
 	void SetCharacterInfoOpen(bool bOpen);
 	bool IsCharacterInfoOpen() const;
 
+	// ── 보석 합성 창 (소지품 아래 띠의 보석 버튼, 7단계) ──
+	void SetGemFuseOpen(bool bOpen);
+	bool IsGemFuseOpen() const;
+
+	// ── 각인 효과 창 (P창 [각인] 탭의 [각인 효과 설정하기], 7단계) ──
+	void SetEngravingSetupOpen(bool bOpen);
+	bool IsEngravingSetupOpen() const;
+
 	// ── 데미지 미터 창 (L키) ──
 	void SetDamageMeterOpen(bool bOpen);
 	bool IsDamageMeterOpen() const;
@@ -490,6 +498,14 @@ protected:
 	TObjectPtr<class ACharacterPreviewActor> CharacterPreviewActor;
 
 	void OnCharacterInfoToggle();
+
+	// 보석 합성 창 — C++ 트리 (ZOrder 10)
+	UPROPERTY(Transient)
+	TObjectPtr<class UGemFuseWidget> GemFuseWidget;
+
+	// 각인 효과 창 — C++ 트리 (ZOrder 10, 캐릭터 정보 창 위)
+	UPROPERTY(Transient)
+	TObjectPtr<class UEngravingSetupWidget> EngravingSetupWidget;
 
 	// 보스·허수아비에 준 피해 집계 — 피격 쪽이 ULoADamageLibrary::ReportDamageDealt로 기록
 	UPROPERTY(VisibleAnywhere, Category="DamageMeter")
@@ -571,6 +587,14 @@ public:
 	// 스킬 등 외부에서 강제 이동 목표 설정
 	void ForceMoveTo(const FVector& Destination);
 	void CancelAutoMove();
+
+	/** 커서가 가리키는 조준 지점 — 먼저 Visibility 트레이스, 못 맞히면(맵 밖·하늘) 캐릭터 발밑 높이 평면과 교차,
+	 *  그것도 안 되면(수평선 위) 커서 방향으로 1000cm. 방향만 필요한 스킬(돌풍)이 조준을 놓쳐 씹히지 않게 */
+	bool GetCursorAimLocation(FVector& OutLocation, bool* bOutHitGround = nullptr) const;
+
+	/** 장판 스킬용 목표 지점 — 바닥을 맞혔으면 그 지점(사거리 밖이면 스킬이 자동이동), 못 맞혔으면(맵 밖·하늘)
+	 *  조준 방향으로 MaxRange 안까지 당긴 발밑 높이 지점. 허공으로 자동이동하면 벽에 막혀 영영 도착 못 하므로 */
+	bool GetCursorGroundTarget(const AActor* Caster, float MaxRange, FVector& OutLocation) const;
 
 	virtual void BeginPlay() override;
 

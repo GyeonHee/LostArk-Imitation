@@ -1,0 +1,90 @@
+LoA 테스트 콘솔 명령어 모음 (2026-10-23)
+====================================================
+PIE 중 ` (또는 ~) 키로 콘솔을 열고 입력. 대소문자는 상관없음.
+치트를 쓴 판(LoAKillBoss 등)은 최고 클리어 기록·첫 클리어 보상에 안 남는다.
+초기 상태로 처음부터 테스트하려면 PIE를 끄고 Saved/SaveGames/LoA.sav 를 지울 것.
+
+
+■ 레이드
+----------------------------------------------------
+LoAKillBoss                     보스 즉사 → 던전 클리어 화면(보상 확인용)
+LoAKillSelf                     플레이어 즉사 → 공략 실패 화면
+
+
+■ 아이템 · 화폐
+----------------------------------------------------
+LoAGiveItem <아이템ID> <개수>    소지품에 아이템 추가
+LoAGiveSilling <양>             실링 추가 (음수면 차감)   예) LoAGiveSilling 100000
+LoAGiveGold <양>                골드 추가 (음수면 차감)   예) LoAGiveGold 50000
+LoAInvTest                      회복약 묶음 8개를 빈 칸에 흩뿌림 (정렬·잠금 확인용)
+
+  자주 쓰는 아이템 ID
+  - 회복약            SpiritRecoveryPotion
+  - 재련 재료         GuardianStone(수호석) / DestructionStone(파괴석) / LeapStone(돌파석)
+  - 숨결              RefineBreath(빙하의 숨결, 방어구) / LavaBreath(용암의 숨결, 무기)
+  - 장비 성장         FateFragment(운명의 파편)
+  - 장비(재련 0단계)  Equip_StarterHelmet / Equip_StarterShoulder / Equip_StarterChest
+                      Equip_StarterPants / Equip_StarterGloves / Equip_StarterWeapon
+  - 장신구            Acc_StarterNecklace / Acc_StarterEarring / Acc_StarterRing   (특성 고정)
+                      Acc_DesireNecklace / Acc_DesireEarring / Acc_DesireRing      (특성·등급 랜덤)
+  - 보석 (칸마다 1개) Gem_Dmg_01 ~ Gem_Dmg_10 (겁화 1~10레벨)
+                      Gem_Cd_01  ~ Gem_Cd_10  (작열 1~10레벨)
+  - 유물 각인서       EngBook_Grudge(원한) / EngBook_Adrenaline(아드레날린) / EngBook_KeenBlunt(예리한 둔기)
+                      EngBook_CursedDoll(저주받은 인형) / EngBook_HitMaster(타격의 대가) / EngBook_AllOutAttack(속전속결)
+                      EngBook_RaidCaptain(돌격대장) / EngBook_SpiritAbsorption(정기 흡수)
+                      EngBook_MagickStream(마나의 흐름) / EngBook_MasterOfEscape(탈출의 명수)
+                      → 1권 = 배움(유물 0단계), 이후 5권마다 +1단계, 21권 = 4단계
+
+  예) 보석 합성 테스트      LoAGiveItem Gem_Dmg_02 3   /   LoAGiveItem Gem_Cd_02 3
+      각인 4단계 만들기     LoAGiveItem EngBook_RaidCaptain 21   (소지품에서 우클릭으로 읽기)
+      재련 재료 넉넉히      LoAGiveItem GuardianStone 5000 / LoAGiveItem DestructionStone 2000 / LoAGiveItem LeapStone 1000
+
+
+■ 장비 · 재련
+----------------------------------------------------
+LoASetRefine <부위> <단계>      장착 장비 재련 단계를 바로 설정 (0~25, 저장 파일에 남음)
+                                부위: All / Helmet / Shoulder / Chest / Pants / Gloves / Weapon
+                                예) LoASetRefine All 15   /   LoASetRefine Weapon 20
+LoARefineSim <단계> <횟수>      그 단계 재련을 N번 시뮬레이션 → 평균·최악 시도 횟수
+                                예) LoARefineSim 25 10000
+
+
+■ 스탯 · 데미지
+----------------------------------------------------
+LoAStats                        지금 스탯(기본 스탯·전투 특성·계산 결과)을 로그(Output Log)로
+LoASetStat <대상> <값>          스탯 임시 가산 (같은 대상은 덮어씀, 0이면 제거)
+                                LoASetStat Reset = 임시 가산 전부 제거
+                                예) LoASetStat Crit 500 / LoASetStat Swiftness 1500 / LoASetStat CritRate 0.5
+                                대상 이름(EStatModifierTarget):
+                                  PrimaryStat WeaponPower Vitality
+                                  Crit Specialization Swiftness Domination Endurance Expertise
+                                  CritRate(0.1=+10%p) CritDamage(0.4=+40%p)
+                                  AdditiveDamage MultiplicativeDamage PhysDefense MagicDefense
+                                  AttackPowerPercent SpeedBonus CooldownReduction IncomingDamage
+                                  HealingReceived GetUpCooldown MPRegen CastSkillDamage CastSpeed
+                                  MoveSpeedToDamage DamagePenaltyChance
+LoADpsTest <초>                 데미지 미터를 비우고 N초 뒤 결과를 로그(CSV)로 — 허수아비 앞에서
+                                예) LoADpsTest 60
+
+
+■ 화면 · 미리보기 (콘솔 변수)
+----------------------------------------------------
+LoA.Preview.Light <배율>        캐릭터 정보 창(P) 3D 미리보기 라이트 세기 (기본 1, 창을 다시 열면 반영)
+LoA.Preview.Exposure <EV>       미리보기 노출 보정 (기본 0)
+LoA.SlotShine <0|1>             소지품 칸 빛 훑기 (마우스 올림·아이템 끌고 지나갈 때) — 0 끔 / 1 켬(기본)
+LoA.SlotShine.Duration <초>     빛이 칸을 지나가는 시간 (기본 0.28)
+
+
+■ 단축키 (참고)
+----------------------------------------------------
+Q W E R A S D F   스킬          좌클릭 기본공격 / 우클릭 이동
+Space             대시 (넉다운 중엔 즉시 기상)
+1~4               배틀아이템     I 소지품      P 캐릭터 정보(장비·각인·보석 탭)
+K                 스킬트리       L 데미지 미터  G NPC 대화
+소지품 아래 보석 버튼 = 보석 합성 창
+
+  우클릭 동작
+  - 장비·장신구: 장착                 - 각인서: 읽기
+  - 보석: P창 [보석] 탭을 연 채면 스킬 골라 장착 / 보석 합성 창을 연 채면 재료로 올림
+  - 상점이 열려 있으면: 판매 목록에 (Shift+우클릭 = 묶음)
+  - Ctrl+우클릭: 소지품 칸 잠금

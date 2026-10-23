@@ -21,6 +21,7 @@
 #include "Item/RaidReward.h"
 #include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Camera/CameraActor.h"
 #include "Camera/PlayerCameraManager.h"
 #include "UI/MinimapWidget.h"
@@ -56,6 +57,10 @@
 #include "Stat/StatComponent.h"
 #include "UI/InventoryWidget.h"
 #include "UI/CharacterInfoWidget.h"
+#include "UI/EngravingSetupWidget.h"
+#include "UI/GemFuseWidget.h"
+#include "Item/GemComponent.h"
+#include "Stat/EngravingComponent.h"
 #include "UI/CharacterPreviewActor.h"
 #include "UI/DamageMeterWidget.h"
 #include "Stat/DamageMeterComponent.h"
@@ -159,6 +164,22 @@ void ALoAPlayerController::BeginPlay()
 			CharacterInfoWidget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		UE_LOG(LogTemp, Log, TEXT("[CharacterInfo] 생성 %s"), CharacterInfoWidget ? TEXT("성공") : TEXT("실패"));
+
+		EngravingSetupWidget = CreateWidget<UEngravingSetupWidget>(this, UEngravingSetupWidget::StaticClass());
+		if (EngravingSetupWidget)
+		{
+			EngravingSetupWidget->AddToViewport(10);
+			EngravingSetupWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[Engraving] 각인 효과 창 생성 %s"), EngravingSetupWidget ? TEXT("성공") : TEXT("실패"));
+
+		GemFuseWidget = CreateWidget<UGemFuseWidget>(this, UGemFuseWidget::StaticClass());
+		if (GemFuseWidget)
+		{
+			GemFuseWidget->AddToViewport(10);
+			GemFuseWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[Gem] 보석 합성 창 생성 %s"), GemFuseWidget ? TEXT("성공") : TEXT("실패"));
 
 		FActorSpawnParameters PreviewParams;
 		PreviewParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -410,6 +431,8 @@ void ALoAPlayerController::OnPlayerDied()
 	CloseNPCMenu();
 	SetInventoryOpen(false);
 	SetCharacterInfoOpen(false);
+	SetEngravingSetupOpen(false);
+	SetGemFuseOpen(false);
 
 	// 스킬창이 열려 있었으면 닫고 입력 모드를 게임으로 되돌린다
 	if (SkillTreeWidget && SkillTreeWidget->GetVisibility() != ESlateVisibility::Collapsed)
@@ -983,6 +1006,59 @@ void ALoAPlayerController::ForceMoveTo(const FVector& Destination)
 	bHoldMoving = false;
 }
 
+bool ALoAPlayerController::GetCursorAimLocation(FVector& OutLocation, bool* bOutHitGround) const
+{
+	if (bOutHitGround) *bOutHitGround = false;
+	FHitResult Hit;
+	if (GetHitResultUnderCursor(ECC_Visibility, false, Hit))
+	{
+		if (bOutHitGround) *bOutHitGround = true;
+		OutLocation = Hit.Location;
+		return true;
+	}
+
+	const APawn* MyPawn = GetPawn();
+	FVector RayOrigin, RayDir;
+	if (!MyPawn || !DeprojectMousePositionToWorld(RayOrigin, RayDir)) return false;
+
+	// 발밑 높이 평면 — 캡슐 중심에서 절반 높이만큼 아래
+	const ACharacter* MyChar = Cast<ACharacter>(MyPawn);
+	const float FeetZ = MyPawn->GetActorLocation().Z - (MyChar ? MyChar->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 0.f);
+	if (RayDir.Z < -KINDA_SMALL_NUMBER)
+	{
+		const float T = (FeetZ - RayOrigin.Z) / RayDir.Z;
+		if (T > 0.f)
+		{
+			OutLocation = RayOrigin + RayDir * T;
+			return true;
+		}
+	}
+
+	// 수평선 위를 가리킴 — 커서 방향의 수평 성분으로
+	const FVector Horiz = FVector(RayDir.X, RayDir.Y, 0.f).GetSafeNormal();
+	if (Horiz.IsNearlyZero()) return false;
+	OutLocation = MyPawn->GetActorLocation() + Horiz * 1000.f;
+	return true;
+}
+
+bool ALoAPlayerController::GetCursorGroundTarget(const AActor* Caster, float MaxRange, FVector& OutLocation) const
+{
+	bool bHitGround = false;
+	if (!Caster || !GetCursorAimLocation(OutLocation, &bHitGround)) return false;
+	if (bHitGround) return true;
+
+	const FVector CasterLoc = Caster->GetActorLocation();
+	FVector Horizontal = OutLocation - CasterLoc;
+	Horizontal.Z = 0.f;
+	if (Horizontal.Size() > MaxRange)
+	{
+		const float Z = OutLocation.Z;
+		OutLocation = CasterLoc + Horizontal.GetSafeNormal() * MaxRange;
+		OutLocation.Z = Z;
+	}
+	return true;
+}
+
 void ALoAPlayerController::CancelAutoMove()
 {
 	bAutoMoving  = false;
@@ -1348,6 +1424,8 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	{
 		const ALoACharacter* InfoChar = Cast<ALoACharacter>(ControlledPawn);
 		CharacterInfoWidget->SetStatComponent(InfoChar ? InfoChar->StatComponent.Get() : nullptr);
+		CharacterInfoWidget->SetBuildSources(InfoChar ? InfoChar->Gems.Get() : nullptr, InfoChar ? InfoChar->Engravings.Get() : nullptr,
+			InfoChar ? InfoChar->Inventory.Get() : nullptr, InfoChar ? InfoChar->SkillManager.Get() : nullptr);
 	}
 	UpdateEnrageTimer();
 	UpdateScreenFog(DeltaSeconds);
@@ -1783,6 +1861,8 @@ bool ALoAPlayerController::ConsumeHUDSlotPress()
 	// 소지품 창 위 — 보통은 UMG가 먼저 먹지만 혹시 새어 들어와도 이동·기본공격으로 쓰지 않는다
 	if (InventoryWidget && InventoryWidget->IsCursorOverPanel()) return true;
 	if (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel()) return true;
+	if (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel()) return true;
+	if (GemFuseWidget && GemFuseWidget->IsCursorOverPanel()) return true;
 	if (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel()) return true;
 
 	int32 Group = -1, Index = -1;
@@ -2141,6 +2221,7 @@ void ALoAPlayerController::SetInventoryOpen(bool bOpen)
 	else
 	{
 		InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
+		SetGemFuseOpen(false);  // 합성 창은 소지품 창에 딸린 창
 	}
 }
 
@@ -2167,6 +2248,8 @@ void ALoAPlayerController::SetCharacterInfoOpen(bool bOpen)
 	{
 		const ALoACharacter* Char = GetPawn<ALoACharacter>();
 		CharacterInfoWidget->SetStatComponent(Char ? Char->StatComponent.Get() : nullptr);
+		CharacterInfoWidget->SetBuildSources(Char ? Char->Gems.Get() : nullptr, Char ? Char->Engravings.Get() : nullptr,
+			Char ? Char->Inventory.Get() : nullptr, Char ? Char->SkillManager.Get() : nullptr);
 		if (CharacterPreviewActor)
 		{
 			// 열 때마다 복사 — 레벨 이동·캐릭터 교체 후에도 지금 캐릭터 모습
@@ -2178,10 +2261,59 @@ void ALoAPlayerController::SetCharacterInfoOpen(bool bOpen)
 	else
 	{
 		CharacterInfoWidget->SetVisibility(ESlateVisibility::Collapsed);
+		SetEngravingSetupOpen(false);
 		if (CharacterPreviewActor)
 		{
 			CharacterPreviewActor->SetPreviewActive(false);
 		}
+	}
+}
+
+// ─── 보석·각인 (J) ─────────────────────────────────────────────────────────
+
+bool ALoAPlayerController::IsGemFuseOpen() const
+{
+	return GemFuseWidget && GemFuseWidget->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void ALoAPlayerController::SetGemFuseOpen(bool bOpen)
+{
+	if (!GemFuseWidget) return;
+	if (bOpen == IsGemFuseOpen()) return;
+
+	if (bOpen)
+	{
+		const ALoACharacter* Char = GetPawn<ALoACharacter>();
+		SetInventoryOpen(true);  // 합성 창은 소지품 창 옆에 붙는다
+		GemFuseWidget->Open(Char ? Char->Gems.Get() : nullptr, InventoryWidget ? InventoryWidget->GetPanel() : nullptr);
+		GemFuseWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		GemFuseWidget->Close();  // 올린 재료는 소지품으로
+		GemFuseWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+bool ALoAPlayerController::IsEngravingSetupOpen() const
+{
+	return EngravingSetupWidget && EngravingSetupWidget->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void ALoAPlayerController::SetEngravingSetupOpen(bool bOpen)
+{
+	if (!EngravingSetupWidget) return;
+	if (bOpen == IsEngravingSetupOpen()) return;
+
+	if (bOpen)
+	{
+		const ALoACharacter* Char = GetPawn<ALoACharacter>();
+		EngravingSetupWidget->Open(Char ? Char->Engravings.Get() : nullptr, Char ? Char->Inventory.Get() : nullptr);
+		EngravingSetupWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		EngravingSetupWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 
@@ -2430,6 +2562,8 @@ void ALoAPlayerController::UpdateNPCInteraction()
 	AInteractableNPCActor* Hovered = nullptr;
 	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel()) || (RefineWidget && RefineWidget->IsCursorOverPanel())
 		|| (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel())
+		|| (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel())
+		|| (GemFuseWidget && GemFuseWidget->IsCursorOverPanel())
 		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
 	if (!bNPCMenuOpen && !bCursorOverUI)
 	{
@@ -2487,6 +2621,8 @@ void ALoAPlayerController::OpenNPCMenu(AInteractableNPCActor* NPC)
 
 	// HUD는 숨기고, 열려 있던 스킬창·캐릭터 정보 창은 닫는다
 	SetCharacterInfoOpen(false);
+	SetEngravingSetupOpen(false);
+	SetGemFuseOpen(false);
 	if (HUDWidget)
 	{
 		HUDVisibilityBeforeNPCMenu = static_cast<uint8>(HUDWidget->GetVisibility());
@@ -2609,6 +2745,52 @@ void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, b
 	// 상점 밖 — 장비면 장착 (같은 부위 장비는 그 칸으로 돌아온다)
 	ALoACharacter* Char = GetPawn<ALoACharacter>();
 	if (!Char || !Char->Equipment) return;
+
+	// 보석 / 유물 각인서 (7단계)
+	if (Char->Inventory && Char->Inventory->IsValidIndex(InventoryIndex))
+	{
+		const FName ItemId = Char->Inventory->GetSlot(InventoryIndex).ItemId;
+		const FItemDefinition* Def = LoAItems::Find(ItemId);
+		if (Def && Def->Category == EItemCategory::Gem)
+		{
+			// 합성 창이 열려 있으면 재료로, 아니면 로아처럼 캐릭터 정보 [보석] 탭을 연 채로 우클릭 → 스킬을 골라 장착
+			if (IsGemFuseOpen())
+			{
+				GemFuseWidget->AddInput(ItemId);
+			}
+			else if (IsCharacterInfoOpen() && CharacterInfoWidget->GetTab() == 2)
+			{
+				CharacterInfoWidget->BeginGemEquip(ItemId);
+			}
+			else
+			{
+				ShowTimedNotice(NSLOCTEXT("Gem", "GemTitle", "보석"), NSLOCTEXT("Gem", "OpenGemTab", "캐릭터 정보(P)의 [보석] 탭을 연 채로 우클릭하면 장착할 수 있습니다."));
+			}
+			return;
+		}
+		if (Def && Def->Category == EItemCategory::Book && Char->Engravings)
+		{
+			const double BookNow = GetWorld()->GetTimeSeconds();
+			if (InventoryIndex == LastEquipClickIndex && BookNow - LastEquipClickTime < 0.3) return;  // 빠른 연타로 두 권 읽지 않게
+			LastEquipClickIndex = InventoryIndex;
+			LastEquipClickTime = BookNow;
+			if (const FEngravingDefinition* Eng = LoAEngravings::FindByBook(ItemId))
+			{
+				FText Fail;
+				if (Char->Engravings->ReadBook(Eng->Id, Fail))
+				{
+					const int32 Books = Char->Engravings->GetBooksRead(Eng->Id);
+					ShowTimedNotice(NSLOCTEXT("Engraving", "BookTitle", "각인서"), FText::FromString(FString::Printf(TEXT("%s — 유물 %d단계 (읽은 각인서 %d / %d권)"),
+						*Eng->Name.ToString(), Char->Engravings->GetLevel(Eng->Id), Books, LoAEngravings::MaxBooks)));
+				}
+				else if (!Fail.IsEmpty())
+				{
+					ShowTimedNotice(NSLOCTEXT("Engraving", "BookTitle", "각인서"), Fail);
+				}
+			}
+			return;
+		}
+	}
 
 	// 빠른 연타의 두 번째 클릭(DoubleClick)도 우클릭으로 들어온다 — 그대로 처리하면 장착 직후 돌아온 장비를 다시 껴서
 	// 원래대로 되돌아가므로 같은 칸 0.3초 안 재클릭은 무시

@@ -15,10 +15,8 @@ void USkillIceArrow::OnKeyDown(AActor* Owner)
         ? Cast<ALoAPlayerController>(Character->GetController()) : nullptr;
     if (!PC) return;
 
-    FHitResult CursorHit;
-    if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, CursorHit)) return;
-
-    PendingTarget = CursorHit.Location;
+    // 바닥을 못 맞히면(맵 밖·하늘) 조준 방향 사거리 끝으로 — 예전엔 그냥 return해서 스킬이 씹혔다
+    if (!PC->GetCursorGroundTarget(Owner, MaxCastRange, PendingTarget)) return;
     const float Dist = FVector::Dist2D(Owner->GetActorLocation(), PendingTarget);
 
     DrawDebugCircle(Owner->GetWorld(), Owner->GetActorLocation(), MaxCastRange,
@@ -73,12 +71,7 @@ void USkillIceArrow::Execute_Implementation(AActor* Owner)
 
     // 목표 위치 확정
     FVector TargetLoc = PendingTarget;
-    if (TargetLoc.IsZero())
-    {
-        FHitResult H;
-        if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, H)) return;
-        TargetLoc = H.Location;
-    }
+    if (TargetLoc.IsZero() && !PC->GetCursorGroundTarget(Owner, MaxCastRange, TargetLoc)) return;
 
     // 사거리 클램프
     FVector OwnerLoc   = Owner->GetActorLocation();

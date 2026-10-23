@@ -4,6 +4,8 @@
 #include "Item/ItemTypes.h"
 #include "Engine/Texture2D.h"
 #include "UI/CharacterPreviewActor.h"
+#include "UI/GemPageWidget.h"
+#include "UI/EngravingPageWidget.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "LoAPlayerController.h"
 #include "Blueprint/WidgetTree.h"
@@ -500,7 +502,7 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 		Divider->SetPadding(FMargin(0.f, 0.5f));
 		Column->AddChildToVerticalBox(Divider);
 
-		// ── 탭: 장비(선택) / 각인 / 보석 — 각인·보석은 7단계에서 ──
+		// ── 탭: 장비 / 각인 / 보석 — 클릭은 NativeOnMouseButtonDown에서 위치로 판정 ──
 		UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("Tabs"));
 		if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(Tabs))
 		{
@@ -513,16 +515,13 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 		};
 		for (int32 i = 0; i < UE_ARRAY_COUNT(TabNames); ++i)
 		{
-			const bool bActive = i == 0;
 			UBorder* Tab = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), FName(*FString::Printf(TEXT("Tab_%d"), i)));
-			Tab->SetBrushColor(bActive ? FLinearColor(0.20f, 0.15f, 0.08f, 1.f) : FLinearColor(0.05f, 0.055f, 0.07f, 1.f));
 			Tab->SetPadding(FMargin(0.f, 6.f));
 			Tab->SetHorizontalAlignment(HAlign_Center);
-			Tab->SetContent(MakeText(TabNames[i].ToString(), 12, bActive ? CharInfo_Gold : CharInfo_DimColor));
-			if (!bActive)
-			{
-				Tab->SetToolTipText(NSLOCTEXT("CharInfo", "TabSoon", "준비 중"));
-			}
+			UTextBlock* TabText = MakeText(TabNames[i].ToString(), 12, CharInfo_DimColor);
+			Tab->SetContent(TabText);
+			TabBorders.Add(Tab);
+			TabTexts.Add(TabText);
 			if (UHorizontalBoxSlot* S = Tabs->AddChildToHorizontalBox(Tab))
 			{
 				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -535,8 +534,29 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 		BodySize->SetHeightOverride(CharInfo_BodyHeight);
 		Column->AddChildToVerticalBox(BodySize);
 
+		// 탭 페이지 세 개를 겹쳐 두고 보이는 것만 바꾼다
+		UOverlay* Pages = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("Pages"));
+		BodySize->SetContent(Pages);
+
 		UHorizontalBox* Body = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("Body"));
-		BodySize->SetContent(Body);
+		EquipBody = Body;
+		if (UOverlaySlot* S = Pages->AddChildToOverlay(Body))
+		{
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Fill);
+		}
+		EngravingPage = CreateWidget<UEngravingPageWidget>(this, UEngravingPageWidget::StaticClass());
+		GemPage = CreateWidget<UGemPageWidget>(this, UGemPageWidget::StaticClass());
+		for (UWidget* Page : { static_cast<UWidget*>(EngravingPage.Get()), static_cast<UWidget*>(GemPage.Get()) })
+		{
+			if (!Page) continue;
+			Page->SetVisibility(ESlateVisibility::Collapsed);
+			if (UOverlaySlot* S = Pages->AddChildToOverlay(Page))
+			{
+				S->SetHorizontalAlignment(HAlign_Fill);
+				S->SetVerticalAlignment(VAlign_Fill);
+			}
+		}
 
 		USizeBox* LeftSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("LeftSize"));
 		LeftSize->SetWidthOverride(220.f);
@@ -557,6 +577,7 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 
 	// 루트는 통과 — 창(Panel) 밖은 게임 클릭으로
 	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	SetTab(CurrentTab);
 
 	TSharedRef<SWidget> Result = Super::RebuildWidget();
 	Refresh();
@@ -869,6 +890,33 @@ void UCharacterInfoWidget::RefreshGearSlots()
 	}
 }
 
+void UCharacterInfoWidget::SetTab(int32 Tab)
+{
+	CurrentTab = FMath::Clamp(Tab, 0, 2);
+	for (int32 i = 0; i < TabBorders.Num(); ++i)
+	{
+		const bool bActive = i == CurrentTab;
+		if (TabBorders[i]) TabBorders[i]->SetBrushColor(bActive ? FLinearColor(0.20f, 0.15f, 0.08f, 1.f) : FLinearColor(0.05f, 0.055f, 0.07f, 1.f));
+		if (TabTexts.IsValidIndex(i) && TabTexts[i]) TabTexts[i]->SetColorAndOpacity(FSlateColor(bActive ? CharInfo_Gold : CharInfo_DimColor));
+	}
+	if (EquipBody) EquipBody->SetVisibility(CurrentTab == 0 ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	if (EngravingPage) EngravingPage->SetVisibility(CurrentTab == 1 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (GemPage) GemPage->SetVisibility(CurrentTab == 2 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	// [상세정보] 칸은 장비 탭 것 — 다른 탭에선 닫는다
+	if (CurrentTab != 0 && bDetailOpen) HandleDetailClicked();
+}
+
+void UCharacterInfoWidget::SetBuildSources(UGemComponent* InGems, UEngravingComponent* InEngravings, UInventoryComponent* InInventory, USkillManagerComponent* InSkills)
+{
+	if (GemPage) GemPage->SetSources(InGems, InInventory, InSkills);
+	if (EngravingPage) EngravingPage->SetEngravings(InEngravings);
+}
+
+void UCharacterInfoWidget::BeginGemEquip(FName GemItemId)
+{
+	if (GemPage) GemPage->BeginEquip(GemItemId);
+}
+
 bool UCharacterInfoWidget::IsCursorOverPanel() const
 {
 	if (!Panel || !IsInViewport() || !IsVisible() || !FSlateApplication::IsInitialized()) return false;
@@ -904,6 +952,19 @@ void UCharacterInfoWidget::HandleDetailClicked()
 
 FReply UCharacterInfoWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	// 탭 클릭 — 장비 / 각인 / 보석
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		for (int32 i = 0; i < TabBorders.Num(); ++i)
+		{
+			if (TabBorders[i] && TabBorders[i]->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+			{
+				SetTab(i);
+				return FReply::Handled();
+			}
+		}
+	}
+
 	// 제목 줄을 좌클릭 — 창 끌기 시작
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && HeaderBox
 		&& HeaderBox->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition())

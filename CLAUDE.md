@@ -180,6 +180,7 @@
   - **UI 갱신**: 칸 위젯 100개는 한 번만 만들고, `OnSlotChanged(Index)`(INDEX_NONE=전체)로 **바뀐 칸만** 다시 그림. 매 Tick 훑지 않음
   - 창 루트는 `SelfHitTestInvisible`, 창(Panel)만 Visible — 창 밖 클릭은 클릭 이동으로. 창 안 클릭은 위젯이 Handled로 먹고, 컨트롤러 `ConsumeHUDSlotPress`도 `IsCursorOverPanel`이면 이동·기본공격으로 안 씀
   - 장비 칸 툴팁의 ▲▼는 착용 장비 기준이라 `UInventoryWidget`이 캐릭터의 `UEquipmentComponent::OnEquipmentChanged`를 구독해 장비 칸만 다시 그린다(2026-10-22 — 예전엔 바꾼 칸만 갱신돼 다른 칸 비교값이 낡았음)
+  - **칸 빛 훑기** (2026-10-23, 로아의 유리 반사처럼 왼쪽 위 → 오른쪽 아래로 빠르게): 마우스 올림(`NativeOnMouseEnter`) + **아이템을 끌고 지나갈 때**(`NativeOnDragEnter`). UI 머티리얼 `/Game/LostArk/UI/Item/M_SlotShine`(MCP로 생성 — Domain UI·Translucent, Opacity = saturate(1 - |(U+V)/2 - Progress| / Width)^Sharpness × Intensity, Emissive = Color)의 `Progress`를 -Width → 1+Width로 ease-out(칸마다 MID 하나, 처음 쓸 때 만듦). `Back` Border의 ClipToBounds로 칸 밖은 잘림. 콘솔 `LoA.SlotShine 0/1`, `LoA.SlotShine.Duration`(0.28). 띠 텍스처를 RenderTranslation으로 미는 방식과 비교해 유저가 머티리얼로 정함 — `T_SlotShineStreak`은 미사용(지워도 됨). 띠 폭·선명도·밝기·색은 머티리얼 파라미터 `Width`/`Sharpness`/`Intensity`/`Color`(Width를 바꾸면 cpp `InvSlot_ShineWidth`도 같이)
   - **창 이동**: 헤더(제목 줄)를 좌클릭으로 끌면 창이 따라온다(마우스 캡처, 화면 밖으로 못 나가게 클램프). 위치는 위젯이 살아 있는 동안(그 레벨) 유지
   - **버그였던 것 (슬롯을 빠르게 두 번 누르면 맵 클릭 이동)**: 두 번째 클릭은 `MouseButtonDown`이 아니라 `MouseButtonDoubleClick`으로 오는데 위젯이 안 먹어서 게임으로 샜고, 컨트롤러는 시작(`OnInputStarted`)만 막고 누르는 중(Triggered)·뗄 때(Released) 이동은 막지 않았음 → 칸·창 위젯이 DoubleClick도 Handled + 컨트롤러 `bMovePressSuppressed`(UI 위에서 시작된 클릭이면 Triggered·Released 이동도 무시). **C++ 트리 위젯에서 클릭을 막을 땐 `NativeOnMouseButtonDoubleClick`도 오버라이드할 것**
   - 저장: `ULoAGameInstance::InventorySlots` + SaveGame(`LoA.sav`). 첫 실행(저장 없음)엔 `StartingItems` = 정령의 회복약 30개. **초기화하려면 `Saved/SaveGames/LoA.sav` 삭제**
@@ -810,7 +811,7 @@
    - **4웨이브 전부 같은 변에서 나온다** — 진입 시 1회 결정(`SpawnSide`, -1이면 6변 중 랜덤). 변의 바깥 법선 = 아레나 Yaw + 30 + 60k (꼭짓점이 축 방향 타일 Yaw 0/60/...에 있어서). 외곽선보다 `OutsideMargin`(250) 바깥에서 출발해 반대편 바깥까지
    - **시점 전환은 진입 시 한 번만**: `ALoACharacter::SetCameraRotationOverride(Pitch -30, Yaw = 그 변의 바깥 법선)` — 위에서 내려보던 -60도 시점이 내려와 비스듬해지고 플레이어 뒤에서 거울 줄을 마주보는 구도. 패턴이 끝나면(`ExitState`) 원래 시점으로 복구. (처음엔 웨이브마다 다른 변 + 카메라 회전이었는데 유저 요청으로 변경)
 3. 모든 줄이 나오고 불길까지 다 꺼지면 `EndDelay` 후 Succeeded. `ExitState`(끊겨도): 카운터 결과 집계 로그(`파훼 성공/실패 — 카운터 N / 4`) → 줄 전부 파괴 → 보스 보이게, 카메라 줌·각도 복구, 큰 패턴 잠금 해제
-- **마무리 그로기 (2026-10-18)**: `EndDelay` 뒤 `CleanupPattern()`(줄·기둥 파괴, 보스 다시 보이게, 카메라·카운터 쿨타임 복구, 결과 로그 — 한 번만 실행)을 먼저 하고 `AEchidnaBoss::StartGroggy(GroggyDuration=3)` → 그로기가 끝날 때까지 Task가 Running(보스 정지), 끝나면 Succeeded. 큰 패턴 잠금(`ClearActiveTimedPattern`)은 `ExitState`에서 풀어 그로기 중 다른 큰 패턴이 안 끼어듦. `bGroggyOnlyOnSuccess`를 켜면 4줄 전부 카운터쳤을 때만
+- **마무리 그로기 (2026-10-18)**: `EndDelay` 뒤 `CleanupPattern()`(줄·기둥 파괴, 보스 다시 보이게, 카메라·카운터 쿨타임 복구, 결과 로그 — 한 번만 실행)을 먼저 하고 `AEchidnaBoss::StartGroggy(GroggyDuration=5)` → 그로기가 끝날 때까지 Task가 Running(보스 정지), 끝나면 Succeeded. 큰 패턴 잠금(`ClearActiveTimedPattern`)은 `ExitState`에서 풀어 그로기 중 다른 큰 패턴이 안 끼어듦. **`bGroggyOnlyOnSuccess` 기본 true(2026-10-23) — 마지막(4번째) 줄을 카운터쳤을 때만 그로기**(앞 줄은 놓쳐도 됨), 마지막 줄을 놓치면 바로 종료
 - **그로기 자체는 효과가 없다** — `StartGroggy`는 `bGroggy` 플래그 + 이동 정지 + `OnGroggyVisualChanged`뿐이고 AI를 멈추지 않는다. 보스가 가만히 있는 건 부른 Task가 `IsGroggy()` 동안 Running으로 버티기 때문(보스 본체 카운터 패턴도 같은 방식). 받는 피해 증가 등은 아직 없음
 - **실패 페널티는 아직 없음** — 결과 로그만. 레퍼런스의 "카운터 거울이 아닌 거울을 3번 치면 갈급" 디버프도 미구현
 
@@ -838,6 +839,7 @@
 
 ### 카운터 스킬 쿨타임 (패턴 동안만)
 - 진입 시 `USkillManagerComponent::SetCounterSkillCooldownOverride(CounterSkillCooldown=5)` → `bCanCounter` 슬롯의 `StartCooldown`이 DT 쿨타임 대신 5초. 이미 더 길게 남은 쿨타임도 5초로 줄임. `ExitState`에서 `ClearCounterSkillCooldownOverride()`(돌고 있는 쿨타임은 그대로)
+- **버그였던 것 (돌풍이 가끔 씹힘, 2026-10-23)**: 모든 커서 스킬이 `GetHitResultUnderCursor(Visibility)`가 실패하면 `Execute`에서 그냥 return하는데, `TryActivateSkill`은 결과와 무관하게 마나 차감 + `StartCooldown`을 한다 → 토네이도 없이 쿨타임만 돔. 이 패턴은 시점이 -30도로 눕고 거울 줄이 맵 밖에서 오며 거울 메시는 Visibility를 Ignore라, 거울을 조준하면 커서 뒤가 허공·하늘이라 트레이스가 빗나갔음. 돌풍·블레이즈(방향만)는 `ALoAPlayerController::GetCursorAimLocation`(트레이스 → 발밑 높이 평면 교차 → 커서 수평 방향 1000cm 순서), 장판 스킬 6종(종말·천벌·익스·인페르노·아이스 에로우·혹한)은 `GetCursorGroundTarget`(바닥을 맞혔으면 그대로 — 사거리 밖이면 자동이동, 못 맞혔으면 조준 방향 사거리 끝에 바로 시전 — 허공으로 자동이동하면 벽에 막혀 영영 도착 못 함). **새 커서 스킬도 `GetHitResultUnderCursor`를 직접 쓰지 말고 이 둘을 쓸 것**
 - **카운터 성공 시 즉시 재사용 가능**: 거울 줄의 `TryCounterHit`이 시전자의 `ResetCounterSkillCooldowns()` 호출
   - ⚠️ 순서 함정: 돌풍은 `Execute` 안에서 토네이도가 바로 판정하므로 **카운터 성공 → 그 뒤에 `TryActivateSkill`이 `StartCooldown`** 순서다. 성공 순간 0으로 만들어도 곧바로 덮어써짐 → `CounterResetFrame = GFrameCounter`를 기록해 **같은 프레임의 카운터 슬롯 `StartCooldown`은 건너뜀**(사거리 자동이동 후 발동 경로도 같은 프레임이라 동일하게 동작)
 - 보스 본체 카운터(`Echidna Counter Pattern`)엔 적용 안 됨 — 거울 카운터 전용
@@ -937,7 +939,7 @@
 - 특성은 인스턴스에 `FEquipmentInstance::StatRolls`(`FStatRoll` = 종류 + 값). `CreateEquipment`가 장신구 정의(`AccessoryStatCount/Min/Max`)로 치명·특화·신속·제압 중 서로 다른 종류를 굴림(인내·숙련은 효과가 없어 제외). `ApplyStats`가 합쳐서 "Equipment" 수정치로 Crit/Specialization/Swiftness/Domination 등록. 재련 불가
 - 정의: 시작 "도전자의" 목걸이(치명 350 + 특화 350)·귀걸이·반지(각 200, 고정) / 드랍 "욕망의" 목걸이(2종 350~420)·귀걸이·반지(1종 200~240). 판매가 100 / 3,000 / 2,000 실링. 아이콘 `T_Acc_Necklace/Earring/Ring`(PIL 임시)
 - **시작 장신구**: 별도 플래그 `bHasStarterAccessories`(GI·SaveGame)라 기존 저장 파일도 한 번 받음 — 치명 750 + 특화 750(Earring1·Ring1 = 치명, Earring2·Ring2 = 특화)
-- **K 재조정**: `DA_Sorceress` BaseCombatStats 치명 280 → **0**, AttackPowerScale 124.541921 → **87.966**(C++ 기본값도). 치명 기대값 ×1.2685, 특화 ×1.375가 딜의 약 61%에 붙어 ×1.228 → 1640 시작 세트 DPS 불변. 시작 특성을 바꾸면 다시 역산할 것
+- **K 재조정** (이후 로아 장비 표·장신구 주 스탯·7단계에서 73.682 → 66.830 → **27.631**로 다시 바뀜 — "보석 · 각인" 섹션): `DA_Sorceress` BaseCombatStats 치명 280 → **0**, AttackPowerScale 124.541921 → **87.966**(C++ 기본값도). 치명 기대값 ×1.2685, 특화 ×1.375가 딜의 약 61%에 붙어 ×1.228 → 1640 시작 세트 DPS 불변. 시작 특성을 바꾸면 다시 역산할 것
 - 성장 폭: 최상급 치특(치명 900 + 특화 900)이 시작 대비 DPS 약 **+8.1%**. ⚠️ 신속 몰빵(목걸이 420 + 귀걸이·반지 240×4 = 1,380)이면 **이동속도 +23.7%, 쿨감 29.7%(상한 30%)** — 걸어서 피하는 패턴이 쉬워질 수 있음(미결)
 - 레이드 보상에 장신구 1개(100%, 첫 클리어 배수·더보기 대상 아님). 대기 보상에는 ItemId만 남고 특성은 소지품에 들어갈 때 굴림
 - 표시: 칸 배지 `LoAItems::GetEquipmentBadge` — 재련 장비 "+10", 장신구 특성 첫 글자("치특"). P 창 오른쪽 줄 앞 5칸이 장착 칸이 됨(`GearSlots` 6~10 = EEquipSlot), 전투 특성 값 옆에 실제 효과 %(치명률·특화 피해·쿨감·제압)
@@ -960,7 +962,45 @@
 - **전투 특성 상수(로아 70레벨)**: 치명 27.944 / 신속 46.5731(쿨감)·58.2211(속도) / 제압 14.0053(무력화 대상 피해) / **인내 12.2255(방어력)** 포인트당 1% (`LoAStatRules`). 특화는 직업별이라 우리 설계(캐스팅·차지 스킬 +0.05%) 유지
 - **K(AttackPowerScale) 87.966 → 73.682**: 시작 표시 공격력이 57,735 → 68,928(√(284,958 × 100,036 / 6))로 올라서, 1640 DPS가 그대로 되도록 역산. 맨몸 주 스탯 477(로아 70레벨), 맨몸 무기 공격력 0. +25 세트는 표시 공격력 약 101,000(1640 대비 약 +47% — 예전 +2%/단계 모델보다 성장 폭이 큼)
 - `DA_Sorceress` 값(BasePrimaryStat 477 / BaseWeaponPower 0 / BaseVitality 11,154 / HPPerVitality 2.1 / AttackPowerScale 73.682)은 MCP로 저장함 — 예전 K가 에셋에 직렬화돼 있어서 C++ 기본값만 바꾸면 안 바뀐다
-- 장신구는 아직 전투 특성만(로아 장신구의 주 스탯·체력은 안 넣음)
+- **장신구 주 스탯·체력 (2026-10-23)**: `FEquipmentInstance::AccessoryTier`(0~3) → `LoAItems::GetAccessoryStats` — Maxroll itemRandom 5000/5100/5200 계열(T4 목걸이·귀걸이·반지) 4단계 고정값. 목걸이 지능 15,357~17,857 / 체력 3,672~4,103, 귀걸이 11,944~13,889 / 2,623~2,931, 반지 11,091~12,897 / 2,099~2,345. 시작 장신구 = 0등급(지능 합 61,427 · 체력 13,116), 드랍 = 0~3 랜덤. 필드 이전 저장 파일은 0등급으로 읽힘
+- **최대 생명력 19만 (2026-10-23, 유저: "1640 소서리스 체력 19만 정도")**: `BaseVitality` 11,154 → **40,895**(캐릭터 + 아직 없는 스톤·팔찌·엘릭서·카르마 몫 한 덩어리) → (40,895 + 36,465 + 13,116) × 2.1 = 190,000, +25 + 시작 장신구 약 21만. K 73.682 → **66.830**(장신구 지능으로 표시 공격력 68,928 → 75,994, 1640 DPS 그대로). 보스 `IncomingDamageScale` 5.977 → **11.356**(×1.9 — 패턴 "몇 대 맞으면 죽는가" 유지)
+- **신속 상한 (2026-10-23)**: 속도 +40%(`MaxSpeedBonus`), 쿨감 80%(`MaxCooldownReduction`, 예전 30%). 포인트당 효과는 그대로(1500 = 속도 +25.8% / 쿨감 32.2%)
+
+## 보석 · 각인 (7단계, 2026-10-23, `Item/BuildTypes.h`·`BuildRegistry.cpp`, `Item/GemComponent`, `Stat/EngravingComponent`, `UI/BuildWidget`)
+
+- **방침: 로아 T4 그대로** (유저 결정) — 보석 11칸 · 각인 5칸(유물 각인서 0~4단계, 어빌리티 스톤 없음) · 쿨감은 곱연산 상한 80%
+- **보석**: 아이템 `Gem_Dmg_01~10`(겁화)·`Gem_Cd_01~10`(작열), `EItemCategory::Gem`, MaxStack 999, 아이콘 `/Game/LostArk/UI/GemIcon/T_Gem_*`(PIL 임시). 스킬은 **아이템이 아니라 칸에 끼울 때 고른다**(로아는 보석마다 스킬 고정 — 스킬 8개라 아이템 160종이 되는 걸 피함). 스킬 하나에 겁화 1 + 작열 1까지, 같은 종류를 또 끼우면 바꿔 끼움
+  - 수치(Maxroll Gem System Guide T4): 겁화 Lv1 8% → Lv10 44%(+4%/Lv) / 작열 6% → 24%(+2%/Lv) / 보석마다 기본 공격력 Lv2 0.05% → Lv10 1.2%
+  - 효과: 겁화·작열은 `UStatComponent::SetSkillGemBonuses`(스킬 행 이름별) → `CalcOutgoingDamage`가 `GetSkillDamageMultiplier`, `StartCooldown`이 `GetTotalCooldownReductionOf` = 1 - (1 - 신속·각인) × (1 - 작열), 상한 80%. 기본 공격력 %는 "Gem" 수정치(`AttackPowerPercent` → 공격력에 곱함)
+  - **보석은 칸마다 1개** (`MaxStack` 1, 로아와 같음 — 2026-10-23 999에서 바꿈). 소지품 칸엔 개수 대신 `Lv.N`. 예전 저장 파일에 겹쳐 쌓인 칸은 `UInventoryComponent::EnsureLoaded`가 빈 칸으로 나누고, 칸이 모자라면 대기 보상(`PendingRewards`)으로 — MaxStack을 줄이는 아이템이 또 생겨도 같은 경로로 처리됨
+  - **합성** (`UI/GemFuseWidget`, 로아 [보석 합성] 창): 소지품 아래 띠 왼쪽 보석 버튼으로 연다(ZOrder 10). **소지품 창 왼쪽에 같은 높이로 붙는다** — `NativeTick`이 소지품 패널(`UInventoryWidget::GetPanel`) 위치·높이를 읽어 맞춤(소지품을 끌어 옮겨도 따라감). 판은 남는 높이를 다 쓰고 재료 칸 위치는 판 크기 비율
+    - 규칙(Maxroll T4): 같은 레벨 3개 → 다음 레벨 1개, 100%, 비용 없음. **겁화·작열을 섞어도 되고 결과 종류는 재료 3개 중 랜덤**
+    - 재료는 **소지품에서 빠진다** — `UGemComponent::FuseInputs`(`AddFuseInput`/`RemoveFuseInput`/`ReturnAllFuseInputs`). 재료 칸 우클릭 = 되돌림, 창을 닫거나 레벨을 나가면 전부 되돌림. 저장 파일에도 `GemFuseInputs`로 들어가 있어 게임이 꺼져도 다음 `BeginPlay`에서 소지품으로 돌려줌
+    - 등록: 창이 열린 채로 소지품 보석 **우클릭** 또는 창 위로 **드래그 앤 드롭**
+    - [합성 목표 레벨 선택] **2~9레벨**: 누르는 순간 한 번 적용(`FillFuseInputsForTarget` — 재료를 비우고, 목표보다 낮은 레벨 중 3개 이상 있는 가장 낮은 레벨에서 랜덤 3개). 버튼은 누르는 동안만 밝고 떼면 원래 색(선택 상태 없음). 예) 2레벨 3개만 있으면 2레벨 버튼은 안 들어가고 3레벨 이상 버튼은 2레벨 3개
+    - 버튼은 [합성하기] 하나(자동 합성·자동 합성 설정은 유저 요청으로 뺌). 더블클릭은 먹기만 해서 두 번 합성되지 않음
+    - 보석 탭의 임시 [보석 합성] 버튼은 없앰
+    - 재료 칸 3개는 가운데 고리 **위(궤도)**에 각도(-140° / -40° / 90°)로 놓는다 — 고리 지름 = 판 짧은 변 - 재료 칸 지름 - 16이라 아래 칸이 판 밖으로 안 나감(예전엔 판 비율 위치라 아래 칸이 고리 밖이었음)
+    - 버튼 색 3단계(`NativeTick`이 매 프레임 커서 위치로): 보통 / 마우스 올림(밝은 남색) / 누르는 중(금갈색) — 목표 레벨·[합성하기] 둘 다
+    - 소지품의 보석 합성 버튼 = UButton 스타일에 바탕 텍스처 3장(`/Game/LostArk/UI/GemIcon/T_GemFuseButton_Normal/Hovered/Pressed`, PIL — Hovered에 아래쪽 타원형 빛이 그려져 있음) + 금색 다이아 `T_GemFuseIcon`. **마우스 올림 빛은 효과가 아니라 Hovered 바탕 그림** — 다른 버튼에도 같은 방법(필요하면 빛만 따로 이미지로 두고 투명도를 Tick에서 보간해 서서히 켜기)
+- **각인 10종**(Maxroll 게임 데이터 engraving 1xxx 유물 0~4, 스톤 0): 원한(보스 피해 18→21%, 받는 피해 +20%) / 아드레날린(스킬 사용 6초 공격력 +0.9% ×6중첩, 최대 시 치명 14→20%) / 예리한 둔기(치명피해 44→52%, 10% 확률 피해 -20%) / 저주받은 인형(피해 14→17%, 회복 -25%) / 타격의 대가(14→17%, 소서리스 타대라 전 스킬) / 속전속결(캐스팅·차지 속도 +20%, 캐스팅·차지·홀딩 피해 18→21%) / 돌격대장(이속 증가량의 40→48%) / 정기 흡수(공·이속 13→16%, 신속과 합쳐 상한 40%) / 마나의 흐름(마나 회복 +2% ×10중첩, 최대 시 쿨감 7→10% 곱연산) / 탈출의 명수(기상 쿨 23→27%)
+  - 단계 = 읽은 유물 각인서 권수: 1권 = 배움(유물 0단계), 이후 5권마다 +1, 21권이면 4단계(최대) — 로아의 영웅·전설 단계는 생략
+  - 각인서 아이템 `EngBook_<Id>`(`EItemCategory::Book`, 아이콘 `/Game/LostArk/UI/Engraving/T_EngravingBook`)
+  - 효과는 `UStatComponent` 수정치 "Engraving"(장착만 하면) + "EngravingBuff"(아드레날린·마나의 흐름 중첩). 중첩은 `USkillManagerComponent::OnSkillUsed`(슬롯 0~7의 `StartCooldown`, 기본공격·대시·기상 제외)마다 +1, 지속시간이 끝나면 전부 사라짐
+  - 새 수정치 대상(`EStatModifierTarget` 뒤에 추가): AttackPowerPercent / SpeedBonus / CooldownReduction / IncomingDamage / HealingReceived / GetUpCooldown / MPRegen / CastSkillDamage / CastSpeed / MoveSpeedToDamage / DamagePenaltyChance. 적용 지점: 받는 피해 `ReceiveDamage`(Fixed 제외), 회복 `Heal`, 마나 `Tick`, 캐스팅 진행 `GetCastSpeedMultiplierOf`(SkillCast·SkillCharge), 기상 쿨 `StartCooldown`, 예둔 `ResolveIncomingHit`
+- **시작 스펙**(유저 결정): 보석 Lv5 11개(겁화 6 + 작열 5, 계수÷쿨타임이 높은 스킬 순으로 자동 배정) + 각인 유물 0단계 5개(원한·아드레날린·예리한 둔기·저주받은 인형·타격의 대가). 별도 플래그 `bHasStarterGems`/`bHasStarterEngravings`라 기존 저장 파일도 한 번 받음
+  - **K 66.830 → 27.631**: 시작 보석·각인 기대 DPS ×2.4187을 상쇄(아드레날린은 스킬 사용 빈도 0.466회/초 → 평균 약 2.8중첩, 치명 보너스 없음으로 계산). `DA_Sorceress`에도 저장함. **실측은 허수아비 `LoADpsTest`로 확인할 것**
+- **획득**: 레이드 보상 보석 1개(겁화·작열 반반, Lv1~4 = 40/30/20/10%) + 각인서 1~3권(50%, 10종 중 하나) — 첫 클리어 배수·더보기 대상 아님. 상점 Lv1 보석 각 3,000실링(임시 가격)
+- **UI = P창(캐릭터 정보) 탭** (처음엔 J키 별도 창으로 잘못 만들었다가 유저 지적으로 이동 — P창에 이미 [장비]/[각인]/[보석] 탭 버튼이 있었음). `UCharacterInfoWidget::SetTab`이 페이지 3개(장비 본문 / `UEngravingPageWidget` / `UGemPageWidget`)를 겹쳐 두고 보이는 것만 바꾼다
+  - [보석] (`UI/GemPageWidget`, 로아 보석 탭 배치, 추천 세팅 버튼은 유저 요청으로 뺌 — 그 자리에 [보석 합성]): 프리셋 줄(1번만, 나머지는 툴팁 "아직") + 보석 11개 원(위 2+2 / 가운데 3 / 아래 2+2, 아래 Lv.N, 겁화 주황·작열 보라 테두리, 우클릭 = 빼기) / 오른쪽 "장착 중인 보석 효과"(기본 공격력 총합 + 보석마다 스킬 아이콘·이름·"<스킬> 피해 N% 증가"/"재사용 대기시간 N% 감소" + 추가 효과 기본 공격력)
+  - 장착 = **이 탭을 연 채로 소지품의 보석 우클릭** → 페이지 위 스킬 선택 창 → 스킬 클릭 (컨트롤러 `HandleInventorySlotRightClick`이 `CharacterInfoWidget->BeginGemEquip`). 탭이 닫혀 있으면 안내만
+  - [각인] (`UI/EngravingPageWidget`, 로아 각인 탭): 프리셋 줄 + 각인 판(`LoABuildUI::MakeEngravingBoard` — 큰 원 + 정오각형 5칸, 장착 칸은 파란 테두리·주황 이름·◆단계) + [각인 효과 설정하기] / 오른쪽 "장착 중인 각인"(주황 이름 + ◆ x 단계, 아래 효과 이름 / 값 줄 = `LoAEngravings::DescribeLines`). 보기 전용
+  - **각인 효과 창** (`UI/EngravingSetupWidget`, ZOrder 10, `ALoAPlayerController::SetEngravingSetupOpen`): 왼쪽 각인 카드 5열(안 배운 건 흐리게) — 우클릭 = 빈 칸에 / 오른쪽 프리셋 줄 + 판 — 우클릭 = 빼기 / **[저장]을 눌러야 적용**(`UEngravingComponent::SetAllEquipped`, 그 전엔 Pending). 로아의 알림 설정·추천 세팅·상세정보·드래그 장착·아이템 레벨 칸 개방은 안 만듦
+  - 각인서 = **소지품에서 우클릭해 읽기**(로아와 같음, 0.3초 안 재클릭 무시)
+  - 공용 조각 `UI/BuildUIHelpers.h`(원 = RoundedBox 브러시, 링 아이콘, ◆ 단계, 프리셋 줄, 각인 판). 버튼은 Border + 각 위젯 `NativeOnMouseButtonDown` 위치 판정
+  - 아이콘(PIL 임시, 원형): 보석 `/Game/LostArk/UI/GemIcon/T_Gem_*` (처음 만든 네모 아이콘 `/Game/LostArk/UI/Gem/`은 미사용 — MCP 삭제가 반영 안 돼서 남음, 지워도 됨), 각인 `/Game/LostArk/UI/Engraving/T_Eng_<Id>`(색 원 + 글자 한 자)
+- 저장: `ULoAGameInstance`/`ULoASaveGame`의 `GemSlots`·`EngravingBooks`·`EquippedEngravings`. 바꿀 때마다 소지품과 함께 즉시 디스크 저장(보석이 소지품↔칸을 오가서 어긋나면 사라지거나 늘어남)
+- 아직 없음: P창·스킬트리(K)에 보석 표시, 보석 성장 속도 밸런스(Lv5 → Lv10은 Lv5 243개 분량), 로아 각인의 영웅·전설 단계·어빌리티 스톤
 
 ## 레이드 흐름 마무리 — 중단·페이드 이동·디스크 저장·테스트 치트 (2026-09-28)
 
@@ -968,6 +1008,7 @@
 - **레이드 중단**: 보스 맵 좌상단 "중단하기"(`UAbandonRaidWidget`, 위치 (20,200), ZOrder 6, 루트 `SelfHitTestInvisible`이라 빈 곳 클릭은 클릭 이동으로) → 확인 창 "레이드를 중단하시겠습니까?" 확인/취소 → `AbandonRaid()`: 무적+붙잡힘 → 정비소 복귀. 인트로 중엔 숨김, 사망·클리어 시 사라짐
 - **디스크 저장 `ULoASaveGame`**(슬롯 `LoA` = `Saved/SaveGames/LoA.sav`): 스킬 배치·스킬 레벨·포인트·최고 클리어 기록·클리어 횟수. `ULoAGameInstance::Init`에서 읽고, 스킬 배치 저장(SkillManager EndPlay)·클리어(`RecordClear`)마다 씀. **초기 상태로 테스트하려면 이 파일을 지울 것**
 - 클리어 화면 결과 줄: "클리어 시간 00:04:12 (최고 기록 00:03:50)" 또는 "최고 기록 갱신!"
+- **전체 명령어·아이템 ID 목록은 `Docs/테스트_명령어.txt`** — Exec 명령·콘솔 변수·아이템을 새로 만들면 여기도 갱신할 것
 - **테스트 콘솔 명령**(`~` 콘솔): `LoAKillBoss`(보스 즉사 → 클리어), `LoAKillSelf`(플레이어 즉사 → 패배). 쓴 판은 최고 기록에 안 남김
   - `LoASetRefine All 15` / `LoASetRefine Weapon 20` — 장착 장비 재련 단계 바로 설정(0~25, **저장 파일에 남음**), 콘솔에 바뀐 아이템 레벨 출력
 - 대시: `IsActionLocked()`(경직·기절·끌려감·붙잡힘·사망) 중이면 막힘 — 예전엔 기절 중에도 대시가 나갔다
@@ -1043,7 +1084,7 @@
 ### 기준값 (2026-09-23 — 실제 에키드나 싱글모드 수치로 교체)
 | 항목 | 값 | 실제 저장 위치 |
 |---|---|---|
-| 플레이어 최대 HP | 100,000 (시작 세트 기준, 재련하면 오름) | (`DA_Sorceress.BaseVitality` + 장비 체력) × `HPPerVitality` — 아래 "로아 스탯 시스템" |
+| 플레이어 최대 HP | 190,000 (시작 세트 기준, 재련하면 오름 — 아래 패턴 비율표는 10만 시절 기준이지만 보스 배율 ×1.9로 비율은 같음) | (`DA_Sorceress.BaseVitality` + 장비 체력) × `HPPerVitality` — 아래 "로아 스탯 시스템" |
 | 플레이어 AttackPower | 7,911,200 | `DA_Sorceress.AttackPower` |
 | 보스 최대 HP | 4,746,719,168 (에키드나 **싱글모드** 실제값) | C++ 기본값 (`BP_Echidna` CDO·레벨 인스턴스 모두 오버라이드를 지워 C++을 따르게 함) |
 | 보스 체력 줄 | 285 (싱글모드) | `BP_Echidna` CDO |

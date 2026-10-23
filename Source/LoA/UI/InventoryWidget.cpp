@@ -162,14 +162,76 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		UBorder* CurrencyBar = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CurrencyBar"));
 		CurrencyBar->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.35f));
 		CurrencyBar->SetPadding(FMargin(8.f, 3.f));
-		CurrencyBar->SetHorizontalAlignment(HAlign_Right);
+		CurrencyBar->SetHorizontalAlignment(HAlign_Fill);
 		if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(CurrencyBar))
 		{
 			S->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 		}
 
+		// 띠 왼쪽 = 보석 합성 버튼(로아 소지품 아래 보석 아이콘), 오른쪽 = 화폐
+		UHorizontalBox* BarRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("CurrencyBarRow"));
+		CurrencyBar->SetContent(BarRow);
+		{
+			// 버튼 바탕 3장(보통 / 마우스 올림 = 아래쪽 빛이 그려진 바탕 / 누름)을 UButton 스타일에 넣는다 —
+			// 빛은 따로 움직이는 효과가 아니라 "마우스 올림" 상태의 바탕 그림에 그려져 있다 (로아 버튼도 같은 방식)
+			auto LoadTex = [](const TCHAR* Name) -> UTexture2D*
+			{
+				return TSoftObjectPtr<UTexture2D>(FSoftObjectPath(FString::Printf(TEXT("/Game/LostArk/UI/GemIcon/%s.%s"), Name, Name))).LoadSynchronous();
+			};
+			UButton* GemFuseButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("GemFuseButton"));
+			UTexture2D* NormalTex = LoadTex(TEXT("T_GemFuseButton_Normal"));
+			if (NormalTex)
+			{
+				FButtonStyle Style = GemFuseButton->GetStyle();
+				auto Brush = [](UTexture2D* Tex)
+				{
+					FSlateBrush B;
+					B.SetResourceObject(Tex);
+					B.ImageSize = FVector2D(52.f, 34.f);
+					B.DrawAs = ESlateBrushDrawType::Image;
+					return B;
+				};
+				Style.Normal = Brush(NormalTex);
+				Style.Hovered = Brush(LoadTex(TEXT("T_GemFuseButton_Hovered")));
+				Style.Pressed = Brush(LoadTex(TEXT("T_GemFuseButton_Pressed")));
+				Style.NormalPadding = FMargin(0.f);
+				Style.PressedPadding = FMargin(0.f, 1.f, 0.f, 0.f);  // 누르면 아이콘이 살짝 내려감
+				GemFuseButton->SetStyle(Style);
+			}
+			else
+			{
+				MakeFlatButtonStyle(GemFuseButton);
+			}
+			GemFuseButton->SetToolTipText(NSLOCTEXT("Inventory", "GemFuseTooltip", "보석 합성"));
+			GemFuseButton->OnClicked.AddDynamic(this, &UInventoryWidget::HandleGemFuseClicked);
+			USizeBox* ButtonBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("GemFuseButtonBox"));
+			ButtonBox->SetWidthOverride(52.f);
+			ButtonBox->SetHeightOverride(34.f);
+			ButtonBox->SetContent(GemFuseButton);
+			USizeBox* IconBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("GemFuseIconBox"));
+			IconBox->SetWidthOverride(24.f);
+			IconBox->SetHeightOverride(24.f);
+			UImage* Icon = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("GemFuseIcon"));
+			Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
+			if (UTexture2D* Texture = LoadTex(TEXT("T_GemFuseIcon")))
+			{
+				Icon->SetBrushFromTexture(Texture);
+			}
+			else
+			{
+				Icon->SetColorAndOpacity(FLinearColor(0.95f, 0.8f, 0.5f, 1.f));
+			}
+			IconBox->SetContent(Icon);
+			GemFuseButton->SetContent(IconBox);
+			if (UHorizontalBoxSlot* S = BarRow->AddChildToHorizontalBox(ButtonBox)) S->SetVerticalAlignment(VAlign_Center);
+		}
 		UHorizontalBox* CurrencyRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("CurrencyRow"));
-		CurrencyBar->SetContent(CurrencyRow);
+		if (UHorizontalBoxSlot* S = BarRow->AddChildToHorizontalBox(CurrencyRow))
+		{
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetHorizontalAlignment(HAlign_Right);
+			S->SetVerticalAlignment(VAlign_Center);
+		}
 
 		// 골드 — 재련 비용·레이드 보상
 		{
@@ -393,6 +455,14 @@ void UInventoryWidget::HandleSortClicked()
 	}
 }
 
+void UInventoryWidget::HandleGemFuseClicked()
+{
+	if (ALoAPlayerController* PC = GetOwningPlayer<ALoAPlayerController>())
+	{
+		PC->SetGemFuseOpen(!PC->IsGemFuseOpen());
+	}
+}
+
 void UInventoryWidget::HandleCloseClicked()
 {
 	if (ALoAPlayerController* PC = GetOwningPlayer<ALoAPlayerController>())
@@ -454,6 +524,11 @@ void UInventoryWidget::SetPanelPlacement(FVector2D Anchor, FVector2D Alignment, 
 		PanelSlot->SetAlignment(Alignment);
 		PanelSlot->SetPosition(Position);
 	}
+}
+
+UWidget* UInventoryWidget::GetPanel() const
+{
+	return Panel;
 }
 
 void UInventoryWidget::ResetPanelPlacement()

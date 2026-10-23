@@ -46,6 +46,39 @@ float UStatComponent::GetCooldownReductionOf(const AActor* Actor)
 	return Comp ? Comp->GetStats().CooldownReduction : 0.f;
 }
 
+float UStatComponent::GetCastSpeedMultiplierOf(const AActor* Actor)
+{
+	const UStatComponent* Comp = Find(Actor);
+	return Comp ? FMath::Max(0.01f, Comp->GetStats().AttackSpeedMultiplier * Comp->GetStats().CastSpeedMultiplier) : 1.f;
+}
+
+void UStatComponent::SetSkillGemBonuses(const TMap<FName, float>& DamageBonus, const TMap<FName, float>& CooldownReduction)
+{
+	SkillGemDamage = DamageBonus;
+	SkillGemCooldown = CooldownReduction;
+	OnStatsChanged.Broadcast(Stats);  // 수치는 그대로지만 창(P·보석)이 다시 그리게
+}
+
+float UStatComponent::GetSkillDamageMultiplier(FName SkillRowName) const
+{
+	const float* Found = SkillGemDamage.Find(SkillRowName);
+	return 1.f + (Found ? *Found : 0.f);
+}
+
+float UStatComponent::GetSkillCooldownReduction(FName SkillRowName) const
+{
+	const float* Found = SkillGemCooldown.Find(SkillRowName);
+	return Found ? *Found : 0.f;
+}
+
+float UStatComponent::GetTotalCooldownReductionOf(const AActor* Actor, FName SkillRowName)
+{
+	const UStatComponent* Comp = Find(Actor);
+	if (!Comp) return 0.f;
+	const float Total = 1.f - (1.f - Comp->GetStats().CooldownReduction) * (1.f - Comp->GetSkillCooldownReduction(SkillRowName));
+	return FMath::Clamp(Total, 0.f, LoAStatRules::MaxCooldownReduction);
+}
+
 void UStatComponent::InitializeFromData(const UCharacterDataAsset* Data)
 {
 	// DA가 없으면 계산하지 않는다 — 캐릭터는 생성자 기본값(HP·공격력)을 그대로 쓴다
@@ -108,6 +141,10 @@ void UStatComponent::RecalculateStats()
 
 	float ExtraCritRate = 0.f;
 	float ExtraCritDamage = 0.f;
+	double AttackPowerPercent = 0.0;
+	float SpeedBonus = 0.f;
+	float ExtraCooldownKeep = 1.f;   // (1 - 각인 쿨감)들의 곱
+	float MoveSpeedToDamage = 0.f;
 	double GearPhysDefense = 0.0;
 	double GearMagicDefense = 0.0;
 
@@ -126,6 +163,17 @@ void UStatComponent::RecalculateStats()
 			case EStatModifierTarget::MultiplicativeDamage: New.MultiplicativeDamage *= 1.f + static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::PhysDefense:          GearPhysDefense += Mod.Value; break;
 			case EStatModifierTarget::MagicDefense:         GearMagicDefense += Mod.Value; break;
+			case EStatModifierTarget::AttackPowerPercent:   AttackPowerPercent += Mod.Value; break;
+			case EStatModifierTarget::SpeedBonus:           SpeedBonus += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CooldownReduction:    ExtraCooldownKeep *= 1.f - static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::IncomingDamage:       New.IncomingDamageMultiplier += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::HealingReceived:      New.HealingMultiplier += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::GetUpCooldown:        New.GetUpCooldownReduction += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::MPRegen:              New.MPRegenMultiplier += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CastSkillDamage:      New.CastSkillDamageMultiplier *= 1.f + static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CastSpeed:            New.CastSpeedMultiplier += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::MoveSpeedToDamage:    MoveSpeedToDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::DamagePenaltyChance:  New.DamagePenaltyChance += static_cast<float>(Mod.Value); break;
 			default:
 				New.CombatPoints.Add(Stat_ToCombatStat(Mod.Target), FMath::RoundToInt32(Mod.Value));
 				break;
@@ -135,7 +183,9 @@ void UStatComponent::RecalculateStats()
 
 	// 공격력 — 로아 공식. 정수로 반올림해 K의 소수점 오차가 데미지 숫자에 새지 않게 한다
 	New.DisplayAttackPower = FMath::Sqrt(FMath::Max(0.0, New.PrimaryStat * New.WeaponPower / 6.0));
-	New.AttackPower = FMath::RoundToDouble(New.DisplayAttackPower * AttackPowerScale);
+	// 로아 "공격력 %"(보석 기본 공격력·아드레날린) — 서로 더해서 공격력에 곱한다
+	New.AttackPowerPercent = static_cast<float>(AttackPowerPercent);
+	New.AttackPower = FMath::RoundToDouble(New.DisplayAttackPower * AttackPowerScale * (1.0 + AttackPowerPercent));
 
 	// 최대 생명력 — 로아: 체력 × 직업 생명 활성력 계수. 맨몸 체력(BaseVitality)분이 캐릭터 기본 HP
 	New.BaseHP = static_cast<float>(BaseVitality * HPPerVitality);
@@ -153,10 +203,21 @@ void UStatComponent::RecalculateStats()
 	New.CritRate                 = FMath::Clamp(BaseCritRate + P.Crit * LoAStatRules::CritRatePerPoint + ExtraCritRate, 0.f, 1.f);
 	New.CritDamage               = LoAStatRules::BaseCritDamage + ExtraCritDamage;
 	New.SpecializationMultiplier = 1.f + P.Specialization * LoAStatRules::SpecializationPerPoint;
-	New.CooldownReduction        = FMath::Clamp(P.Swiftness * LoAStatRules::CooldownPerSwiftness, 0.f, LoAStatRules::MaxCooldownReduction);
-	New.MoveSpeedMultiplier      = 1.f + P.Swiftness * LoAStatRules::SpeedPerSwiftness;
+	// 쿨감 — 로아처럼 곱연산: (1 - 신속) × (1 - 각인). 스킬별 보석(작열)은 StartCooldown에서 한 번 더 곱하고 합계 80%로 자름
+	const float SwiftCooldown = P.Swiftness * LoAStatRules::CooldownPerSwiftness;
+	New.CooldownReduction        = FMath::Clamp(1.f - (1.f - SwiftCooldown) * ExtraCooldownKeep, 0.f, LoAStatRules::MaxCooldownReduction);
+	New.MoveSpeedMultiplier      = 1.f + FMath::Clamp(P.Swiftness * LoAStatRules::SpeedPerSwiftness + SpeedBonus, 0.f, LoAStatRules::MaxSpeedBonus);
 	New.AttackSpeedMultiplier    = New.MoveSpeedMultiplier;
 	New.DominationMultiplier     = 1.f + P.Domination * LoAStatRules::DominationPerPoint;
+	// 돌격대장 — 이동속도 증가량(%)의 N%만큼 피해, 별도 곱연산
+	if (MoveSpeedToDamage > 0.f)
+	{
+		New.MultiplicativeDamage *= 1.f + MoveSpeedToDamage * (New.MoveSpeedMultiplier - 1.f);
+	}
+	New.IncomingDamageMultiplier = FMath::Max(0.f, New.IncomingDamageMultiplier);
+	New.HealingMultiplier        = FMath::Max(0.f, New.HealingMultiplier);
+	New.GetUpCooldownReduction   = FMath::Clamp(New.GetUpCooldownReduction, 0.f, 0.9f);
+	New.DamagePenaltyChance      = FMath::Clamp(New.DamagePenaltyChance, 0.f, 1.f);
 	// 숙련은 효과 없음 — 포인트만 들고 있다
 
 	Stats = New;

@@ -4,6 +4,7 @@
 #include "Engine/GameInstance.h"
 #include "Item/ItemTypes.h"
 #include "Item/RaidReward.h"
+#include "Item/BuildTypes.h"
 #include "LoAGameInstance.generated.h"
 
 /**
@@ -87,6 +88,29 @@ public:
 	// 운명의 파편 10만 추가 지급(테스트용)을 받았는지
 	UPROPERTY(Transient)
 	bool bHasFragmentGift = false;
+
+	// ── 보석·각인 (7단계) — UGemComponent / UEngravingComponent가 EndPlay에서 저장 ──
+	// 시작 보석(Lv5 11개)·각인(유물 0단계 5개)을 받았는지 — 7단계 이전 저장 파일에도 한 번 지급
+	UPROPERTY(Transient)
+	bool bHasStarterGems = false;
+
+	UPROPERTY(Transient)
+	bool bHasStarterEngravings = false;
+
+	UPROPERTY(Transient)
+	TArray<FGemSlot> GemSlots;
+
+	// 각인별 읽은 유물 각인서 권수 (1권 = 배움·유물 0단계)
+	UPROPERTY(Transient)
+	TMap<FName, int32> EngravingBooks;
+
+	// 각인 칸 5개 — 빈 칸은 NAME_None
+	UPROPERTY(Transient)
+	TArray<FName> EquippedEngravings;
+
+	// 보석 합성 창에 올려 둔 재료 — 소지품에서 빠져 있으므로 저장해 두고 다음 실행 때 돌려준다
+	UPROPERTY(Transient)
+	TArray<FName> GemFuseInputs;
 
 	// 현재 저장 구조 버전 — ULoASaveGame::SaveVersion
 	// 1 = 장비, 2 = 레이드 보상(대기 보상·첫 클리어) + 실링 상한 조정 + 골드

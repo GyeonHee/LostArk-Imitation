@@ -15,6 +15,8 @@ enum class EItemCategory : uint8
 	Consumable,
 	Material,
 	Equipment,
+	Gem,      // 7단계 보석 (겁화·작열)
+	Book,     // 7단계 유물 각인서
 	Etc,
 };
 
@@ -67,6 +69,10 @@ struct FItemDefinition
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	EItemCategory Category = EItemCategory::Etc;
+
+	// 툴팁에 이름 아래로 붙는 설명 — 비우면 이름만
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	FText Description;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	TSoftObjectPtr<UTexture2D> Icon;
@@ -165,6 +171,11 @@ struct FEquipmentInstance
 	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
 	TArray<FStatRoll> StatRolls;
 
+	// 장신구 주 스탯·체력 등급 0~3 (로아 T4 장신구는 부위마다 4단계 고정값 중 하나) — 값은 LoAItems::GetAccessoryStats.
+	// 이 필드가 생기기 전 저장 파일의 장신구는 0 = 최하 등급(= 시작 장신구 값)으로 읽힌다
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 AccessoryTier = 0;
+
 	// 장비 성장 — 다음 단계 재련 전에 운명의 파편 + 실링으로 경험치를 100% 채워야 한다(로아). 재련에 성공하면 다시 false
 	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
 	bool bGrowthDone = false;
@@ -254,6 +265,10 @@ namespace LoAItems
 
 	/** 재련 장비 부위의 RefineLevel(0~25) 단계 기본 효과 — 로아 T4 운명의 업화 표 (부위마다, 단계마다 오르는 양이 다르다) */
 	LOA_API FGearStats GetGearStats(EEquipSlot Slot, int32 RefineLevel);
+
+	/** 장신구 부위의 등급(0~3) 주 스탯·체력 — 로아 T4 장신구 표 (목걸이 > 귀걸이 > 반지) */
+	constexpr int32 AccessoryTierCount = 4;
+	LOA_API FGearStats GetAccessoryStats(EEquipSlot Slot, int32 Tier);
 
 	/** 세 자리마다 쉼표 — 100000000 → "100,000,000". 언어 설정과 무관하게 항상 쉼표 */
 	LOA_API FString FormatWithCommas(int64 Value);

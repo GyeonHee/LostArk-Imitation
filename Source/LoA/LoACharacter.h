@@ -53,7 +53,7 @@ private:
 	void HandleStatsChanged(const FCombatStats& NewStats);
 
 	// DA의 MoveSpeed — 신속 배율을 곱할 기준값
-	float BaseMoveSpeed = 600.f;
+	float BaseMoveSpeed = 400.f;
 
 	float MPRegenAccum = 0.f;
 
@@ -134,6 +134,14 @@ public:
 	// 장착 장비 6부위 (P키 캐릭터 정보 창) — 지능·무기공격력을 StatComponent에 더한다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Items")
 	TObjectPtr<class UEquipmentComponent> Equipment;
+
+	// 보석 11칸 (7단계)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gem")
+	TObjectPtr<class UGemComponent> Gems;
+
+	// 각인 5칸 (7단계)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Engraving")
+	TObjectPtr<class UEngravingComponent> Engravings;
 
 	// 스탯(지능·무기공격력·체력 + 전투 특성) 계산 — 공격력·최대 HP·이동속도는 여기서 나온다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")

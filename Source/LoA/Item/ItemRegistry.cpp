@@ -1,4 +1,5 @@
 #include "Item/ItemTypes.h"
+#include "Item/BuildTypes.h"
 #include "Engine/Texture2D.h"
 #include "NiagaraSystem.h"
 
@@ -109,6 +110,10 @@ namespace LoAItems
 				Def.AccessoryStatMax = Acc.Max;
 				Map.Add(Def.ItemId, Def);
 			}
+
+			// ── 보석·각인서 (7단계) ──
+			LoAGems::RegisterItems(Map);
+			LoAEngravings::RegisterItems(Map);
 
 			return Map;
 		}
@@ -270,6 +275,30 @@ namespace LoAItems
 		Out.MagicDefense = Table[L].MagicDefense;
 		Out.PrimaryStat = Table[L].PrimaryStat;
 		Out.Vitality = Table[L].Vitality;
+		return Out;
+	}
+
+	FGearStats GetAccessoryStats(EEquipSlot Slot, int32 Tier)
+	{
+		// Maxroll 게임 데이터(itemRandom 5000·5100·5200 계열 = T4 목걸이·귀걸이·반지): 등급마다 고정 주 스탯 + 체력
+		static const double Necklace[AccessoryTierCount][2] = { { 15357, 3672 }, { 15714, 3734 }, { 16428, 3857 }, { 17857, 4103 } };
+		static const double Earring[AccessoryTierCount][2]  = { { 11944, 2623 }, { 12222, 2667 }, { 12778, 2755 }, { 13889, 2931 } };
+		static const double Ring[AccessoryTierCount][2]     = { { 11091, 2099 }, { 11349, 2134 }, { 11865, 2204 }, { 12897, 2345 } };
+
+		FGearStats Out;
+		const double (*Table)[2] = nullptr;
+		switch (Slot)
+		{
+		case EEquipSlot::Necklace: Table = Necklace; break;
+		case EEquipSlot::Earring1:
+		case EEquipSlot::Earring2: Table = Earring; break;
+		case EEquipSlot::Ring1:
+		case EEquipSlot::Ring2:    Table = Ring; break;
+		default: return Out;
+		}
+		const int32 T = FMath::Clamp(Tier, 0, AccessoryTierCount - 1);
+		Out.PrimaryStat = Table[T][0];
+		Out.Vitality = Table[T][1];
 		return Out;
 	}
 

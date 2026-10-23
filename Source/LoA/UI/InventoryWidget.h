@@ -26,6 +26,9 @@ public:
 	// 커서가 창 위에 있는지 — 컨트롤러가 클릭 이동·HUD 드래그 처리에 쓴다
 	bool IsCursorOverPanel() const;
 
+	// 창 테두리 — 보석 합성 창이 이 옆에 같은 높이로 붙는다
+	UWidget* GetPanel() const;
+
 	/** 창 위치를 지정 (CanvasSlot 앵커·정렬·위치) — 상점이 열릴 때 상점 오른쪽에 붙인다 */
 	void SetPanelPlacement(FVector2D Anchor, FVector2D Alignment, FVector2D Position);
 
@@ -60,6 +63,10 @@ private:
 
 	UFUNCTION()
 	void HandleCloseClicked();
+
+	// 아래 띠의 보석 합성 버튼 — UGemFuseWidget 열기/닫기
+	UFUNCTION()
+	void HandleGemFuseClicked();
 
 	void HandleInventoryChanged(int32 Index);
 	void HandleSillingChanged(int64 NewAmount);

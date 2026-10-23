@@ -2,7 +2,7 @@
 #include "BlazeProjectile.h"
 #include "LoACharacter.h"
 #include "Stat/LoADamageLibrary.h"
-#include "GameFramework/PlayerController.h"
+#include "LoAPlayerController.h"
 #include "GameFramework/Character.h"
 #include "Components/CapsuleComponent.h"
 
@@ -14,15 +14,15 @@ void USkillBlaze::Execute_Implementation(AActor* Owner)
     if (!World) return;
 
     ALoACharacter* Character = Cast<ALoACharacter>(Owner);
-    APlayerController* PC = Character ? Cast<APlayerController>(Character->GetController()) : nullptr;
+    ALoAPlayerController* PC = Character ? Cast<ALoAPlayerController>(Character->GetController()) : nullptr;
     if (!PC) return;
 
-    // 마우스 커서가 가리키는 바닥 위치
-    FHitResult CursorHit;
-    if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, CursorHit)) return;
+    // 조준 지점 — 바닥을 못 맞혀도(맵 밖·하늘) 방향은 나온다. 예전엔 여기서 return해서 발사체 없이 쿨타임만 돌았다
+    FVector AimLocation;
+    if (!PC->GetCursorAimLocation(AimLocation)) return;
 
     // 캐릭터 → 커서 방향으로 존 회전
-    FVector Direction = CursorHit.Location - Owner->GetActorLocation();
+    FVector Direction = AimLocation - Owner->GetActorLocation();
     Direction.Z = 0.f;
     const FRotator SpawnRotation = Direction.IsNearlyZero()
         ? Owner->GetActorRotation()

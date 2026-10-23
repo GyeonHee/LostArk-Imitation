@@ -44,6 +44,25 @@ void UInventoryComponent::EnsureLoaded()
 			if (Slots[i].IsEquipment() && !Equipments.Contains(Slots[i].EquipmentId)) Slots[i] = FInventorySlot();
 			Normalize(Slots[i]);
 		}
+
+		// 최대 개수가 줄어든 아이템(보석 999 → 1, 2026-10-23) — 넘친 만큼은 빈 칸으로, 칸이 없으면 대기 보상으로
+		TMap<FName, int32> Overflow;
+		for (FInventorySlot& Slot : Slots)
+		{
+			if (Slot.IsEmpty() || Slot.IsEquipment()) continue;
+			const int32 Max = GetMaxStack(Slot.ItemId);
+			if (Slot.Count > Max)
+			{
+				Overflow.FindOrAdd(Slot.ItemId) += Slot.Count - Max;
+				Slot.Count = Max;
+			}
+		}
+		for (const TPair<FName, int32>& Pair : Overflow)
+		{
+			const int32 Left = AddItem(Pair.Key, Pair.Value);
+			if (Left > 0) GI->PendingRewards.Add({ Pair.Key, Left });
+			UE_LOG(LogTemp, Log, TEXT("[Inventory] %s 겹친 %d개를 나눔 (칸 부족 %d개는 대기 보상으로)"), *Pair.Key.ToString(), Pair.Value, Left);
+		}
 	}
 	else
 	{
@@ -86,6 +105,7 @@ FGuid UInventoryComponent::CreateEquipment(FName ItemId, int32 RefineLevel, int3
 	{
 		Instance.RefineLevel = 0;
 		Instance.StatRolls = LoAItems::RollAccessoryStats(*Def);
+		Instance.AccessoryTier = FMath::RandRange(0, LoAItems::AccessoryTierCount - 1);
 	}
 	Equipments.Add(Instance.InstanceId, Instance);
 	return Instance.InstanceId;

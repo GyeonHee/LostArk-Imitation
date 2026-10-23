@@ -435,10 +435,26 @@ void USkillManagerComponent::StartCooldown(int32 SlotIndex)
     }
     else if (bHasInstance && SlotIndex != DashSlotIndex && SlotIndex != GetUpSlotIndex)
     {
-        // 신속 쿨감 (상한 30%는 StatComponent에서). 대시·즉시 기상은 제외 — 딜 스탯이 생존기를 줄이면 패턴이 쉬워진다
-        CooldownDurations[SlotIndex] *= 1.f - UStatComponent::GetCooldownReductionOf(GetOwner());
+        // 쿨감 = 1 - (1 - 신속·각인) × (1 - 그 스킬 보석), 상한 80%. 대시·즉시 기상은 제외 — 딜 스탯이 생존기를 줄이면 패턴이 쉬워진다
+        CooldownDurations[SlotIndex] *= 1.f - UStatComponent::GetTotalCooldownReductionOf(GetOwner(), SlotInstances[SlotIndex]->SkillRowName);
     }
-    CooldownEndTimes[SlotIndex] = World->GetTimeSeconds() + CooldownDurations[SlotIndex];
+
+    // 즉시 기상은 각인(탈출의 명수)만 받는다 — 저장된 길이를 바꾸면 쓸 때마다 줄어드니 끝 시각에만 반영
+    float Duration = CooldownDurations[SlotIndex];
+    if (SlotIndex == GetUpSlotIndex)
+    {
+        if (const UStatComponent* Stats = UStatComponent::Find(GetOwner()))
+        {
+            Duration *= 1.f - Stats->GetStats().GetUpCooldownReduction;
+        }
+    }
+    CooldownEndTimes[SlotIndex] = World->GetTimeSeconds() + Duration;
+
+    // 각인(아드레날린·마나의 흐름)용 — 스킬 슬롯(0~7)을 쓸 때만. 기본공격·대시·기상은 제외(로아와 같음)
+    if (SlotIndex >= 0 && SlotIndex < BasicAttackSlotIndex)
+    {
+        OnSkillUsed.Broadcast(SlotIndex);
+    }
 }
 
 bool USkillManagerComponent::IsCounterSlot(int32 SlotIndex) const

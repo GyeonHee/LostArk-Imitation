@@ -3700,9 +3700,12 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::Tick(FStateTreeE
 		return EStateTreeRunStatus::Running;
 	}
 
+	// 그로기 조건 = 마지막 줄을 카운터쳤는가 (앞 줄 결과는 상관없음). 정리하면 줄이 파괴되므로 그 전에 본다
+	const AEchidnaMirrorWallActor* LastWall = InstanceData.Walls.Num() > 0 ? InstanceData.Walls.Last().Get() : nullptr;
+	const bool bSuccess = IsValid(LastWall) && LastWall->IsCountered();
+
 	// 패턴 끝 — 줄·카메라를 먼저 정리해 보스가 나타난 상태로 그로기에 들어간다
-	const int32 Countered = CleanupPattern(InstanceData);
-	const bool bSuccess = Countered >= InstanceData.WaveCount;
+	CleanupPattern(InstanceData);
 	if (InstanceData.GroggyDuration > 0.f && (bSuccess || !InstanceData.bGroggyOnlyOnSuccess))
 	{
 		Boss->StartGroggy(InstanceData.GroggyDuration);

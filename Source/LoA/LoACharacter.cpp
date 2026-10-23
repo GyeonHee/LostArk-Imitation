@@ -18,11 +18,13 @@
 #include "Item/InventoryComponent.h"
 #include "Stat/StatComponent.h"
 #include "Item/EquipmentComponent.h"
+#include "Item/GemComponent.h"
+#include "Stat/EngravingComponent.h"
 
 ALoACharacter::ALoACharacter()
 {
-	HP = 100000.f;
-	MaxHP = 100000.f;
+	HP = 190000.f;
+	MaxHP = 190000.f;
 	MP = 5000.f;
 	MaxMP = 5000.f;
 
@@ -48,6 +50,8 @@ ALoACharacter::ALoACharacter()
 	Inventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("Inventory"));
 	StatComponent = CreateDefaultSubobject<UStatComponent>(TEXT("StatComponent"));
 	Equipment = CreateDefaultSubobject<UEquipmentComponent>(TEXT("Equipment"));
+	Gems = CreateDefaultSubobject<UGemComponent>(TEXT("Gems"));
+	Engravings = CreateDefaultSubobject<UEngravingComponent>(TEXT("Engravings"));
 
 	// Create the camera boom component
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -163,7 +167,7 @@ void ALoACharacter::Tick(float DeltaSeconds)
 	MPRegenAccum += DeltaSeconds;
 	if (MPRegenAccum >= 1.f)
 	{
-		RestoreMP(MaxMP * MPRegenRate);
+		RestoreMP(MaxMP * MPRegenRate * (StatComponent ? StatComponent->GetStats().MPRegenMultiplier : 1.f));
 		MPRegenAccum -= 1.f;
 	}
 
@@ -260,7 +264,7 @@ void ALoACharacter::ReceiveDamage(float DamageAmount, ELoADamageKind Kind)
 	{
 		const FCombatStats& S = StatComponent->GetStats();
 		const float Reduction = Kind == ELoADamageKind::Physical ? S.PhysDamageReduction : S.MagicDamageReduction;
-		DamageAmount *= AEchidnaBoss::GetIncomingDamageScale(this) * (1.f - Reduction);
+		DamageAmount *= AEchidnaBoss::GetIncomingDamageScale(this) * (1.f - Reduction) * S.IncomingDamageMultiplier;  // 원한 받는 피해 +20%
 	}
 
 	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다
@@ -325,6 +329,7 @@ void ALoACharacter::RestoreFullStatus()
 void ALoACharacter::Heal(float Amount)
 {
 	if (bIsDead || Amount <= 0.f) return;
+	if (StatComponent) Amount *= StatComponent->GetStats().HealingMultiplier;  // 저주받은 인형 회복 -25%
 	HP = FMath::Min(MaxHP, HP + Amount);
 	OnHPChanged.Broadcast(HP);
 }

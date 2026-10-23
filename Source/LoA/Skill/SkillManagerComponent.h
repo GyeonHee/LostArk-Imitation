@@ -10,6 +10,8 @@
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSkillSlotChanged, int32, SlotIndex, FName, RowName);
+// 스킬 슬롯(0~7)을 썼을 때(쿨타임이 시작될 때) — 각인(아드레날린·마나의 흐름) 중첩용
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnSkillUsed, int32 /*SlotIndex*/);
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class LOA_API USkillManagerComponent : public UActorComponent
@@ -175,6 +177,8 @@ public:
     // 슬롯이 변경될 때마다 브로드캐스트 — WBP_HUD가 바인딩해서 아이콘 갱신
     UPROPERTY(BlueprintAssignable, Category="SkillTree")
     FOnSkillSlotChanged OnSkillSlotChanged;
+
+    FOnSkillUsed OnSkillUsed;
 
 private:
     UPROPERTY()

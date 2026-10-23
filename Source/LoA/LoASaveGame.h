@@ -4,6 +4,7 @@
 #include "GameFramework/SaveGame.h"
 #include "Item/ItemTypes.h"
 #include "Item/RaidReward.h"
+#include "Item/BuildTypes.h"
 #include "LoASaveGame.generated.h"
 
 /**
@@ -90,6 +91,26 @@ public:
 
 	UPROPERTY()
 	bool bHasFragmentGift = false;
+
+	// 보석·각인 (7단계)
+	UPROPERTY()
+	bool bHasStarterGems = false;
+
+	UPROPERTY()
+	bool bHasStarterEngravings = false;
+
+	UPROPERTY()
+	TArray<FGemSlot> GemSlots;
+
+	UPROPERTY()
+	TMap<FName, int32> EngravingBooks;
+
+	UPROPERTY()
+	TArray<FName> EquippedEngravings;
+
+	// 보석 합성 창에 올려 둔 재료 — 소지품에서 빠져 있으므로 저장해 두고 다음 실행 때 돌려준다
+	UPROPERTY()
+	TArray<FName> GemFuseInputs;
 
 	// 레이드 보상 중 소지품이 가득 차 아직 못 받은 것 — 대기 지역에서 칸이 생기면 지급 (버전 2~)
 	UPROPERTY()

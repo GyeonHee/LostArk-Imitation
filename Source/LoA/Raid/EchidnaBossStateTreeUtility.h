@@ -2118,11 +2118,11 @@ struct FStateTreeEchidnaMirrorCounterPatternInstanceData
 
 	// 패턴이 끝나면(EndDelay 뒤) 보스가 다시 나타나 이 시간 동안 그로기 — 0이면 그로기 없이 바로 종료
 	UPROPERTY(EditAnywhere, Category = "Groggy", meta = (ClampMin = "0.0"))
-	float GroggyDuration = 3.f;
+	float GroggyDuration = 5.f;
 
-	// 켜면 4줄 전부 카운터쳤을 때(파훼)만 그로기
+	// 켜면 마지막 줄을 카운터쳤을 때만 그로기(앞 줄은 놓쳐도 됨) — 기본 켬(2026-10-23)
 	UPROPERTY(EditAnywhere, Category = "Groggy")
-	bool bGroggyOnlyOnSuccess = false;
+	bool bGroggyOnlyOnSuccess = true;
 
 	// 시점 — 위에서 내려보던(-60) 카메라가 내려와 비스듬히 보도록
 	UPROPERTY(EditAnywhere, Category = "Camera")

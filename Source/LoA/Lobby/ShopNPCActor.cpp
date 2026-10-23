@@ -1,5 +1,6 @@
 #include "Lobby/ShopNPCActor.h"
 #include "Item/ItemTypes.h"
+#include "Item/BuildTypes.h"
 
 AShopNPCActor::AShopNPCActor()
 {
@@ -23,4 +24,13 @@ AShopNPCActor::AShopNPCActor()
 	Lava.ItemId = LoAItems::LavaBreath;
 	Lava.Price = 1000;
 	ShopItems.Add(Lava);
+
+	// 1레벨 보석 (7단계) — 합성 재료. 가격은 임시
+	for (const EGemType Type : { EGemType::Damage, EGemType::Cooldown })
+	{
+		FShopItemEntry Gem;
+		Gem.ItemId = LoAGems::MakeGemId(Type, 1);
+		Gem.Price = 3000;
+		ShopItems.Add(Gem);
+	}
 }

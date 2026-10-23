@@ -14,14 +14,16 @@ void USkillGust::Execute_Implementation(AActor* Owner)
         ? Cast<ALoAPlayerController>(Character->GetController()) : nullptr;
     if (!PC) return;
 
-    FHitResult CursorHit;
-    if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, CursorHit)) return;
+    // 조준 지점 — 바닥 트레이스가 빗나가도(거울 카운터의 비스듬한 시점에서 맵 밖·하늘을 가리킬 때) 방향은 나온다.
+    // 예전엔 여기서 return해서 토네이도 없이 마나·쿨타임만 빠졌다(TryActivateSkill이 Execute 결과와 무관하게 StartCooldown)
+    FVector AimLocation;
+    if (!PC->GetCursorAimLocation(AimLocation)) return;
 
     // 캐릭터 → 커서 수평 방향
     const FVector OwnerLoc = Owner->GetActorLocation();
-    FVector HorizDir = CursorHit.Location - OwnerLoc;
+    FVector HorizDir = AimLocation - OwnerLoc;
     HorizDir.Z = 0.f;
-    if (HorizDir.IsNearlyZero()) return;
+    if (HorizDir.IsNearlyZero()) HorizDir = Owner->GetActorForwardVector();  // 커서가 캐릭터 위 — 바라보는 방향으로
     HorizDir.Normalize();
 
     // 커서 방향으로 캐릭터 회전 + 이동 즉시 정지

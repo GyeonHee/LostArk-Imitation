@@ -1,5 +1,6 @@
 #include "Item/RaidReward.h"
 #include "Item/ItemTypes.h"
+#include "Item/BuildTypes.h"
 
 namespace
 {
@@ -36,6 +37,19 @@ namespace LoARaidReward
 		TArray<FLoARewardItem> Out;
 		// 장신구 1개 (6단계) — 목걸이·귀걸이·반지 중 하나. 첫 클리어 배수·더보기 대상 아님
 		Out.Add({ LoAItems::GetRandomDropAccessory(), 1 });
+
+		// 보석 1개 (7단계) — 겁화·작열 반반, Lv1~4 (40/30/20/10%). 첫 클리어 배수·더보기 대상 아님
+		{
+			const float Roll = FMath::FRand();
+			const int32 Level = Roll < 0.4f ? 1 : (Roll < 0.7f ? 2 : (Roll < 0.9f ? 3 : 4));
+			Out.Add({ LoAGems::MakeGemId(FMath::RandBool() ? EGemType::Damage : EGemType::Cooldown, Level), 1 });
+		}
+		// 유물 각인서 1~3권 (50%) — 각인 10종 중 하나
+		if (FMath::FRand() < 0.5f)
+		{
+			const TArray<FEngravingDefinition>& All = LoAEngravings::GetAll();
+			Out.Add({ All[FMath::RandRange(0, All.Num() - 1)].BookItemId, FMath::RandRange(1, 3) });
+		}
 		for (const FRaidRewardRow& Row : Rows)
 		{
 			if (Row.Chance < 1.f && FMath::FRand() >= Row.Chance) continue;
@@ -54,7 +68,7 @@ namespace LoARaidReward
 		{
 			if (IsCurrency(Item.ItemId)) continue;
 			const FItemDefinition* Def = LoAItems::Find(Item.ItemId);
-			if (Def && Def->IsEquipment()) continue;  // 장신구는 더보기로 늘지 않음
+			if (Def && (Def->IsEquipment() || Def->Category == EItemCategory::Gem || Def->Category == EItemCategory::Book)) continue;  // 장신구·보석·각인서는 더보기로 늘지 않음
 			const int64 Extra = static_cast<int64>(FMath::CeilToDouble(Item.Count * BonusRatio));
 			if (Extra > 0) Out.Add({ Item.ItemId, Extra });
 		}

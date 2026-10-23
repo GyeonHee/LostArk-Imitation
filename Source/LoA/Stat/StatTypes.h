@@ -62,6 +62,18 @@ enum class EStatModifierTarget : uint8
 	MultiplicativeDamage UMETA(DisplayName="피해 증가(곱)"),   // 0.1 = ×1.1, 각자 따로 곱함(각인 등)
 	PhysDefense          UMETA(DisplayName="물리 방어력"),     // 직업 방어 계수·인내 곱하기 전
 	MagicDefense         UMETA(DisplayName="마법 방어력"),
+	// ── 7단계 보석·각인 (2026-10-23) — 저장 파일엔 안 들어가는 런타임 값이라 뒤에 붙이기만 하면 됨 ──
+	AttackPowerPercent   UMETA(DisplayName="공격력 %"),          // 0.012 = 공격력 ×1.012 (보석 기본 공격력·아드레날린, 서로 더함)
+	SpeedBonus           UMETA(DisplayName="공격·이동 속도"),      // 0.16 = +16% (신속과 더한 뒤 상한 40%)
+	CooldownReduction    UMETA(DisplayName="쿨타임 감소(곱)"),     // 0.1 = 남은 쿨 ×0.9, 신속과 곱연산 (마나의 흐름)
+	IncomingDamage       UMETA(DisplayName="받는 피해"),          // 0.2 = 받는 피해 +20% (원한)
+	HealingReceived      UMETA(DisplayName="받는 회복"),          // -0.25 = 회복 -25% (저주받은 인형)
+	GetUpCooldown        UMETA(DisplayName="기상 쿨타임 감소"),     // 0.27 = 즉시 기상 쿨 -27% (탈출의 명수)
+	MPRegen              UMETA(DisplayName="마나 회복"),          // 0.02 = 마나 회복 +2%
+	CastSkillDamage      UMETA(DisplayName="캐스팅·홀딩 스킬 피해"), // 0.21 = 캐스팅·차지·홀딩 스킬 ×1.21 (속전속결)
+	CastSpeed            UMETA(DisplayName="캐스팅·홀딩 속도"),     // 0.2 = 캐스팅·차지 진행 +20%
+	MoveSpeedToDamage    UMETA(DisplayName="이동속도 → 피해"),      // 0.48 = 이동속도 증가량의 48%만큼 피해 (돌격대장)
+	DamagePenaltyChance  UMETA(DisplayName="피해 감소 확률"),       // 0.1 = 10% 확률로 피해 -20% (예리한 둔기)
 };
 
 USTRUCT(BlueprintType)
@@ -114,9 +126,19 @@ struct FCombatStats
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float AttackSpeedMultiplier = 1.f; // 기본공격·캐스팅 속도
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float DominationMultiplier = 1.f; // 그로기 중인 보스에게만
 
-	// ── 피해 버킷 (7단계 각인·보석용, 지금은 0/1) ──
+	// ── 피해 버킷 (7단계 각인) ──
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float AdditiveDamageBonus = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MultiplicativeDamage = 1.f;
+
+	// ── 7단계 각인 효과 ──
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float AttackPowerPercent = 0.f;        // 공격력에 이미 곱해져 있음 (표시용)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float CastSkillDamageMultiplier = 1.f; // 캐스팅·차지·홀딩 스킬에만
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float CastSpeedMultiplier = 1.f;       // 캐스팅·차지 진행 (공격 속도와 별도로 곱함)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float IncomingDamageMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float HealingMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float GetUpCooldownReduction = 0.f;    // 0~0.9
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MPRegenMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float DamagePenaltyChance = 0.f;       // 이 확률로 피해 × (1 - DamagePenaltyRatio)
 };
 
 // 전투 특성 1포인트당 효과 — 직업과 무관한 게임 규칙이라 에셋이 아니라 코드에 둔다
@@ -132,6 +154,9 @@ namespace LoAStatRules
 	constexpr float DominationPerPoint      = 1.f / 1400.53f; // 제압 1 = 무력화(그로기) 보스 피해 +0.0714%
 	constexpr float DefensePerEndurance     = 1.f / 1222.55f; // 인내 1 = 물리·마법 방어력 +0.0818%
 	constexpr double DefenseConstant        = 6500.0;         // 받는 피해 감소 = 방어력 / (방어력 + 6500)
-	constexpr float MaxCooldownReduction    = 0.30f;     // 쿨감 상한 (신속 + 7단계 쿨감 보석 공유)
+	// 상한 (로아): 공격·이동 속도 +40%, 쿨감 80%(신속 + 7단계 쿨감 보석 공유). 신속 1500 = 속도 +25.8% / 쿨감 32.2%
+	constexpr float MaxSpeedBonus           = 0.40f;
+	constexpr float MaxCooldownReduction    = 0.80f;
 	constexpr float BaseCritDamage          = 2.0f;      // 기본 치명타 피해 200%
+	constexpr float DamagePenaltyRatio      = 0.20f;     // 예리한 둔기 — 걸리면 피해 -20%
 }

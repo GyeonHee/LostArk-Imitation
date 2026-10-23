@@ -36,6 +36,17 @@ namespace
 		const FSkillData* Row = SkillManager->SkillDataTable->FindRow<FSkillData>(SkillRowName, TEXT("Specialization"), false);
 		return Row && (Row->InputType == ESkillInputType::Cast || Row->InputType == ESkillInputType::Charge);
 	}
+
+	// 속전속결 대상 — 캐스팅·차지·홀딩 스킬 (종말의 날·천벌·익스플로전·혹한의 부름)
+	bool Damage_IsCastOrHoldSkill(const AActor* Attacker, FName SkillRowName)
+	{
+		Attacker = Damage_ResolvePawn(Attacker);
+		const USkillManagerComponent* SkillManager = Attacker ? Attacker->FindComponentByClass<USkillManagerComponent>() : nullptr;
+		if (!SkillManager || !SkillManager->SkillDataTable || SkillRowName.IsNone()) return false;
+
+		const FSkillData* Row = SkillManager->SkillDataTable->FindRow<FSkillData>(SkillRowName, TEXT("CastSkill"), false);
+		return Row && (Row->InputType == ESkillInputType::Cast || Row->InputType == ESkillInputType::Charge || Row->InputType == ESkillInputType::Hold);
+	}
 }
 
 float ULoADamageLibrary::CalcOutgoingDamage(const AActor* Attacker, float Coefficient, FName SkillRowName)
@@ -48,8 +59,12 @@ float ULoADamageLibrary::CalcOutgoingDamage(const AActor* Attacker, float Coeffi
 
 	const FCombatStats& Stats = StatComp->GetStats();
 	const bool bSpecialization = Damage_IsSpecializationSkill(Attacker, SkillRowName);
+	const bool bCastSkill = Damage_IsCastOrHoldSkill(Attacker, SkillRowName);
+	// 보석(겁화)은 그 스킬에만, 각인 곱연산은 전부 MultiplicativeDamage에 들어 있다
 	const double Damage = Stats.AttackPower * Coefficient
 		* (bSpecialization ? Stats.SpecializationMultiplier : 1.0)
+		* (bCastSkill ? Stats.CastSkillDamageMultiplier : 1.0)
+		* StatComp->GetSkillDamageMultiplier(SkillRowName)
 		* (1.0 + Stats.AdditiveDamageBonus)
 		* Stats.MultiplicativeDamage;
 
@@ -80,6 +95,11 @@ float ULoADamageLibrary::ResolveIncomingHit(float BaseDamage, const AActor* Inst
 	if (bTargetGroggy)
 	{
 		Damage *= Stats.DominationMultiplier;
+	}
+	// 예리한 둔기 — 일정 확률로 피해 -20% (치명과 따로 굴림)
+	if (Stats.DamagePenaltyChance > 0.f && FMath::FRand() < Stats.DamagePenaltyChance)
+	{
+		Damage *= 1.0 - LoAStatRules::DamagePenaltyRatio;
 	}
 
 	UE_LOG(LogTemp, Verbose, TEXT("[Damage] 피격 %.0f → %.0f%s%s"),

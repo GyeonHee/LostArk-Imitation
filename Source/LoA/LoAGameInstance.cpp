@@ -48,6 +48,12 @@ void ULoAGameInstance::LoadFromDisk()
 	bHasStarterAccessories = Save->bHasStarterAccessories;
 	bHasStarterFragments = Save->bHasStarterFragments;
 	bHasFragmentGift = Save->bHasFragmentGift;
+	bHasStarterGems = Save->bHasStarterGems;
+	bHasStarterEngravings = Save->bHasStarterEngravings;
+	GemSlots = Save->GemSlots;
+	EngravingBooks = Save->EngravingBooks;
+	EquippedEngravings = Save->EquippedEngravings;
+	GemFuseInputs = Save->GemFuseInputs;
 	PendingRewards = Save->PendingRewards;
 	bFirstClearRewarded = Save->bFirstClearRewarded;
 	if (Save->SaveVersion < CurrentSaveVersion)
@@ -92,6 +98,12 @@ void ULoAGameInstance::SaveToDisk()
 	Save->bHasStarterAccessories = bHasStarterAccessories;
 	Save->bHasStarterFragments = bHasStarterFragments;
 	Save->bHasFragmentGift = bHasFragmentGift;
+	Save->bHasStarterGems = bHasStarterGems;
+	Save->bHasStarterEngravings = bHasStarterEngravings;
+	Save->GemSlots = GemSlots;
+	Save->EngravingBooks = EngravingBooks;
+	Save->EquippedEngravings = EquippedEngravings;
+	Save->GemFuseInputs = GemFuseInputs;
 	Save->PendingRewards = PendingRewards;
 	Save->bFirstClearRewarded = bFirstClearRewarded;
 

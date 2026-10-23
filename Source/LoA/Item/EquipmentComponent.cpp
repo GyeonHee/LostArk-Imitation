@@ -78,6 +78,7 @@ void UEquipmentComponent::BeginPlay()
 				if (FEquipmentInstance* Instance = Inventory->FindEquipmentMutable(Id))
 				{
 					Instance->StatRolls = LoAItems::GetStarterAccessoryStats(Part);
+					Instance->AccessoryTier = 0;  // 최하 등급 — K·기본 체력이 이 값 기준으로 맞춰져 있다
 				}
 				if (!Equipped[i].IsValid())
 				{
@@ -219,7 +220,9 @@ float UEquipmentComponent::GetItemLevel() const
 FGearStats UEquipmentComponent::GetEquipmentStats(const FEquipmentInstance& Instance)
 {
 	const FItemDefinition* Def = LoAItems::Find(Instance.ItemId);
-	if (!Def || !LoAEquipRules::IsGearSlot(Def->EquipSlot)) return FGearStats();  // 장신구는 특성만
+	if (!Def) return FGearStats();
+	if (Def->IsAccessory()) return LoAItems::GetAccessoryStats(Def->EquipSlot, Instance.AccessoryTier);  // 장신구 = 주 스탯·체력 (특성은 StatRolls)
+	if (!LoAEquipRules::IsGearSlot(Def->EquipSlot)) return FGearStats();
 	return LoAItems::GetGearStats(Def->EquipSlot, Instance.RefineLevel);
 }
 
@@ -246,6 +249,20 @@ FText UEquipmentComponent::DescribeEquipment(const FEquipmentInstance& Instance,
 			}
 			return Sum;
 		};
+		// 주 스탯·체력 (로아 툴팁처럼 특성보다 위)
+		const FGearStats MineGear = GetEquipmentStats(Instance);
+		const FGearStats TheirGear = Compare ? GetEquipmentStats(*Compare) : FGearStats();
+		auto GearLine = [&Text, Compare](const TCHAR* Label, double Mine, double Theirs)
+		{
+			Text += FString::Printf(TEXT("\n%s +%s"), Label, *LoAItems::FormatWithCommas(static_cast<int64>(Mine)));
+			if (Compare && !FMath::IsNearlyEqual(Mine, Theirs))
+			{
+				Text += FString::Printf(TEXT("  %s%s"), Mine > Theirs ? TEXT("▲") : TEXT("▼"), *LoAItems::FormatWithCommas(static_cast<int64>(FMath::Abs(Mine - Theirs))));
+			}
+		};
+		GearLine(TEXT("지능"), MineGear.PrimaryStat, TheirGear.PrimaryStat);
+		GearLine(TEXT("체력"), MineGear.Vitality, TheirGear.Vitality);
+
 		TArray<ELoACombatStat> Shown;
 		for (const FStatRoll& Roll : Instance.StatRolls) Shown.AddUnique(Roll.Stat);
 		if (Compare)

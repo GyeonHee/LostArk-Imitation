@@ -15,10 +15,8 @@ void USkillInferno::OnKeyDown(AActor* Owner)
         ? Cast<ALoAPlayerController>(Character->GetController()) : nullptr;
     if (!PC) return;
 
-    FHitResult CursorHit;
-    if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, CursorHit)) return;
-
-    PendingTarget = CursorHit.Location;
+    // 바닥을 못 맞히면(맵 밖·하늘) 조준 방향 사거리 끝으로 — 예전엔 그냥 return해서 스킬이 씹혔다
+    if (!PC->GetCursorGroundTarget(Owner, MaxCastRange, PendingTarget)) return;
     const float Dist = FVector::Dist2D(Owner->GetActorLocation(), PendingTarget);
 
     DrawDebugCircle(Owner->GetWorld(), Owner->GetActorLocation(), MaxCastRange,
@@ -71,13 +69,8 @@ void USkillInferno::Execute_Implementation(AActor* Owner)
         ? Cast<ALoAPlayerController>(Character->GetController()) : nullptr;
     if (!PC) return;
 
-    FHitResult CursorHit;
     FVector TargetLoc = PendingTarget;
-    if (TargetLoc.IsZero())
-    {
-        if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, CursorHit)) return;
-        TargetLoc = CursorHit.Location;
-    }
+    if (TargetLoc.IsZero() && !PC->GetCursorGroundTarget(Owner, MaxCastRange, TargetLoc)) return;
 
     FVector OwnerLoc   = Owner->GetActorLocation();
     FVector Horizontal = TargetLoc - OwnerLoc;

@@ -37,6 +37,16 @@ public:
 	// 커서가 창 위에 있는지 — 컨트롤러가 클릭 이동·NPC 호버 처리에 쓴다
 	bool IsCursorOverPanel() const;
 
+	/** [각인]·[보석] 탭 데이터 (7단계) — 열 때·Tick마다 넘긴다(같으면 아무것도 안 함) */
+	void SetBuildSources(class UGemComponent* InGems, class UEngravingComponent* InEngravings, class UInventoryComponent* InInventory, class USkillManagerComponent* InSkills);
+
+	/** 탭 — 0 장비 / 1 각인 / 2 보석 */
+	void SetTab(int32 Tab);
+	int32 GetTab() const { return CurrentTab; }
+
+	/** [보석] 탭이 열려 있을 때 소지품에서 보석을 우클릭 — 스킬 선택 창 */
+	void BeginGemEquip(FName GemItemId);
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeDestruct() override;
@@ -129,4 +139,12 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> DetailButtonText;
 	bool bDetailOpen = false;
 	int32 DetailTab = 0;
+
+	// ── 탭 (7단계) ──
+	int32 CurrentTab = 0;
+	UPROPERTY(Transient) TArray<TObjectPtr<UBorder>> TabBorders;
+	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> TabTexts;
+	UPROPERTY(Transient) TObjectPtr<UWidget> EquipBody;
+	UPROPERTY(Transient) TObjectPtr<class UGemPageWidget> GemPage;
+	UPROPERTY(Transient) TObjectPtr<class UEngravingPageWidget> EngravingPage;
 };

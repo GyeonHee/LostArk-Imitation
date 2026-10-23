@@ -64,18 +64,18 @@ void USkillFrostCall::Execute_Implementation(AActor* Owner)
         ? Cast<ALoAPlayerController>(Character->GetController()) : nullptr;
     if (!PC) return;
 
-    FHitResult CursorHit;
-    if (!PC->GetHitResultUnderCursor(ECC_Visibility, false, CursorHit)) return;
+    FVector AimLocation;
+    if (!PC->GetCursorGroundTarget(Owner, MaxCastRange, AimLocation)) return;
 
     // 사거리 초과 시 경계로 클램프
-    FVector TargetLoc   = CursorHit.Location;
+    FVector TargetLoc   = AimLocation;
     FVector OwnerLoc    = Owner->GetActorLocation();
     FVector Horizontal  = TargetLoc - OwnerLoc;
     Horizontal.Z = 0.f;
     if (Horizontal.Size() > MaxCastRange)
     {
         TargetLoc   = OwnerLoc + Horizontal.GetSafeNormal() * MaxCastRange;
-        TargetLoc.Z = CursorHit.Location.Z;
+        TargetLoc.Z = AimLocation.Z;
     }
 
     UWorld* World = Owner->GetWorld();
