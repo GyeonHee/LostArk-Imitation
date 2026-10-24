@@ -117,10 +117,19 @@ void UEngravingPageWidget::Refresh()
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		}
 		HeadRow->AddChildToHorizontalBox(MakeText(WidgetTree, FString::Printf(TEXT("◆ x %d"), Level), 11, UiOrange));
+		const int32 StoneLevel = E->GetStoneLevel(Id);
+		if (StoneLevel > 0)
+		{
+			// 어빌리티 스톤 각인 레벨 — 로아 각인 창의 스톤 표시
+			if (UHorizontalBoxSlot* S = HeadRow->AddChildToHorizontalBox(MakeText(WidgetTree, FString::Printf(TEXT("  스톤 Lv.%d"), StoneLevel), 10, FLinearColor(0.45f, 0.8f, 1.f))))
+			{
+				S->SetVerticalAlignment(VAlign_Center);
+			}
+		}
 		if (UScrollBoxSlot* S = Cast<UScrollBoxSlot>(EffectList->AddChild(Head))) S->SetPadding(FMargin(0.f, 4.f, 6.f, 0.f));
 
 		TArray<TPair<FString, FString>> Lines;
-		LoAEngravings::DescribeLines(Id, Level, Lines);
+		LoAEngravings::DescribeLines(Id, Level, Lines, StoneLevel);
 		if (Id == LoAEngravings::Adrenaline) Lines.Emplace(TEXT("현재 중첩"), FString::Printf(TEXT("%d / %d"), E->GetAdrenalineStacks(), LoAEngravings::AdrenalineMaxStacks));
 		if (Id == LoAEngravings::MagickStream) Lines.Emplace(TEXT("현재 중첩"), FString::Printf(TEXT("%d / %d"), E->GetMagickStreamStacks(), LoAEngravings::MagickStreamMaxStacks));
 		for (const TPair<FString, FString>& Line : Lines)

@@ -65,10 +65,17 @@ void UStatComponent::SetSkillGemBonuses(const TMap<FName, float>& DamageBonus, c
 	OnStatsChanged.Broadcast(Stats);  // 수치는 그대로지만 창(P·보석)이 다시 그리게
 }
 
+void UStatComponent::SetSkillArkPassiveBonuses(const TMap<FName, float>& DamageBonus)
+{
+	SkillArkDamage = DamageBonus;
+	OnStatsChanged.Broadcast(Stats);
+}
+
 float UStatComponent::GetSkillDamageMultiplier(FName SkillRowName) const
 {
-	const float* Found = SkillGemDamage.Find(SkillRowName);
-	return 1.f + (Found ? *Found : 0.f);
+	const float* Gem = SkillGemDamage.Find(SkillRowName);
+	const float* Ark = SkillArkDamage.Find(SkillRowName);
+	return (1.f + (Gem ? *Gem : 0.f)) * (1.f + (Ark ? *Ark : 0.f));
 }
 
 float UStatComponent::GetSkillCooldownReduction(FName SkillRowName) const
@@ -155,6 +162,20 @@ void UStatComponent::RecalculateStats()
 	float AttackSpeedBonus = 0.f;
 	double GearPhysDefense = 0.0;
 	double GearMagicDefense = 0.0;
+	// 아크 패시브
+	double MaxHPPercent = 0.0;
+	float ManaSkillCooldownKeep = 1.f;
+	float CritRateCap = 0.f;
+	float CritOverflowToEvolution = 0.f;
+	float CritOverflowEvolutionCap = 0.f;
+	float SpeedToEvolution = 0.f;
+	float SpeedToEvolutionCap = 0.f;
+	float SpeedCapEvolutionBonus = 0.f;
+	float SpeedOverCapToEvolution = 0.f;
+	// 장신구 연마
+	double WeaponPowerPercent = 0.0;
+	double AttackPowerFlat = 0.0;
+	double MaxHPFlat = 0.0;
 
 	for (const TPair<FName, TArray<FStatModifier>>& Pair : ModifiersBySource)
 	{
@@ -199,6 +220,26 @@ void UStatComponent::RecalculateStats()
 			case EStatModifierTarget::AttackSpeedBonus:     AttackSpeedBonus += static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::EmergencyRescueCooldown: New.EmergencyRescueCooldown = static_cast<float>(Mod.Value); break;
 			case EStatModifierTarget::SkillDamage:          New.SkillDamageMultiplier *= 1.f + static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::EvolutionDamage:      New.EvolutionDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaSkillEvolutionDamage: New.ManaSkillEvolutionDamage += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaSkillCooldown:    ManaSkillCooldownKeep *= 1.f - static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaCostReduction:    New.ManaCostReduction += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaCostMaxMPPercent: New.ManaCostMaxMPPercent += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaCostToEvolution:  New.ManaCostToEvolution += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::ManaCostToEvolutionCap: New.ManaCostToEvolutionCap += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CritHitDamage:        New.CritHitDamageMultiplier *= 1.f + static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::MaxHPPercent:         MaxHPPercent += Mod.Value; break;
+			case EStatModifierTarget::CritRateCap:          CritRateCap = CritRateCap > 0.f ? FMath::Min(CritRateCap, static_cast<float>(Mod.Value)) : static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CritOverflowToEvolution: CritOverflowToEvolution += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::CritOverflowEvolutionCap: CritOverflowEvolutionCap += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::SpeedToEvolution:     SpeedToEvolution += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::SpeedToEvolutionCap:  SpeedToEvolutionCap += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::SpeedCapEvolutionBonus: SpeedCapEvolutionBonus += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::SpeedOverCapToEvolution: SpeedOverCapToEvolution += static_cast<float>(Mod.Value); break;
+			case EStatModifierTarget::WeaponPowerPercent:   WeaponPowerPercent += Mod.Value; break;
+			case EStatModifierTarget::AttackPowerFlat:      AttackPowerFlat += Mod.Value; break;
+			case EStatModifierTarget::MaxHPFlat:            MaxHPFlat += Mod.Value; break;
+			case EStatModifierTarget::MaxMPFlat:            New.MaxMPFlat += static_cast<float>(Mod.Value); break;
 			default:
 				New.CombatPoints.Add(Stat_ToCombatStat(Mod.Target), FMath::RoundToInt32(Mod.Value));
 				break;
@@ -206,8 +247,10 @@ void UStatComponent::RecalculateStats()
 		}
 	}
 
-	// 공격력 — 로아 공식. 정수로 반올림해 K의 소수점 오차가 데미지 숫자에 새지 않게 한다
-	New.DisplayAttackPower = FMath::Sqrt(FMath::Max(0.0, New.PrimaryStat * New.WeaponPower / 6.0));
+	// 무기 공격력 % (장신구 연마 귀걸이) — 고정 무기 공격력까지 더한 뒤 곱한다
+	New.WeaponPower *= 1.0 + WeaponPowerPercent;
+	// 공격력 — 로아 공식. 정수로 반올림해 K의 소수점 오차가 데미지 숫자에 새지 않게 한다. 고정 공격력(연마)은 표시 공격력에 더함
+	New.DisplayAttackPower = FMath::Sqrt(FMath::Max(0.0, New.PrimaryStat * New.WeaponPower / 6.0)) + AttackPowerFlat;
 	// 로아 "공격력 %"(보석 기본 공격력·아드레날린) — 서로 더해서 공격력에 곱한다
 	New.AttackPowerPercent = static_cast<float>(AttackPowerPercent);
 	New.AttackPower = FMath::RoundToDouble(New.DisplayAttackPower * AttackPowerScale * (1.0 + AttackPowerPercent));
@@ -215,7 +258,16 @@ void UStatComponent::RecalculateStats()
 	// 최대 생명력 — 로아: 체력 × 직업 생명 활성력 계수. 맨몸 체력(BaseVitality)분이 캐릭터 기본 HP
 	New.BaseHP = static_cast<float>(BaseVitality * HPPerVitality);
 	New.EquipmentHP = static_cast<float>((New.Vitality - BaseVitality) * HPPerVitality);
-	New.MaxHP = FMath::Max(1.f, static_cast<float>(New.Vitality * HPPerVitality));
+	New.MaxHP = FMath::Max(1.f, static_cast<float>(New.Vitality * HPPerVitality + MaxHPFlat));
+	New.EquipmentHP += static_cast<float>(MaxHPFlat);  // 장신구 연마 최대 생명력 +
+	// 아크 패시브 최대 생명력 % (선각자·진군·기원) — 툴팁 내역도 같은 비율로
+	if (MaxHPPercent != 0.0)
+	{
+		const float Scale = static_cast<float>(1.0 + MaxHPPercent);
+		New.MaxHP *= Scale;
+		New.BaseHP *= Scale;
+		New.EquipmentHP *= Scale;
+	}
 
 	const FCombatStatPoints& P = New.CombatPoints;
 
@@ -226,7 +278,15 @@ void UStatComponent::RecalculateStats()
 	New.MagicDefense = FMath::RoundToDouble(GearMagicDefense * DefenseScale);
 	New.PhysDamageReduction = static_cast<float>(New.PhysDefense / (New.PhysDefense + LoAStatRules::DefenseConstant));
 	New.MagicDamageReduction = static_cast<float>(New.MagicDefense / (New.MagicDefense + LoAStatRules::DefenseConstant));
-	New.CritRate                 = FMath::Clamp(BaseCritRate + P.Crit * LoAStatRules::CritRatePerPoint + ExtraCritRate, 0.f, 1.f);
+	const float RawCritRate      = BaseCritRate + P.Crit * LoAStatRules::CritRatePerPoint + ExtraCritRate;
+	New.CritRate                 = FMath::Clamp(RawCritRate, 0.f, 1.f);
+	// 뭉툭한 가시 — 치명타 적중률을 상한(80%)으로 자르고, 넘친 만큼 × 비율을 진화형 피해로 (상한까지)
+	if (CritRateCap > 0.f)
+	{
+		const float Overflow = FMath::Max(0.f, RawCritRate - CritRateCap);
+		New.CritRate = FMath::Min(New.CritRate, CritRateCap);
+		New.EvolutionDamage += FMath::Min(Overflow * CritOverflowToEvolution, CritOverflowEvolutionCap);
+	}
 	New.CritDamage               = LoAStatRules::BaseCritDamage + ExtraCritDamage;
 	New.SpecializationMultiplier = 1.f + P.Specialization * LoAStatRules::SpecializationPerPoint;
 	// 쿨감 — 로아처럼 곱연산: (1 - 신속) × (1 - 각인). 스킬별 보석(작열)은 StartCooldown에서 한 번 더 곱하고 합계 80%로 자름
@@ -236,6 +296,21 @@ void UStatComponent::RecalculateStats()
 	// 공격 속도 = 이동속도 몫 + 공격 속도만 바꾸는 효과(질량 증가 -10%) — 상한은 같은 40%
 	New.AttackSpeedMultiplier    = FMath::Max(0.1f, 1.f + FMath::Clamp(P.Swiftness * LoAStatRules::SpeedPerSwiftness + SpeedBonus, 0.f, LoAStatRules::MaxSpeedBonus) + AttackSpeedBonus);
 	New.DominationMultiplier     = 1.f + P.Domination * LoAStatRules::DominationPerPoint;
+	// 음속 돌파 — 공격·이동 속도 증가량(상한 40% 이전 값)으로 진화형 피해
+	if (SpeedToEvolution > 0.f)
+	{
+		const float RawMove = P.Swiftness * LoAStatRules::SpeedPerSwiftness + SpeedBonus;
+		const float RawAttack = RawMove + AttackSpeedBonus;
+		const float Cap = LoAStatRules::MaxSpeedBonus;
+		float Gain = SpeedToEvolution * (FMath::Clamp(RawMove, 0.f, Cap) + FMath::Clamp(RawAttack, 0.f, Cap));
+		if (RawMove >= Cap && RawAttack >= Cap)
+		{
+			Gain += SpeedCapEvolutionBonus + SpeedOverCapToEvolution * ((RawMove - Cap) + (RawAttack - Cap));
+		}
+		New.EvolutionDamage += FMath::Min(Gain, SpeedToEvolutionCap);
+	}
+	New.ManaSkillCooldownReduction = FMath::Clamp(1.f - ManaSkillCooldownKeep, 0.f, LoAStatRules::MaxCooldownReduction);
+	New.ManaCostReduction        = FMath::Clamp(New.ManaCostReduction, 0.f, 0.9f);
 	// 돌격대장 — 이동속도 증가량(%)의 N%만큼 피해, 별도 곱연산
 	if (MoveSpeedToDamage > 0.f)
 	{
@@ -269,6 +344,9 @@ TArray<FString> UStatComponent::DescribeStats() const
 		Stats.CritRate * 100.f, Stats.CritDamage * 100.f, Stats.SpecializationMultiplier,
 		Stats.CooldownReduction * 100.f, Stats.MoveSpeedMultiplier, Stats.DominationMultiplier,
 		Stats.AdditiveDamageBonus * 100.f, Stats.MultiplicativeDamage));
+	Lines.Add(FString::Printf(TEXT("진화형 피해 +%.2f%% (마나 스킬 +%.2f%%) / 마나 스킬 쿨감 %.2f%% / 마나 소모 -%.0f%% / 치명타 시 x%.3f"),
+		Stats.EvolutionDamage * 100.f, Stats.ManaSkillEvolutionDamage * 100.f, Stats.ManaSkillCooldownReduction * 100.f,
+		Stats.ManaCostReduction * 100.f, Stats.CritHitDamageMultiplier));
 	for (const TPair<FName, TArray<FStatModifier>>& Pair : ModifiersBySource)
 	{
 		Lines.Add(FString::Printf(TEXT("  수정치 출처 '%s' — %d개"), *Pair.Key.ToString(), Pair.Value.Num()));

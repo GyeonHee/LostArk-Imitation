@@ -130,6 +130,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
 	int32 StartingFateFragments = 3000;
 
+	/** 처음 지급하는 영롱한 보석 파편 (장신구 연마 재료) — 별도 플래그(bHasStarterPolishShards)라 기존 저장 파일에도 한 번 */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	int32 StartingPolishShards = 60;
+
 	/** 운명의 파편 추가 지급 (테스트용, bHasFragmentGift로 한 번) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
 	int32 FragmentGiftAmount = 100000;

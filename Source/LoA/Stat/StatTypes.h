@@ -92,6 +92,28 @@ enum class EStatModifierTarget : uint8
 	AttackSpeedBonus     UMETA(DisplayName="공격 속도"),            // 질량 증가 -10% (이동속도와 별개)
 	EmergencyRescueCooldown UMETA(DisplayName="긴급구조 쿨타임"),     // 초 (0이면 없음)
 	SkillDamage          UMETA(DisplayName="스킬 피해(기본공격 제외)"), // 추진력
+	// ── 아크 패시브 (2026-10-24) ──
+	EvolutionDamage      UMETA(DisplayName="진화형 피해"),          // 진화 노드끼리 더한 뒤 (1 + 합)으로 곱함
+	ManaSkillEvolutionDamage UMETA(DisplayName="마나 소모 스킬 진화형 피해"), // 금단의 주문
+	ManaSkillCooldown    UMETA(DisplayName="마나 소모 스킬 쿨타임 감소"), // 끝없는 마나·무한한 마력 (곱연산)
+	ManaCostReduction    UMETA(DisplayName="마나 소모량 감소"),       // 0.2 = -20% (합, 최대 90%)
+	ManaCostMaxMPPercent UMETA(DisplayName="최대 마나 비례 추가 소모"), // 마나 용광로 0.02
+	ManaCostToEvolution  UMETA(DisplayName="기본 마나 소모 → 진화형 피해"), // 마나 용광로 — 기본 마나 1당
+	ManaCostToEvolutionCap UMETA(DisplayName="마나 용광로 상한"),
+	CritHitDamage        UMETA(DisplayName="치명타 적중 시 피해"),    // 회심 0.12 = 치명타일 때 ×1.12
+	MaxHPPercent         UMETA(DisplayName="최대 생명력 %"),         // 선각자·진군·기원
+	CritRateCap          UMETA(DisplayName="치명타 적중률 상한"),     // 뭉툭한 가시 0.8
+	CritOverflowToEvolution UMETA(DisplayName="초과 치명 → 진화형 피해"), // 뭉툭한 가시 1.5
+	CritOverflowEvolutionCap UMETA(DisplayName="초과 치명 전환 상한"),
+	SpeedToEvolution     UMETA(DisplayName="속도 → 진화형 피해"),     // 음속 돌파
+	SpeedToEvolutionCap  UMETA(DisplayName="음속 돌파 상한"),
+	SpeedCapEvolutionBonus UMETA(DisplayName="속도 상한 도달 보너스"),
+	SpeedOverCapToEvolution UMETA(DisplayName="상한 초과 속도 → 진화형 피해"),
+	// ── 장신구 연마 (2026-10-25) ──
+	WeaponPowerPercent   UMETA(DisplayName="무기 공격력 %"),       // 0.018 = 무기 공격력 ×1.018 (합)
+	AttackPowerFlat      UMETA(DisplayName="공격력 +"),            // 표시 공격력(K 곱하기 전)에 더함
+	MaxHPFlat            UMETA(DisplayName="최대 생명력 +"),
+	MaxMPFlat            UMETA(DisplayName="최대 마나 +"),
 };
 
 USTRUCT(BlueprintType)
@@ -168,12 +190,23 @@ struct FCombatStats
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float PushedDamageReduction = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float CrisisEvasionCooldown = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MaxMPMultiplier = 1.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float MaxMPFlat = 0.f;        // 장신구 연마 — 배율 다음에 더함
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaSkillDamage = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float FortitudeMax = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float DivineChance = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float GroggyTargetDamage = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float EmergencyRescueCooldown = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float SkillDamageMultiplier = 1.f;  // 기본공격 제외
+
+	// ── 아크 패시브 ──
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float EvolutionDamage = 0.f;          // 진화형 피해 합 (뭉툭한 가시·음속 돌파 전환분 포함)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaSkillEvolutionDamage = 0.f; // 마나 소모 스킬에만 더함
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaSkillCooldownReduction = 0.f; // 마나 소모 스킬 쿨감 (곱연산 결과)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaCostReduction = 0.f;        // 0~0.9
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaCostMaxMPPercent = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaCostToEvolution = 0.f;      // 기본 마나 1당 진화형 피해
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float ManaCostToEvolutionCap = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats") float CritHitDamageMultiplier = 1.f;  // 치명타일 때만
 };
 
 // 전투 특성 1포인트당 효과 — 직업과 무관한 게임 규칙이라 에셋이 아니라 코드에 둔다

@@ -3,7 +3,6 @@
 #include "LoACharacter.h"
 #include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 
 void USkillInferno::OnKeyDown(AActor* Owner)
@@ -18,9 +17,6 @@ void USkillInferno::OnKeyDown(AActor* Owner)
     // 바닥을 못 맞히면(맵 밖·하늘) 조준 방향 사거리 끝으로 — 예전엔 그냥 return해서 스킬이 씹혔다
     if (!PC->GetCursorGroundTarget(Owner, MaxCastRange, PendingTarget)) return;
     const float Dist = FVector::Dist2D(Owner->GetActorLocation(), PendingTarget);
-
-    DrawDebugCircle(Owner->GetWorld(), Owner->GetActorLocation(), MaxCastRange,
-        36, FColor::Cyan, false, 3.0f, 0, 3.f, FVector(1,0,0), FVector(0,1,0));
 
     if (Dist <= MaxCastRange)
     {

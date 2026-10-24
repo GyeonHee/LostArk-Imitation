@@ -2,7 +2,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 
 AInfernoZoneActor::AInfernoZoneActor()
 {
@@ -49,10 +48,6 @@ void AInfernoZoneActor::Activate(float InDamage, AController* InInstigator)
         ExplodeTimerHandle, this,
         &AInfernoZoneActor::Explode,
         CircleShowTime, false);
-
-    const float TotalTime = CircleShowTime + LifeAfterExplosion;
-    DrawDebugCylinder(World, GetActorLocation(), GetActorLocation() + FVector(0,0,10),
-        InternalZoneRadius, 32, FColor::Orange, false, TotalTime);
 }
 
 void AInfernoZoneActor::Explode()

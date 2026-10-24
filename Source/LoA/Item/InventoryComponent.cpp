@@ -1,4 +1,5 @@
 #include "Item/InventoryComponent.h"
+#include "Item/BraceletStone.h"
 #include "LoAGameInstance.h"
 #include "Engine/World.h"
 
@@ -33,6 +34,11 @@ void UInventoryComponent::EnsureLoaded()
 	if (GI)
 	{
 		Equipments = GI->EquipmentInstances;
+		// 2026-10-24 — 장신구 전투 특성(치명·특화 등) 폐지. 예전 저장 파일의 특성은 여기서 지운다 (아크 패시브 진화 1티어가 대신)
+		for (TPair<FGuid, FEquipmentInstance>& Pair : Equipments)
+		{
+			Pair.Value.StatRolls.Reset();
+		}
 	}
 	if (GI && GI->bHasInventory)
 	{
@@ -82,6 +88,12 @@ void UInventoryComponent::EnsureLoaded()
 		GI->bHasStarterFragments = true;
 		AddItem(LoAItems::FateFragment, StartingFateFragments);
 	}
+	// 영롱한 보석 파편 — 장신구 연마가 생기기 전 저장 파일에도 한 번 (장신구 하나를 3단계까지 = 60개)
+	if (GI && !GI->bHasStarterPolishShards)
+	{
+		GI->bHasStarterPolishShards = true;
+		AddItem(LoAItems::PolishShard, StartingPolishShards);
+	}
 	// 테스트용 추가 지급 (2026-10-22) — 저장 파일마다 한 번
 	if (GI && !GI->bHasFragmentGift)
 	{
@@ -105,7 +117,17 @@ FGuid UInventoryComponent::CreateEquipment(FName ItemId, int32 RefineLevel, int3
 	{
 		Instance.RefineLevel = 0;
 		Instance.StatRolls = LoAItems::RollAccessoryStats(*Def);
-		Instance.AccessoryTier = FMath::RandRange(0, LoAItems::AccessoryTierCount - 1);
+		// 기본 효과(주 스탯·체력)는 연마 단계로 정해진다 — 새 장신구는 연마 0단계(로아와 같음)
+	}
+	else if (Def->EquipSlot == EEquipSlot::Bracelet)
+	{
+		Instance.RefineLevel = 0;
+		LoABracelet::Roll(Instance);   // 시작 팔찌는 장비 컴포넌트가 고정 세팅으로 덮어씀
+	}
+	else if (Def->EquipSlot == EEquipSlot::AbilityStone)
+	{
+		Instance.RefineLevel = 0;
+		LoAStone::Roll(Instance);      // 세공 전 — 소지품에서 우클릭해 세공
 	}
 	Equipments.Add(Instance.InstanceId, Instance);
 	return Instance.InstanceId;

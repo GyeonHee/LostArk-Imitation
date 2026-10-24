@@ -1,4 +1,7 @@
 #include "Item/EquipmentComponent.h"
+#include "Stat/ArkPassiveTypes.h"
+#include "Item/AccessoryPolish.h"
+#include "Item/BraceletStone.h"
 #include "Item/InventoryComponent.h"
 #include "Stat/StatComponent.h"
 #include "Raid/EchidnaBoss.h"
@@ -77,7 +80,7 @@ void UEquipmentComponent::BeginPlay()
 				if (!Id.IsValid()) continue;
 				if (FEquipmentInstance* Instance = Inventory->FindEquipmentMutable(Id))
 				{
-					Instance->StatRolls = LoAItems::GetStarterAccessoryStats(Part);
+					Instance->StatRolls.Reset();  // 전투 특성 없음 — 아크 패시브 진화 1티어가 대신
 					Instance->AccessoryTier = 0;  // 최하 등급 — K·기본 체력이 이 값 기준으로 맞춰져 있다
 				}
 				if (!Equipped[i].IsValid())
@@ -91,6 +94,50 @@ void UEquipmentComponent::BeginPlay()
 			}
 			GI->bHasStarterAccessories = true;
 			UE_LOG(LogTemp, Log, TEXT("[Equipment] 시작 장신구 5종 지급"));
+		}
+
+		// 착용 장신구를 연마 3단계 + 중·중 효과로 (2026-10-25 유저 요청) — 저장 파일마다 한 번
+		// 목걸이 적주피·추피 / 귀걸이 공퍼·무공 / 반지 치적·치피 (+ 셋째 줄 하급 공통 효과)
+		if (!GI->bAccessoryPolishPresetV1)
+		{
+			int32 Polished = 0;
+			for (int32 i = LoAEquipRules::GearSlotCount; i < LoAEquipRules::SlotCount; ++i)
+			{
+				if (!LoAEquipRules::IsAccessorySlot(static_cast<EEquipSlot>(i))) continue;
+				if (FEquipmentInstance* Instance = Equipped[i].IsValid() ? Inventory->FindEquipmentMutable(Equipped[i]) : nullptr)
+				{
+					LoAPolish::ApplyPresetFullPolish(*Instance);
+					++Polished;
+				}
+			}
+			GI->bAccessoryPolishPresetV1 = true;
+			UE_LOG(LogTemp, Log, TEXT("[Equipment] 착용 장신구 %d개 연마 3단계 세팅"), Polished);
+		}
+
+		// 팔찌 · 어빌리티 스톤 (2026-10-25 유저 요청) — 저장 파일마다 한 번. 팔찌 = 치명·특화 중옵 + 지능·치적·치피, 스톤 = 저받 7 / 아드 7 (77돌)
+		if (!GI->bHasStarterBraceletStone)
+		{
+			struct FStarterExtra { EEquipSlot Slot; const TCHAR* ItemId; };
+			const FStarterExtra Extras[] = { { EEquipSlot::Bracelet, TEXT("Bracelet_Starter") }, { EEquipSlot::AbilityStone, TEXT("Stone_Starter") } };
+			for (const FStarterExtra& Extra : Extras)
+			{
+				const FGuid Id = Inventory->CreateEquipment(FName(Extra.ItemId), 0);
+				FEquipmentInstance* Instance = Id.IsValid() ? Inventory->FindEquipmentMutable(Id) : nullptr;
+				if (!Instance) continue;
+				if (Extra.Slot == EEquipSlot::Bracelet) LoABracelet::ApplyStarterPreset(*Instance);
+				else LoAStone::ApplyStarterPreset(*Instance);
+				const int32 Part = static_cast<int32>(Extra.Slot);
+				if (!Equipped[Part].IsValid())
+				{
+					Equipped[Part] = Id;
+				}
+				else if (Inventory->PlaceEquipmentInEmptySlot(Id) == INDEX_NONE)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[Equipment] 시작 %s — 소지품이 가득 차 지급 못 함"), Extra.ItemId);
+				}
+			}
+			GI->bHasStarterBraceletStone = true;
+			UE_LOG(LogTemp, Log, TEXT("[Equipment] 시작 팔찌 · 어빌리티 스톤 지급"));
 		}
 	}
 
@@ -221,7 +268,7 @@ FGearStats UEquipmentComponent::GetEquipmentStats(const FEquipmentInstance& Inst
 {
 	const FItemDefinition* Def = LoAItems::Find(Instance.ItemId);
 	if (!Def) return FGearStats();
-	if (Def->IsAccessory()) return LoAItems::GetAccessoryStats(Def->EquipSlot, Instance.AccessoryTier);  // 장신구 = 주 스탯·체력 (특성은 StatRolls)
+	if (Def->IsAccessory()) return LoAItems::GetAccessoryStats(Def->EquipSlot, Instance.PolishLevel);  // 장신구 = 주 스탯·체력 — 연마 단계로 오른다
 	if (!LoAEquipRules::IsGearSlot(Def->EquipSlot)) return FGearStats();
 	return LoAItems::GetGearStats(Def->EquipSlot, Instance.RefineLevel);
 }
@@ -230,6 +277,59 @@ FText UEquipmentComponent::DescribeEquipment(const FEquipmentInstance& Instance,
 {
 	const FItemDefinition* Def = LoAItems::Find(Instance.ItemId);
 	if (!Def) return FText::GetEmpty();
+
+	// 팔찌 — 효과 줄 + 도약 포인트
+	if (Def->EquipSlot == EEquipSlot::Bracelet)
+	{
+		FString Text = FString::Printf(TEXT("%s\n팔찌 (유물)"), *Def->DisplayName.ToString());
+		// 고정 효과(▣) 먼저, 부여 효과(◎) — 빈 부여 칸은 "(효과 부여 필요)"
+		const TArray<FBraceletEffectRoll> Enchants = LoABracelet::GetEnchants(Instance);
+		for (const FBraceletEffectRoll& Roll : Instance.BraceletEffects)
+		{
+			if (!Roll.bFixed) continue;
+			const LoABracelet::FEffectDef& EffectDef = LoABracelet::GetDef(Roll.Effect);
+			Text += FString::Printf(TEXT("\n  ▣ [%s] %s%s"), LoAPolish::GetGradeName(LoABracelet::GetGrade(Roll)), *LoABracelet::Describe(Roll),
+				TEXT(""));
+		}
+		for (int32 i = 0; i < Instance.BraceletEnchantSlots; ++i)
+		{
+			if (!Enchants.IsValidIndex(i))
+			{
+				Text += TEXT("\n  ◎ (효과 부여 필요)");
+				continue;
+			}
+			const LoABracelet::FEffectDef& EffectDef = LoABracelet::GetDef(Enchants[i].Effect);
+			Text += FString::Printf(TEXT("\n  ◎ [%s] %s%s"), LoAPolish::GetGradeName(LoABracelet::GetGrade(Enchants[i])), *LoABracelet::Describe(Enchants[i]),
+				TEXT(""));
+		}
+		Text += FString::Printf(TEXT("\n남은 효과 부여 %d회 ([팔찌 효과 부여] NPC)"), Instance.BraceletEnchantsLeft);
+		Text += FString::Printf(TEXT("\n도약 포인트 +%d"), LoABracelet::LeapPointsRelic);
+		if (Compare) Text += TEXT("\n(착용 중인 팔찌와 바꿔 낍니다)");
+		return FText::FromString(Text);
+	}
+
+	// 어빌리티 스톤 — 세 줄(각인 2 + 감소 1)과 세공 상태
+	if (Def->EquipSlot == EEquipSlot::AbilityStone)
+	{
+		FString Text = FString::Printf(TEXT("%s\n어빌리티 스톤 (유물)"), *Def->DisplayName.ToString());
+		for (int32 i = 0; i < Instance.StoneLines.Num(); ++i)
+		{
+			const FStoneLine& Line = Instance.StoneLines[i];
+			FString Extra;
+			if (LoAStone::IsNegativeLine(i))
+			{
+				Extra = FString::Printf(TEXT(" — %s"), *LoAStone::DescribeNegativeEffect(Line.Id, LoAStone::GetLevel(Line.Successes, true)));
+			}
+			Text += FString::Printf(TEXT("\n  %s  [세공 %d/%d]%s"), *LoAStone::DescribeLine(Line, i), Line.Attempts, LoAStone::FacetsPerLine, *Extra);
+		}
+		const int32 TotalSuccesses = LoAStone::GetTotalSuccesses(Instance);
+		Text += FString::Printf(TEXT("\n세공 성공 총 %d회 · 총 Lv.%d"), TotalSuccesses, LoAStone::GetTotalLevel(Instance));
+		if (const int32 Vitality = LoAStone::GetVitalityBonus(TotalSuccesses)) Text += FString::Printf(TEXT("\n  체력 +%s"), *LoAItems::FormatWithCommas(Vitality));
+		if (LoAStone::GetTotalLevel(Instance) >= LoAStone::AttackBonusLevel) Text += TEXT("\n  기본 공격력 +1.50%");
+		Text += TEXT("\n각인 레벨은 장착한 각인에만 더해집니다");
+		if (!LoAStone::IsComplete(Instance)) Text += TEXT("\n세공은 [어빌리티 스톤 세공사] NPC");
+		return FText::FromString(Text);
+	}
 
 	// 장신구 — 이름, 부위, 전투 특성. 비교는 특성 종류별 합으로 (착용 중에 없는 종류는 그대로 ▲)
 	if (Def->IsAccessory())
@@ -262,6 +362,23 @@ FText UEquipmentComponent::DescribeEquipment(const FEquipmentInstance& Instance,
 		};
 		GearLine(TEXT("지능"), MineGear.PrimaryStat, TheirGear.PrimaryStat);
 		GearLine(TEXT("체력"), MineGear.Vitality, TheirGear.Vitality);
+		{
+			const int32 MinePoints = LoAArkPassive::GetAccessoryEnlightenment(Instance);
+			Text += FString::Printf(TEXT("\n깨달음 포인트 +%d"), MinePoints);
+			if (Compare)
+			{
+				const int32 TheirPoints = LoAArkPassive::GetAccessoryEnlightenment(*Compare);
+				if (MinePoints != TheirPoints) Text += FString::Printf(TEXT("  %s%d"), MinePoints > TheirPoints ? TEXT("▲") : TEXT("▼"), FMath::Abs(MinePoints - TheirPoints));
+			}
+		}
+
+		// 연마 효과 — 단계 순서대로, 등급은 [하]/[중]/[상]
+		Text += FString::Printf(TEXT("\n연마 %d / %d단계"), Instance.PolishLevel, LoAPolish::MaxLevel);
+		for (const FPolishEffectRoll& Roll : Instance.PolishEffects)
+		{
+			const LoAPolish::FEffectDef& PolishDef = LoAPolish::GetDef(Roll.Effect);
+			Text += FString::Printf(TEXT("\n  [%s] %s%s"), LoAPolish::GetGradeName(Roll.Grade), *LoAPolish::Describe(Roll), TEXT(""));
+		}
 
 		TArray<ELoACombatStat> Shown;
 		for (const FStatRoll& Roll : Instance.StatRolls) Shown.AddUnique(Roll.Stat);
@@ -277,7 +394,7 @@ FText UEquipmentComponent::DescribeEquipment(const FEquipmentInstance& Instance,
 			if (Compare && Mine != Theirs) Line += FString::Printf(TEXT("  %s%d"), Mine > Theirs ? TEXT("▲") : TEXT("▼"), FMath::Abs(Mine - Theirs));
 			Text += Line;
 		}
-		Text += TEXT("\n재련 불가");
+		Text += TEXT("\n재련 불가 · 연마는 [장신구 연마] NPC");
 		if (Compare) Text += TEXT("\n(▲▼ = 착용 중인 장신구와 비교)");
 		return FText::FromString(Text);
 	}
@@ -310,6 +427,7 @@ FText UEquipmentComponent::DescribeEquipment(const FEquipmentInstance& Instance,
 	Line(TEXT("지능"), Mine.PrimaryStat, Theirs.PrimaryStat);
 	Line(TEXT("체력"), Mine.Vitality, Theirs.Vitality);
 	Line(TEXT("무기 공격력"), Mine.WeaponPower, Theirs.WeaponPower);
+	if (Def->EquipSlot != EEquipSlot::Weapon) Text += FString::Printf(TEXT("\n진화 포인트 +%d"), LoAArkPassive::ArmorEvolutionPoints);
 	if (Compare) Text += TEXT("\n(▲▼ = 착용 중인 장비와 비교)");
 	return FText::FromString(Text);
 }
@@ -344,9 +462,20 @@ void UEquipmentComponent::ApplyStats()
 			Sum.Vitality += Gear.Vitality;
 			Sum.PhysDefense += Gear.PhysDefense;
 			Sum.MagicDefense += Gear.MagicDefense;
-			for (const FStatRoll& Roll : Instance->StatRolls) Points.Add(Roll.Stat, Roll.Value);
+			// 장신구 전투 특성은 2026-10-24부터 없음 (예전 저장 파일의 특성은 소지품을 불러올 때 지운다)
 		}
 	}
+	// 장신구 연마 효과 + 팔찌 효과 + 어빌리티 스톤 감소 효과 (스톤 각인 레벨은 각인 컴포넌트가 읽음)
+	TArray<FStatModifier> PolishMods;
+	for (int32 i = LoAEquipRules::GearSlotCount; i < LoAEquipRules::SlotCount; ++i)
+	{
+		if (const FEquipmentInstance* Instance = GetEquipped(static_cast<EEquipSlot>(i)))
+		{
+			LoAPolish::AppendModifiers(*Instance, PolishMods);
+		}
+	}
+	if (const FEquipmentInstance* Bracelet = GetEquipped(EEquipSlot::Bracelet)) LoABracelet::AppendModifiers(*Bracelet, PolishMods);
+	if (const FEquipmentInstance* Stone = GetEquipped(EEquipSlot::AbilityStone)) LoAStone::AppendModifiers(*Stone, PolishMods);
 
 	if (UStatComponent* Stats = GetOwner() ? GetOwner()->FindComponentByClass<UStatComponent>() : nullptr)
 	{
@@ -367,6 +496,7 @@ void UEquipmentComponent::ApplyStats()
 		Add(EStatModifierTarget::Specialization, Points.Specialization);
 		Add(EStatModifierTarget::Swiftness, Points.Swiftness);
 		Add(EStatModifierTarget::Domination, Points.Domination);
+		Mods.Append(PolishMods);
 		Stats->SetModifiers(Equip_ModifierSource, Mods);
 	}
 

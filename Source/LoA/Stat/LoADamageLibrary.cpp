@@ -78,7 +78,14 @@ float ULoADamageLibrary::CalcOutgoingDamage(const AActor* Attacker, float Coeffi
 	}
 	const double SelfHPMultiplier = (SelfHP >= LoAStatRules::HighSelfHPThreshold ? 1.0 + Stats.HighSelfHPDamage : 1.0)
 		* (SelfHP <= LoAStatRules::LowSelfHPThreshold ? 1.0 + Stats.LowSelfHPDamage : 1.0);
-	// 보석(겁화)은 그 스킬에만, 각인 곱연산은 전부 MultiplicativeDamage에 들어 있다
+	// 아크 패시브 진화형 피해 — 진화 노드끼리 더한 한 덩어리. 마나 소모 스킬은 금단의 주문·마나 용광로(기본 마나 소모량 비례)가 더해진다
+	double Evolution = Stats.EvolutionDamage;
+	if (bManaSkill)
+	{
+		Evolution += Stats.ManaSkillEvolutionDamage;
+		Evolution += FMath::Min(static_cast<double>(Row->ManaCost * Stats.ManaCostToEvolution), static_cast<double>(Stats.ManaCostToEvolutionCap));
+	}
+	// 보석(겁화)·마나 순환은 그 스킬에만, 각인 곱연산은 전부 MultiplicativeDamage에 들어 있다
 	const double Damage = Stats.AttackPower * Coefficient
 		* (bSpecialization ? Stats.SpecializationMultiplier : 1.0)
 		* (bCastOrHold ? Stats.CastSkillDamageMultiplier : 1.0)
@@ -88,6 +95,7 @@ float ULoADamageLibrary::CalcOutgoingDamage(const AActor* Attacker, float Coeffi
 		* SelfHPMultiplier
 		* StatComp->GetSkillDamageMultiplier(SkillRowName)
 		* (1.0 + Stats.AdditiveDamageBonus)
+		* (1.0 + Evolution)
 		* Stats.MultiplicativeDamage;
 
 	const FString SpecText = bSpecialization ? FString::Printf(TEXT(" × 특화 %.4f"), Stats.SpecializationMultiplier) : FString();
@@ -112,7 +120,7 @@ float ULoADamageLibrary::ResolveIncomingHit(float BaseDamage, const AActor* Inst
 	bOutCritical = FMath::FRand() < Stats.CritRate;
 	if (bOutCritical)
 	{
-		Damage *= Stats.CritDamage;
+		Damage *= Stats.CritDamage * Stats.CritHitDamageMultiplier;  // 회심 — 치명타일 때만
 	}
 	if (bTargetGroggy)
 	{

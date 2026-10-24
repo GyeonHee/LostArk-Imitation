@@ -17,6 +17,12 @@
 #include "Lobby/RefineNPCActor.h"
 #include "UI/ShopWidget.h"
 #include "UI/RefineWidget.h"
+#include "UI/AccessoryPolishWidget.h"
+#include "UI/StoneFacetWidget.h"
+#include "UI/BraceletEnchantWidget.h"
+#include "Lobby/BraceletNPCActor.h"
+#include "Item/BraceletStone.h"
+#include "Lobby/PolishNPCActor.h"
 #include "Item/RefineLibrary.h"
 #include "Item/RaidReward.h"
 #include "EngineUtils.h"
@@ -58,6 +64,8 @@
 #include "UI/InventoryWidget.h"
 #include "UI/CharacterInfoWidget.h"
 #include "UI/EngravingSetupWidget.h"
+#include "UI/ArkPassiveWidget.h"
+#include "Stat/ArkPassiveComponent.h"
 #include "UI/GemFuseWidget.h"
 #include "UI/SkillTooltipWidget.h"
 #include "UI/SkillTreeEntry_ViewModel.h"
@@ -177,6 +185,14 @@ void ALoAPlayerController::BeginPlay()
 			EngravingSetupWidget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		UE_LOG(LogTemp, Log, TEXT("[Engraving] 각인 효과 창 생성 %s"), EngravingSetupWidget ? TEXT("성공") : TEXT("실패"));
+
+		ArkPassiveWidget = CreateWidget<UArkPassiveWidget>(this, UArkPassiveWidget::StaticClass());
+		if (ArkPassiveWidget)
+		{
+			ArkPassiveWidget->AddToViewport(10);
+			ArkPassiveWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[ArkPassive] 아크 패시브 창 생성 %s"), ArkPassiveWidget ? TEXT("성공") : TEXT("실패"));
 
 		GemFuseWidget = CreateWidget<UGemFuseWidget>(this, UGemFuseWidget::StaticClass());
 		if (GemFuseWidget)
@@ -444,6 +460,7 @@ void ALoAPlayerController::OnPlayerDied()
 	SetInventoryOpen(false);
 	SetCharacterInfoOpen(false);
 	SetEngravingSetupOpen(false);
+	SetArkPassiveOpen(false);
 	SetGemFuseOpen(false);
 
 	// 스킬창이 열려 있었으면 닫고 입력 모드를 게임으로 되돌린다
@@ -1390,6 +1407,13 @@ void ALoAPlayerController::SetupInputComponent()
 				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
 			}
 
+			// 아크 패시브 ('.')
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::Period), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnArkPassiveToggle);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
 			// NPC 대화 (G)
 			{
 				FInputKeyBinding Binding(FInputChord(EKeys::G), IE_Pressed);
@@ -1919,6 +1943,7 @@ bool ALoAPlayerController::ConsumeHUDSlotPress()
 	if (InventoryWidget && InventoryWidget->IsCursorOverPanel()) return true;
 	if (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel()) return true;
 	if (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel()) return true;
+	if (ArkPassiveWidget && ArkPassiveWidget->IsCursorOverPanel()) return true;
 	if (GemFuseWidget && GemFuseWidget->IsCursorOverPanel()) return true;
 	if (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel()) return true;
 
@@ -2307,6 +2332,7 @@ void ALoAPlayerController::SetCharacterInfoOpen(bool bOpen)
 		CharacterInfoWidget->SetStatComponent(Char ? Char->StatComponent.Get() : nullptr);
 		CharacterInfoWidget->SetBuildSources(Char ? Char->Gems.Get() : nullptr, Char ? Char->Engravings.Get() : nullptr,
 			Char ? Char->Inventory.Get() : nullptr, Char ? Char->SkillManager.Get() : nullptr);
+		CharacterInfoWidget->SetArkPassive(Char ? Char->ArkPassive.Get() : nullptr);
 		if (CharacterPreviewActor)
 		{
 			// 열 때마다 복사 — 레벨 이동·캐릭터 교체 후에도 지금 캐릭터 모습
@@ -2371,6 +2397,37 @@ void ALoAPlayerController::SetEngravingSetupOpen(bool bOpen)
 	else
 	{
 		EngravingSetupWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+// ─── 아크 패시브 ('.') ───────────────────────────────────────────────────────
+
+void ALoAPlayerController::OnArkPassiveToggle()
+{
+	// 보스 맵 진입 연출 중·사망 후·상점 대화 중엔 못 연다 (P창과 같은 규칙)
+	if (bRaidIntroActive || bDefeatActive || bNPCMenuOpen) return;
+	SetArkPassiveOpen(!IsArkPassiveOpen());
+}
+
+bool ALoAPlayerController::IsArkPassiveOpen() const
+{
+	return ArkPassiveWidget && ArkPassiveWidget->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void ALoAPlayerController::SetArkPassiveOpen(bool bOpen)
+{
+	if (!ArkPassiveWidget) return;
+	if (bOpen == IsArkPassiveOpen()) return;
+
+	if (bOpen)
+	{
+		const ALoACharacter* Char = GetPawn<ALoACharacter>();
+		ArkPassiveWidget->Open(Char ? Char->ArkPassive.Get() : nullptr);
+		ArkPassiveWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		ArkPassiveWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 
@@ -2618,8 +2675,12 @@ void ALoAPlayerController::UpdateNPCInteraction()
 	// 커서 아래 NPC — 창 위에 커서가 있으면 무시
 	AInteractableNPCActor* Hovered = nullptr;
 	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel()) || (RefineWidget && RefineWidget->IsCursorOverPanel())
+		|| (PolishWidget && PolishWidget->IsCursorOverPanel())
+		|| (StoneFacetWidget && StoneFacetWidget->IsCursorOverPanel())
+		|| (BraceletEnchantWidget && BraceletEnchantWidget->IsCursorOverPanel())
 		|| (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel())
 		|| (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel())
+		|| (ArkPassiveWidget && ArkPassiveWidget->IsCursorOverPanel())
 		|| (GemFuseWidget && GemFuseWidget->IsCursorOverPanel())
 		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
 	if (!bNPCMenuOpen && !bCursorOverUI)
@@ -2679,6 +2740,7 @@ void ALoAPlayerController::OpenNPCMenu(AInteractableNPCActor* NPC)
 	// HUD는 숨기고, 열려 있던 스킬창·캐릭터 정보 창은 닫는다
 	SetCharacterInfoOpen(false);
 	SetEngravingSetupOpen(false);
+	SetArkPassiveOpen(false);
 	SetGemFuseOpen(false);
 	if (HUDWidget)
 	{
@@ -2741,6 +2803,55 @@ void ALoAPlayerController::OpenNPCMenu(AInteractableNPCActor* NPC)
 			UE_LOG(LogTemp, Warning, TEXT("[Refine] 재련 창 생성 실패"));
 		}
 	}
+	else if (Cast<AStoneNPCActor>(NPC))
+	{
+		// 가운데 어빌리티 스톤 세공 창 (소지품은 안 띄움 — 스톤 목록·골드는 창 안에)
+		SetInventoryOpen(false);
+		if (!StoneFacetWidget)
+		{
+			StoneFacetWidget = CreateWidget<UStoneFacetWidget>(this, UStoneFacetWidget::StaticClass());
+		}
+		if (StoneFacetWidget)
+		{
+			if (!StoneFacetWidget->IsInViewport()) StoneFacetWidget->AddToViewport(9);
+			StoneFacetWidget->OpenFacet(Char->Inventory.Get(), Char->Equipment.Get());
+			StoneFacetWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+	}
+	else if (Cast<ABraceletNPCActor>(NPC))
+	{
+		// 가운데 팔찌 효과 부여 창
+		SetInventoryOpen(false);
+		if (!BraceletEnchantWidget)
+		{
+			BraceletEnchantWidget = CreateWidget<UBraceletEnchantWidget>(this, UBraceletEnchantWidget::StaticClass());
+		}
+		if (BraceletEnchantWidget)
+		{
+			if (!BraceletEnchantWidget->IsInViewport()) BraceletEnchantWidget->AddToViewport(9);
+			BraceletEnchantWidget->OpenEnchant(Char->Inventory.Get(), Char->Equipment.Get());
+			BraceletEnchantWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+	}
+	else if (Cast<APolishNPCActor>(NPC))
+	{
+		// 가운데 장신구 연마 창 (소지품은 안 띄움 — 파편·골드는 창 안에 나온다)
+		SetInventoryOpen(false);
+		if (!PolishWidget)
+		{
+			PolishWidget = CreateWidget<UAccessoryPolishWidget>(this, UAccessoryPolishWidget::StaticClass());
+		}
+		if (PolishWidget)
+		{
+			if (!PolishWidget->IsInViewport()) PolishWidget->AddToViewport(9);
+			PolishWidget->OpenPolish(Char->Equipment.Get(), Char->Inventory.Get());
+			PolishWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Polish] 장신구 연마 창 생성 실패"));
+		}
+	}
 
 	NPC->SetHighlighted(false);
 	NPC->SetPromptVisible(false);
@@ -2778,6 +2889,21 @@ void ALoAPlayerController::CloseNPCMenu()
 	{
 		RefineWidget->CloseRefine();
 		RefineWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (PolishWidget)
+	{
+		PolishWidget->ClosePolish();
+		PolishWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (StoneFacetWidget)
+	{
+		StoneFacetWidget->CloseFacet();
+		StoneFacetWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (BraceletEnchantWidget)
+	{
+		BraceletEnchantWidget->CloseEnchant();
+		BraceletEnchantWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	if (ShopDialogueWidget)
 	{
@@ -2873,6 +2999,7 @@ void ALoAPlayerController::HandleInventorySlotRightClick(int32 InventoryIndex, b
 	if (InventoryIndex == LastEquipClickIndex && Now - LastEquipClickTime < 0.3) return;
 	LastEquipClickIndex = InventoryIndex;
 	LastEquipClickTime = Now;
+
 
 	FText FailReason;
 	if (!Char->Equipment->EquipFromInventory(InventoryIndex, FailReason) && !FailReason.IsEmpty())

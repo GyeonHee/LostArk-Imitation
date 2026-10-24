@@ -28,10 +28,13 @@ namespace LoARaidReward
 			{ LoAItems::DestructionStone,  34,     46,    1.f,  true },
 			{ LoAItems::LeapStone,         40,     52,    1.f,  true },
 			{ LoAItems::FateFragment,    3400,   4600,    1.f,  true },  // 장비 성장 — 평균 4,000
+			{ LoAItems::PolishShard,       25,     35,    1.f,  true },  // 장신구 연마 — 로아는 장신구 분해, 분해가 없어 보상으로
 			{ Gold,                      5200,   7000,    1.f,  true },
 			{ Silling,                  51000,  69000,    1.f,  true },
 			{ LoAItems::GlacierBreath,      1,      3,    0.3f, false },  // 방어구 5부위용
 			{ LoAItems::LavaBreath,         1,      2,    0.15f, false }, // 무기 1부위용 — 덜 필요해서 덜 나옴
+			{ FName(TEXT("Stone_Desire")),  1,      1,    0.3f, false },  // 어빌리티 스톤 (세공 전) — 2026-10-25
+			{ FName(TEXT("Bracelet_Desire")), 1,    1,    0.1f, false },  // 팔찌 (효과 무작위)
 		};
 
 		TArray<FLoARewardItem> Out;

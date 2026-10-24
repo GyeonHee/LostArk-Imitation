@@ -1,5 +1,7 @@
+#include "Stat/ArkPassiveTypes.h"
 #include "Item/ItemTypes.h"
 #include "Item/BuildTypes.h"
+#include "Item/BraceletStone.h"
 #include "Engine/Texture2D.h"
 #include "NiagaraSystem.h"
 
@@ -12,6 +14,7 @@ namespace LoAItems
 	const FName GlacierBreath(TEXT("RefineBreath"));
 	const FName LavaBreath(TEXT("LavaBreath"));
 	const FName FateFragment(TEXT("FateFragment"));
+	const FName PolishShard(TEXT("PolishShard"));
 
 	namespace
 	{
@@ -43,6 +46,7 @@ namespace LoAItems
 				{ GlacierBreath,    NSLOCTEXT("Item", "GlacierBreath",    "빙하의 숨결"), TEXT("T_RefineBreath"), 999,  0 },  // 방어구 재련 — 상점 구매 전용
 				{ LavaBreath,       NSLOCTEXT("Item", "LavaBreath",       "용암의 숨결"), TEXT("T_LavaBreath"),   999,  0 },  // 무기 재련
 				{ FateFragment,     NSLOCTEXT("Item", "FateFragment",     "운명의 파편"), TEXT("T_FateFragment"), 99999, 1 }, // 장비 성장
+				{ PolishShard,      NSLOCTEXT("Item", "PolishShard",      "영롱한 보석 파편"), TEXT("T_PolishShard"), 99999, 0 }, // 장신구 연마
 			};
 			for (int32 i = 0; i < UE_ARRAY_COUNT(Materials); ++i)
 			{
@@ -87,12 +91,12 @@ namespace LoAItems
 			// 목걸이 2종 350~420 / 귀걸이·반지 1종 200~240 — 시작 세트 합 1,500 → 최상급 합 1,800
 			struct FAccessoryDef { const TCHAR* Id; FText Name; EEquipSlot Slot; const TCHAR* Icon; int32 Count; int32 Min; int32 Max; int64 SellPrice; };
 			const FAccessoryDef Accessories[] = {
-				{ TEXT("Acc_StarterNecklace"), NSLOCTEXT("Item", "StarterNecklace", "도전자의 목걸이"), EEquipSlot::Necklace, TEXT("T_Acc_Necklace"), 2, 350, 350, 100 },
-				{ TEXT("Acc_StarterEarring"),  NSLOCTEXT("Item", "StarterEarring",  "도전자의 귀걸이"), EEquipSlot::Earring1, TEXT("T_Acc_Earring"),  1, 200, 200, 100 },
-				{ TEXT("Acc_StarterRing"),     NSLOCTEXT("Item", "StarterRing",     "도전자의 반지"),   EEquipSlot::Ring1,    TEXT("T_Acc_Ring"),     1, 200, 200, 100 },
-				{ TEXT("Acc_DesireNecklace"),  NSLOCTEXT("Item", "DesireNecklace",  "욕망의 목걸이"),   EEquipSlot::Necklace, TEXT("T_Acc_Necklace"), 2, 350, 420, 3000 },
-				{ TEXT("Acc_DesireEarring"),   NSLOCTEXT("Item", "DesireEarring",   "욕망의 귀걸이"),   EEquipSlot::Earring1, TEXT("T_Acc_Earring"),  1, 200, 240, 2000 },
-				{ TEXT("Acc_DesireRing"),      NSLOCTEXT("Item", "DesireRing",      "욕망의 반지"),     EEquipSlot::Ring1,    TEXT("T_Acc_Ring"),     1, 200, 240, 2000 },
+				{ TEXT("Acc_StarterNecklace"), NSLOCTEXT("Item", "StarterNecklace", "도전자의 목걸이"), EEquipSlot::Necklace, TEXT("T_Acc_Necklace_T4"), 2, 350, 350, 100 },
+				{ TEXT("Acc_StarterEarring"),  NSLOCTEXT("Item", "StarterEarring",  "도전자의 귀걸이"), EEquipSlot::Earring1, TEXT("T_Acc_Earring_T4"),  1, 200, 200, 100 },
+				{ TEXT("Acc_StarterRing"),     NSLOCTEXT("Item", "StarterRing",     "도전자의 반지"),   EEquipSlot::Ring1,    TEXT("T_Acc_Ring_T4"),     1, 200, 200, 100 },
+				{ TEXT("Acc_DesireNecklace"),  NSLOCTEXT("Item", "DesireNecklace",  "욕망의 목걸이"),   EEquipSlot::Necklace, TEXT("T_Acc_Necklace_T4"), 2, 350, 420, 3000 },
+				{ TEXT("Acc_DesireEarring"),   NSLOCTEXT("Item", "DesireEarring",   "욕망의 귀걸이"),   EEquipSlot::Earring1, TEXT("T_Acc_Earring_T4"),  1, 200, 240, 2000 },
+				{ TEXT("Acc_DesireRing"),      NSLOCTEXT("Item", "DesireRing",      "욕망의 반지"),     EEquipSlot::Ring1,    TEXT("T_Acc_Ring_T4"),     1, 200, 240, 2000 },
 			};
 			for (const FAccessoryDef& Acc : Accessories)
 			{
@@ -111,6 +115,28 @@ namespace LoAItems
 				Map.Add(Def.ItemId, Def);
 			}
 
+			// ── 팔찌 · 어빌리티 스톤 (2026-10-25) — 효과는 인스턴스(LoABracelet / LoAStone). 재련·연마 없음, 아이템 레벨 없음 ──
+			struct FExtraDef { const TCHAR* Id; FText Name; EEquipSlot Slot; const TCHAR* Icon; int64 SellPrice; };
+			const FExtraDef Extras[] = {
+				{ TEXT("Bracelet_Starter"), NSLOCTEXT("Item", "StarterBracelet", "도전자의 팔찌"),         EEquipSlot::Bracelet,     TEXT("T_Bracelet_T4"),     100 },
+				{ TEXT("Bracelet_Desire"),  NSLOCTEXT("Item", "DesireBracelet",  "욕망의 팔찌"),           EEquipSlot::Bracelet,     TEXT("T_Bracelet_T4"),     3000 },
+				{ TEXT("Stone_Starter"),    NSLOCTEXT("Item", "StarterStone",    "도전자의 어빌리티 스톤"), EEquipSlot::AbilityStone, TEXT("T_AbilityStone_T4"), 100 },
+				{ TEXT("Stone_Desire"),     NSLOCTEXT("Item", "DesireStone",     "욕망의 어빌리티 스톤"),   EEquipSlot::AbilityStone, TEXT("T_AbilityStone_T4"), 1000 },
+			};
+			for (const FExtraDef& Extra : Extras)
+			{
+				FItemDefinition Def;
+				Def.ItemId = FName(Extra.Id);
+				Def.DisplayName = Extra.Name;
+				Def.Category = EItemCategory::Equipment;
+				Def.Icon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(FString::Printf(TEXT("/Game/LostArk/UI/Item/%s.%s"), Extra.Icon, Extra.Icon)));
+				Def.MaxStack = 1;
+				Def.SortOrder = static_cast<int32>(Extra.Slot);
+				Def.SellPrice = Extra.SellPrice;
+				Def.EquipSlot = Extra.Slot;
+				Map.Add(Def.ItemId, Def);
+			}
+
 			// ── 보석·각인서 (7단계) ──
 			LoAGems::RegisterItems(Map);
 			LoAEngravings::RegisterItems(Map);
@@ -119,30 +145,18 @@ namespace LoAItems
 		}
 	}
 
-	TArray<FStatRoll> RollAccessoryStats(const FItemDefinition& Def)
+	TArray<FStatRoll> RollAccessoryStats(const FItemDefinition& /*Def*/)
 	{
-		TArray<FStatRoll> Out;
-		TArray<ELoACombatStat> Pool = { ELoACombatStat::Crit, ELoACombatStat::Specialization, ELoACombatStat::Swiftness, ELoACombatStat::Domination };
-		for (int32 i = 0; i < Def.AccessoryStatCount && Pool.Num() > 0; ++i)
-		{
-			const int32 Pick = FMath::RandRange(0, Pool.Num() - 1);
-			FStatRoll& Roll = Out.AddDefaulted_GetRef();
-			Roll.Stat = Pool[Pick];
-			Roll.Value = FMath::RandRange(Def.AccessoryStatMin, FMath::Max(Def.AccessoryStatMin, Def.AccessoryStatMax));
-			Pool.RemoveAtSwap(Pick);
-		}
-		return Out;
+		// 2026-10-24 — 로아 T4 장신구엔 전투 특성이 없다(치명·특화 등은 아크 패시브 진화 1티어에서). 더는 굴리지 않는다
+		return {};
 	}
 
 	FString GetEquipmentBadge(const FEquipmentInstance& Instance)
 	{
-		if (Instance.StatRolls.Num() == 0) return FString::Printf(TEXT("+%d"), Instance.RefineLevel);
-		FString Badge;
-		for (const FStatRoll& Roll : Instance.StatRolls)
-		{
-			Badge += StaticEnum<ELoACombatStat>()->GetDisplayNameTextByValue(static_cast<int64>(Roll.Stat)).ToString().Left(1);
-		}
-		return Badge;
+		// 장신구·팔찌·어빌리티 스톤은 칸에 글자를 안 띄운다 (2026-10-25 유저 요청 — 자세한 건 툴팁). 재련 장비만 "+10"
+		const FItemDefinition* BadgeDef = Find(Instance.ItemId);
+		if (!BadgeDef || !LoAEquipRules::IsGearSlot(BadgeDef->EquipSlot)) return FString();
+		return FString::Printf(TEXT("+%d"), Instance.RefineLevel);
 	}
 
 	FName GetStarterAccessory(EEquipSlot Slot)
@@ -160,17 +174,8 @@ namespace LoAItems
 
 	TArray<FStatRoll> GetStarterAccessoryStats(EEquipSlot Slot)
 	{
-		// 시작 세트 = 치명 750 + 특화 750 (로아 소서리스 흔한 "치특"). 예전 DA의 치명 280을 대신하며 K를 다시 맞춤
-		auto One = [](ELoACombatStat Stat, int32 Value) { FStatRoll R; R.Stat = Stat; R.Value = Value; return R; };
-		switch (Slot)
-		{
-		case EEquipSlot::Necklace: return { One(ELoACombatStat::Crit, 350), One(ELoACombatStat::Specialization, 350) };
-		case EEquipSlot::Earring1: return { One(ELoACombatStat::Crit, 200) };
-		case EEquipSlot::Earring2: return { One(ELoACombatStat::Specialization, 200) };
-		case EEquipSlot::Ring1:    return { One(ELoACombatStat::Crit, 200) };
-		case EEquipSlot::Ring2:    return { One(ELoACombatStat::Specialization, 200) };
-		default:                   return {};
-		}
+		// 2026-10-24 — 전투 특성 없음 (예전 시작 세트 치명 750 + 특화 750은 아크 패시브 진화 1티어가 대신한다)
+		return {};
 	}
 
 	FName GetRandomDropAccessory()

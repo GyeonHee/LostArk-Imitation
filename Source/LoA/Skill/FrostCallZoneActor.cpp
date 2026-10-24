@@ -2,7 +2,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 
 AFrostCallZoneActor::AFrostCallZoneActor()
 {
@@ -47,10 +46,6 @@ void AFrostCallZoneActor::Activate(float InTickDamage, AController* InInstigator
             }
         }
     }
-
-    DrawDebugCylinder(World, GetActorLocation(), GetActorLocation() + FVector(0, 0, 10),
-        ZoneRadius, 32, FColor::Cyan, false,
-        (MaxDamageTicks - 1) * DamageTickInterval + LifeAfterStop);
 
     // 데미지: 즉시 1회 + 반복
     ApplyDamageTick();

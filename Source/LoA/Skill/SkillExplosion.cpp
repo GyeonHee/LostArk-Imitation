@@ -4,7 +4,6 @@
 #include "Stat/LoADamageLibrary.h"
 #include "LoAPlayerController.h"
 #include "Engine/Engine.h"
-#include "DrawDebugHelpers.h"
 
 void USkillExplosion::OnKeyDown(AActor* Owner)
 {
@@ -18,9 +17,6 @@ void USkillExplosion::OnKeyDown(AActor* Owner)
     // 바닥을 못 맞히면(맵 밖·하늘) 조준 방향 사거리 끝으로 — 예전엔 그냥 return해서 스킬이 씹혔다
     if (!PC->GetCursorGroundTarget(Owner, MaxCastRange, PendingCastTarget)) return;
     const float Dist  = FVector::Dist2D(Owner->GetActorLocation(), PendingCastTarget);
-
-    DrawDebugCircle(Owner->GetWorld(), Owner->GetActorLocation(), MaxCastRange,
-        36, FColor::Cyan, false, 3.0f, 0, 3.f, FVector(1,0,0), FVector(0,1,0));
 
     if (Dist <= MaxCastRange)
     {

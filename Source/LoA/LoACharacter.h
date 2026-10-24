@@ -143,6 +143,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Engraving")
 	TObjectPtr<class UEngravingComponent> Engravings;
 
+	// 아크 패시브 — 진화·깨달음·도약 (2026-10-24)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ArkPassive")
+	TObjectPtr<class UArkPassiveComponent> ArkPassive;
+
 	// 스탯(지능·무기공격력·체력 + 전투 특성) 계산 — 공격력·최대 HP·이동속도는 여기서 나온다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
 	TObjectPtr<UStatComponent> StatComponent;

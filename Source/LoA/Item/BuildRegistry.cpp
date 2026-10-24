@@ -203,6 +203,59 @@ namespace LoAEngravings
 		float Eng_A(const FEngRow& R, int32 Level) { return FMath::Lerp(R.A0, R.A4, FMath::Clamp(Level, 0, MaxLevel) / static_cast<float>(MaxLevel)); }
 		float Eng_B(const FEngRow& R, int32 Level) { return FMath::Lerp(R.B0, R.B4, FMath::Clamp(Level, 0, MaxLevel) / static_cast<float>(MaxLevel)); }
 
+		/**
+		 * 어빌리티 스톤 각인 레벨(1~4) 보너스 — Maxroll engraving 1xxx spec[0] (스톤 레벨별 값). 대부분 첫 효과(A)에 더하고,
+		 * 마나의 흐름은 둘째(B, 중첩당 마나 회복), 아드레날린은 중첩당 공격력에 더한다(Eng_StoneAdrenaline).
+		 * 효과 종류가 이 게임의 A/B와 다른 각인(여신의 가호·위기 모면·분쇄의 주먹·긴급구조 등)과 효과 없는 각인은 표에 없음 = 보너스 0
+		 */
+		struct FEngStoneRow { const TCHAR* Id; float V[4]; bool bOnB; };
+		const FEngStoneRow Eng_StoneRows[] = {
+			{ TEXT("Disrespect"),       { 0.06f, 0.075f, 0.105f, 0.12f }, false },
+			{ TEXT("SpiritAbsorption"), { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("EtherPredator"),    { 0.001f, 0.0013f, 0.0018f, 0.002f }, false },
+			{ TEXT("Grudge"),           { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("SuperCharge"),      { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("StrongWill"),       { 0.04f, 0.05f, 0.07f, 0.08f }, false },
+			{ TEXT("KeenBlunt"),        { 0.075f, 0.094f, 0.132f, 0.15f }, false },
+			{ TEXT("Fortitude"),        { 0.04f, 0.05f, 0.07f, 0.08f }, false },
+			{ TEXT("CursedDoll"),       { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("StabilizedStatus"), { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("MastersTenacity"),  { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("HeavyArmor"),       { 0.12f, 0.15f, 0.21f, 0.24f }, false },
+			{ TEXT("BrokenBone"),       { 0.04f, 0.05f, 0.07f, 0.08f }, false },
+			{ TEXT("AmbushMaster"),     { 0.027f, 0.034f, 0.047f, 0.054f }, false },
+			{ TEXT("MasterBrawler"),    { 0.027f, 0.034f, 0.047f, 0.054f }, false },
+			{ TEXT("MagickStream"),     { 0.006f, 0.0075f, 0.0105f, 0.012f }, true },
+			{ TEXT("RaidCaptain"),      { 0.075f, 0.094f, 0.132f, 0.15f }, false },
+			{ TEXT("MPEfficiency"),     { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("MaxMPIncrease"),    { 0.04f, 0.05f, 0.07f, 0.08f }, false },
+			{ TEXT("MasterOfEscape"),   { 0.04f, 0.05f, 0.07f, 0.08f }, false },
+			{ TEXT("MassIncrease"),     { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("Propulsion"),       { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("HitMaster"),        { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("AllOutAttack"),     { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+			{ TEXT("PreciseDagger"),    { 0.03f, 0.0375f, 0.0525f, 0.06f }, false },
+		};
+		constexpr float Eng_StoneAdrenalineValues[4] = { 0.0048f, 0.006f, 0.0083f, 0.0095f };
+
+		void Eng_ApplyStone(FName Id, int32 StoneLevel, float& InOutA, float& InOutB)
+		{
+			if (StoneLevel <= 0) return;
+			for (const FEngStoneRow& Row : Eng_StoneRows)
+			{
+				if (Id != FName(Row.Id)) continue;
+				const float Bonus = Row.V[FMath::Clamp(StoneLevel, 1, 4) - 1];
+				(Row.bOnB ? InOutB : InOutA) += Bonus;
+				return;
+			}
+		}
+
+		// 아드레날린 중첩당 공격력 (기본 0.9% + 스톤)
+		float Eng_StoneAdrenaline(int32 StoneLevel)
+		{
+			return AdrenalineAttackPerStack + (StoneLevel > 0 ? Eng_StoneAdrenalineValues[FMath::Clamp(StoneLevel, 1, 4) - 1] : 0.f);
+		}
+
 		void Eng_Add(TArray<FStatModifier>& Out, EStatModifierTarget Target, double Value)
 		{
 			FStatModifier& Mod = Out.AddDefaulted_GetRef();
@@ -255,12 +308,23 @@ namespace LoAEngravings
 		return R ? Eng_A(*R, Level) : 0.f;
 	}
 
-	void AppendStaticModifiers(FName Id, int32 Level, TArray<FStatModifier>& Out)
+	bool HasStoneBonus(FName Id)
+	{
+		if (Id == Adrenaline) return true;
+		for (const FEngStoneRow& Row : Eng_StoneRows)
+		{
+			if (Id == FName(Row.Id)) return true;
+		}
+		return false;
+	}
+
+	void AppendStaticModifiers(FName Id, int32 Level, TArray<FStatModifier>& Out, int32 StoneLevel)
 	{
 		const FEngRow* R = Eng_FindRow(Id);
 		if (!R || !R->bWorks) return;
-		const float A = Eng_A(*R, Level);
-		const float B = Eng_B(*R, Level);
+		float A = Eng_A(*R, Level);
+		float B = Eng_B(*R, Level);
+		Eng_ApplyStone(Id, StoneLevel, A, B);
 		const FString S = R->Id;
 		using T = EStatModifierTarget;
 
@@ -292,16 +356,17 @@ namespace LoAEngravings
 		// 아드레날린·마나의 흐름·에테르 포식자·분쇄의 주먹·추진력은 중첩/발동 효과 — AppendStackModifiers
 	}
 
-	void AppendStackModifiers(FName Id, int32 Level, int32 Stacks, TArray<FStatModifier>& Out)
+	void AppendStackModifiers(FName Id, int32 Level, int32 Stacks, TArray<FStatModifier>& Out, int32 StoneLevel)
 	{
 		const FEngRow* R = Eng_FindRow(Id);
 		if (!R || Stacks <= 0) return;
-		const float A = Eng_A(*R, Level);
-		const float B = Eng_B(*R, Level);
+		float A = Eng_A(*R, Level);
+		float B = Eng_B(*R, Level);
+		Eng_ApplyStone(Id, StoneLevel, A, B);
 		if (Id == Adrenaline)
 		{
 			const int32 S = FMath::Min(Stacks, AdrenalineMaxStacks);
-			Eng_Add(Out, EStatModifierTarget::AttackPowerPercent, AdrenalineAttackPerStack * S);
+			Eng_Add(Out, EStatModifierTarget::AttackPowerPercent, Eng_StoneAdrenaline(StoneLevel) * S);
 			if (S >= AdrenalineMaxStacks) Eng_Add(Out, EStatModifierTarget::CritRate, A);
 		}
 		else if (Id == MagickStream)
@@ -326,10 +391,10 @@ namespace LoAEngravings
 		}
 	}
 
-	FString Describe(FName Id, int32 Level)
+	FString Describe(FName Id, int32 Level, int32 StoneLevel)
 	{
 		TArray<TPair<FString, FString>> Lines;
-		DescribeLines(Id, Level, Lines);
+		DescribeLines(Id, Level, Lines, StoneLevel);
 		FString Out;
 		for (const TPair<FString, FString>& Line : Lines)
 		{
@@ -339,17 +404,18 @@ namespace LoAEngravings
 		return Out;
 	}
 
-	void DescribeLines(FName Id, int32 Level, TArray<TPair<FString, FString>>& Out)
+	void DescribeLines(FName Id, int32 Level, TArray<TPair<FString, FString>>& Out, int32 StoneLevel)
 	{
 		const FEngRow* R = Eng_FindRow(Id);
 		if (!R) return;
-		const float A = Eng_A(*R, Level);
-		const float B = Eng_B(*R, Level);
+		float A = Eng_A(*R, Level);
+		float B = Eng_B(*R, Level);
+		Eng_ApplyStone(Id, StoneLevel, A, B);
 		const FString S = R->Id;
 		auto Add = [&Out](const FString& Label, const FString& Value) { Out.Emplace(Label, Value); };
 
 		if (S == TEXT("Grudge"))                { Add(TEXT("보스 몬스터 피해 증가"), Eng_P(A)); Add(TEXT("받는 피해 증가"), Eng_P(B)); }
-		else if (S == TEXT("Adrenaline"))       { Add(TEXT("스킬 사용 시 6초간 공격력 (최대 6중첩)"), Eng_P(AdrenalineAttackPerStack)); Add(TEXT("최대 중첩 시 치명타 적중률 증가"), Eng_P(A)); }
+		else if (S == TEXT("Adrenaline"))       { Add(TEXT("스킬 사용 시 6초간 공격력 (최대 6중첩)"), Eng_P(Eng_StoneAdrenaline(StoneLevel))); Add(TEXT("최대 중첩 시 치명타 적중률 증가"), Eng_P(A)); }
 		else if (S == TEXT("KeenBlunt"))        { Add(TEXT("치명타 피해 증가"), Eng_P(A)); Add(TEXT("공격 시 피해 -20% 발동 확률"), Eng_P(B)); }
 		else if (S == TEXT("CursedDoll"))       { Add(TEXT("적에게 주는 피해 증가"), Eng_P(A)); Add(TEXT("받는 회복 효과 감소"), Eng_P(B)); }
 		else if (S == TEXT("HitMaster"))        { Add(TEXT("백·헤드어택이 아닌 공격 피해 증가"), Eng_P(A)); }

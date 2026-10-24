@@ -2,6 +2,8 @@
 #include "Stat/StatComponent.h"
 #include "Item/InventoryComponent.h"
 #include "Item/GemComponent.h"
+#include "Item/EquipmentComponent.h"
+#include "Item/BraceletStone.h"
 #include "Skill/SkillManagerComponent.h"
 #include "LoAGameInstance.h"
 #include "TimerManager.h"
@@ -64,8 +66,21 @@ void UEngravingComponent::BeginPlay()
 	{
 		SkillManager->OnSkillUsed.AddUObject(this, &UEngravingComponent::HandleSkillUsed);
 	}
+	// 어빌리티 스톤을 바꾸면 스톤 각인 레벨이 바뀐다
+	if (UEquipmentComponent* Equipment = GetOwner() ? GetOwner()->FindComponentByClass<UEquipmentComponent>() : nullptr)
+	{
+		Equipment->OnEquipmentChanged.AddUObject(this, &UEngravingComponent::HandleEquipmentChanged);
+	}
 	ApplyStatic();
 	ApplyBuffs();
+}
+
+int32 UEngravingComponent::GetStoneLevel(FName EngravingId) const
+{
+	if (EngravingId.IsNone() || !IsEquipped(EngravingId)) return 0;
+	const UEquipmentComponent* Equipment = GetOwner() ? GetOwner()->FindComponentByClass<UEquipmentComponent>() : nullptr;
+	const FEquipmentInstance* Stone = Equipment ? Equipment->GetEquipped(EEquipSlot::AbilityStone) : nullptr;
+	return Stone ? LoAStone::GetEngravingLevel(*Stone, EngravingId) : 0;
 }
 
 void UEngravingComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -249,7 +264,7 @@ void UEngravingComponent::ApplyStatic()
 	TArray<FStatModifier> Mods;
 	for (const FName& Id : Equipped)
 	{
-		if (!Id.IsNone()) LoAEngravings::AppendStaticModifiers(Id, FMath::Max(0, GetLevel(Id)), Mods);
+		if (!Id.IsNone()) LoAEngravings::AppendStaticModifiers(Id, FMath::Max(0, GetLevel(Id)), Mods, GetStoneLevel(Id));
 	}
 	if (UStatComponent* Stats = GetStats()) Stats->SetModifiers(TEXT("Engraving"), Mods);
 
@@ -267,15 +282,15 @@ void UEngravingComponent::ApplyBuffs()
 	TArray<FStatModifier> Mods;
 	if (IsEquipped(LoAEngravings::Adrenaline))
 	{
-		LoAEngravings::AppendStackModifiers(LoAEngravings::Adrenaline, FMath::Max(0, GetLevel(LoAEngravings::Adrenaline)), AdrenalineStacks, Mods);
+		LoAEngravings::AppendStackModifiers(LoAEngravings::Adrenaline, FMath::Max(0, GetLevel(LoAEngravings::Adrenaline)), AdrenalineStacks, Mods, GetStoneLevel(LoAEngravings::Adrenaline));
 	}
 	if (IsEquipped(LoAEngravings::MagickStream))
 	{
-		LoAEngravings::AppendStackModifiers(LoAEngravings::MagickStream, FMath::Max(0, GetLevel(LoAEngravings::MagickStream)), MagickStreamStacks, Mods);
+		LoAEngravings::AppendStackModifiers(LoAEngravings::MagickStream, FMath::Max(0, GetLevel(LoAEngravings::MagickStream)), MagickStreamStacks, Mods, GetStoneLevel(LoAEngravings::MagickStream));
 	}
 	auto Stack = [this, &Mods](FName Id, int32 Stacks)
 	{
-		if (IsEquipped(Id)) LoAEngravings::AppendStackModifiers(Id, FMath::Max(0, GetLevel(Id)), Stacks, Mods);
+		if (IsEquipped(Id)) LoAEngravings::AppendStackModifiers(Id, FMath::Max(0, GetLevel(Id)), Stacks, Mods, GetStoneLevel(Id));
 	};
 	Stack(LoAEngravings::EtherPredator, EtherStacks);
 	Stack(LoAEngravings::CrushingFist, bCrushingFistActive ? 1 : 0);

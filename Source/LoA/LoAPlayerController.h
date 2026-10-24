@@ -423,6 +423,10 @@ public:
 	void SetEngravingSetupOpen(bool bOpen);
 	bool IsEngravingSetupOpen() const;
 
+	// ── 아크 패시브 창 ('.' 키 또는 P창의 [아크 패시브] 칸) ──
+	void SetArkPassiveOpen(bool bOpen);
+	bool IsArkPassiveOpen() const;
+
 	// ── 데미지 미터 창 (L키) ──
 	void SetDamageMeterOpen(bool bOpen);
 	bool IsDamageMeterOpen() const;
@@ -499,6 +503,9 @@ protected:
 
 	void OnCharacterInfoToggle();
 
+	/** '.' 키 — 아크 패시브 창 */
+	void OnArkPassiveToggle();
+
 	// 스킬 툴팁 — HUD 스킬 칸·스킬트리 줄 위에 마우스를 올리면 (ZOrder 50, 맨 위)
 	UPROPERTY(Transient)
 	TObjectPtr<class USkillTooltipWidget> SkillTooltipWidget;
@@ -512,9 +519,21 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<class UGemFuseWidget> GemFuseWidget;
 
+	// 어빌리티 스톤 세공 창 — [어빌리티 스톤 세공사] NPC (2026-10-25)
+	UPROPERTY(Transient)
+	TObjectPtr<class UStoneFacetWidget> StoneFacetWidget;
+
+	// 팔찌 효과 부여 창 — [팔찌 효과 부여] NPC (2026-10-25)
+	UPROPERTY(Transient)
+	TObjectPtr<class UBraceletEnchantWidget> BraceletEnchantWidget;
+
 	// 각인 효과 창 — C++ 트리 (ZOrder 10, 캐릭터 정보 창 위)
 	UPROPERTY(Transient)
 	TObjectPtr<class UEngravingSetupWidget> EngravingSetupWidget;
+
+	// 아크 패시브 창 — C++ 트리 (ZOrder 10)
+	UPROPERTY(Transient)
+	TObjectPtr<class UArkPassiveWidget> ArkPassiveWidget;
 
 	// 보스·허수아비에 준 피해 집계 — 피격 쪽이 ULoADamageLibrary::ReportDamageDealt로 기록
 	UPROPERTY(VisibleAnywhere, Category="DamageMeter")
@@ -658,6 +677,9 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class URefineWidget> RefineWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UAccessoryPolishWidget> PolishWidget;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UShopDialogueWidget> ShopDialogueWidget;

@@ -28,6 +28,9 @@ public:
 
 	/** 읽은 권수 → 단계 (-1 = 안 배움) */
 	int32 GetLevel(FName EngravingId) const;
+
+	/** 착용 중인 어빌리티 스톤이 그 각인에 주는 레벨 0~4 — 장착한 각인일 때만 (로아 T4) */
+	int32 GetStoneLevel(FName EngravingId) const;
 	int32 GetBooksRead(FName EngravingId) const;
 
 	/** 배운 각인을 칸에 장착 — 이미 다른 칸에 있으면 그 칸과 맞바꾼다 */
@@ -88,5 +91,6 @@ private:
 
 	void ApplyStatic();
 	void ApplyBuffs();
+	void HandleEquipmentChanged() { ApplyStatic(); ApplyBuffs(); }
 	void SaveToGameInstance(bool bWriteDisk) const;
 };

@@ -259,9 +259,18 @@ void USkillManagerComponent::TryActivateSkill(int32 SlotIndex)
 
     if (ALoACharacter* Char = Cast<ALoACharacter>(GetOwner()))
     {
+        // 아크 패시브 — 마나 소모량 감소(끝없는 마나 등) / 최대 마나 비례 추가 소모(마나 용광로). 마나를 안 쓰는 스킬은 그대로 0
+        float ManaCost = Skill->SkillData.ManaCost;
+        if (ManaCost > 0.f)
+        {
+            if (const UStatComponent* Stats = UStatComponent::Find(Char))
+            {
+                ManaCost = ManaCost * (1.f - Stats->GetStats().ManaCostReduction) + Char->GetMaxMP() * Stats->GetStats().ManaCostMaxMPPercent;
+            }
+        }
         UE_LOG(LogTemp, Warning, TEXT("[Skill] 슬롯%d 마나소모 시도: %.0f / 현재MP: %.0f"),
-            SlotIndex, Skill->SkillData.ManaCost, Char->GetMP());
-        if (!Char->ConsumeMP(Skill->SkillData.ManaCost))
+            SlotIndex, ManaCost, Char->GetMP());
+        if (!Char->ConsumeMP(ManaCost))
         {
             UE_LOG(LogTemp, Warning, TEXT("[Skill] 마나 부족으로 스킬 취소"));
             return;
@@ -436,7 +445,14 @@ void USkillManagerComponent::StartCooldown(int32 SlotIndex)
     else if (bHasInstance && SlotIndex != DashSlotIndex && SlotIndex != GetUpSlotIndex)
     {
         // 쿨감 = 1 - (1 - 신속·각인) × (1 - 그 스킬 보석), 상한 80%. 대시·즉시 기상은 제외 — 딜 스탯이 생존기를 줄이면 패턴이 쉬워진다
-        CooldownDurations[SlotIndex] *= 1.f - UStatComponent::GetTotalCooldownReductionOf(GetOwner(), SlotInstances[SlotIndex]->SkillRowName);
+        float Reduction = UStatComponent::GetTotalCooldownReductionOf(GetOwner(), SlotInstances[SlotIndex]->SkillRowName);
+        // 아크 패시브 — 마나를 소모하는 스킬만 한 번 더 곱한다(끝없는 마나·무한한 마력). 상한은 같은 80%
+        const UStatComponent* Stats = UStatComponent::Find(GetOwner());
+        if (Stats && SlotInstances[SlotIndex]->SkillData.ManaCost > 0.f && Stats->GetStats().ManaSkillCooldownReduction > 0.f)
+        {
+            Reduction = FMath::Clamp(1.f - (1.f - Reduction) * (1.f - Stats->GetStats().ManaSkillCooldownReduction), 0.f, LoAStatRules::MaxCooldownReduction);
+        }
+        CooldownDurations[SlotIndex] *= 1.f - Reduction;
     }
 
     // 즉시 기상은 각인(탈출의 명수)만 받는다 — 저장된 길이를 바꾸면 쓸 때마다 줄어드니 끝 시각에만 반영

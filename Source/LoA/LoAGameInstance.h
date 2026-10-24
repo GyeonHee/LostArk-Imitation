@@ -120,6 +120,30 @@ public:
 	UPROPERTY(Transient)
 	bool bEngravingBooksV2 = false;
 
+	// ── 아크 패시브 (2026-10-24) — UArkPassiveComponent가 저장 ──
+	// 시작 배치(추천 세팅)를 받았는지 — 아크 패시브 이전 저장 파일에도 한 번 적용
+	UPROPERTY(Transient)
+	bool bHasStarterArkPassive = false;
+
+	// 노드 Id → 레벨 (0이면 빠짐)
+	UPROPERTY(Transient)
+	TMap<FName, int32> ArkPassiveLevels;
+
+	// 포인트를 장비에서 계산하는 규칙 + 점화 추천 세팅으로 한 번 바꿨는지 (첫 버전은 진화 140 기준 환류 배치)
+	UPROPERTY(Transient)
+	bool bArkPassiveBudgetV2 = false;
+
+	// 장신구 연마 (2026-10-25) — 영롱한 보석 파편 시작 지급 / 착용 장신구를 3단계 중중 세팅으로 한 번 바꿨는지
+	UPROPERTY(Transient)
+	bool bHasStarterPolishShards = false;
+
+	UPROPERTY(Transient)
+	bool bAccessoryPolishPresetV1 = false;
+
+	// 팔찌·어빌리티 스톤 시작 지급 (2026-10-25)
+	UPROPERTY(Transient)
+	bool bHasStarterBraceletStone = false;
+
 	// 현재 저장 구조 버전 — ULoASaveGame::SaveVersion
 	// 1 = 장비, 2 = 레이드 보상(대기 보상·첫 클리어) + 실링 상한 조정 + 골드
 	static constexpr int32 CurrentSaveVersion = 2;

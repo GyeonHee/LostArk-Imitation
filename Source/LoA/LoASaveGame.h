@@ -120,6 +120,26 @@ public:
 	UPROPERTY()
 	bool bEngravingBooksV2 = false;
 
+	// 아크 패시브 (2026-10-24)
+	UPROPERTY()
+	bool bHasStarterArkPassive = false;
+
+	UPROPERTY()
+	TMap<FName, int32> ArkPassiveLevels;
+
+	UPROPERTY()
+	bool bArkPassiveBudgetV2 = false;
+
+	// 장신구 연마 (2026-10-25)
+	UPROPERTY()
+	bool bHasStarterPolishShards = false;
+
+	UPROPERTY()
+	bool bAccessoryPolishPresetV1 = false;
+
+	UPROPERTY()
+	bool bHasStarterBraceletStone = false;
+
 	// 레이드 보상 중 소지품이 가득 차 아직 못 받은 것 — 대기 지역에서 칸이 생기면 지급 (버전 2~)
 	UPROPERTY()
 	TArray<FLoARewardItem> PendingRewards;

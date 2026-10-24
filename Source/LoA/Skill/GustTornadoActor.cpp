@@ -2,7 +2,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/OverlapResult.h"
 #include "Raid/CounterableInterface.h"
 
@@ -70,10 +69,6 @@ void AGustTornadoActor::ApplyDamage()
         Overlaps, BoxCenter, GetActorQuat(),
         FCollisionObjectQueryParams(FCollisionObjectQueryParams::AllDynamicObjects),
         Box, QueryParams);
-
-    DrawDebugBox(World, BoxCenter,
-        FVector(BoxHalfLength, BoxHalfWidth, BoxHalfHeight),
-        GetActorQuat(), FColor::Green, false, LifeAfterDone);
 
     // 카운터 판정은 데미지보다 먼저, 그리고 액터가 아니라 **컴포넌트 단위** — 거울 벽은 한 액터에 거울 7개가 있고
     // 그중 파란 거울 하나만 카운터 대상이라 어느 컴포넌트를 맞았는지가 중요하다.

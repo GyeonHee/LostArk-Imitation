@@ -9,7 +9,6 @@
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/OverlapResult.h"
-#include "DrawDebugHelpers.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "LoACharacter.h"
@@ -355,10 +354,6 @@ void AEchidnaMirrorActor::GetActorsInBeamBox(TArray<AActor*>& OutActors) const
 		Overlaps, BoxCenter, GetActorRotation().Quaternion(),
 		FCollisionObjectQueryParams(FCollisionObjectQueryParams::AllDynamicObjects),
 		Box, QueryParams);
-
-	DrawDebugBox(World, BoxCenter,
-		FVector(BeamRange * 0.5f, BeamHalfWidth, BeamHalfHeight),
-		GetActorRotation().Quaternion(), FColor::Red, false, 0.2f);
 
 	TSet<AActor*> Unique;
 	for (const FOverlapResult& Hit : Overlaps)

@@ -20,6 +20,7 @@
 #include "Item/EquipmentComponent.h"
 #include "Item/GemComponent.h"
 #include "Stat/EngravingComponent.h"
+#include "Stat/ArkPassiveComponent.h"
 
 ALoACharacter::ALoACharacter()
 {
@@ -52,6 +53,7 @@ ALoACharacter::ALoACharacter()
 	Equipment = CreateDefaultSubobject<UEquipmentComponent>(TEXT("Equipment"));
 	Gems = CreateDefaultSubobject<UGemComponent>(TEXT("Gems"));
 	Engravings = CreateDefaultSubobject<UEngravingComponent>(TEXT("Engravings"));
+	ArkPassive = CreateDefaultSubobject<UArkPassiveComponent>(TEXT("ArkPassive"));
 
 	// Create the camera boom component
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -129,7 +131,7 @@ void ALoACharacter::HandleStatsChanged(const FCombatStats& NewStats)
 	// 최대 마나 증가 각인 — 현재 마나 비율은 유지
 	if (BaseMaxMP > 0.f)
 	{
-		const float NewMaxMP = BaseMaxMP * NewStats.MaxMPMultiplier;
+		const float NewMaxMP = BaseMaxMP * NewStats.MaxMPMultiplier + NewStats.MaxMPFlat;
 		if (!FMath::IsNearlyEqual(NewMaxMP, MaxMP))
 		{
 			const float Ratio = MaxMP > 0.f ? MP / MaxMP : 1.f;
@@ -252,6 +254,7 @@ void ALoACharacter::ExecuteDash_Implementation(const FVector& TargetLocation)
 	const FSkillData DashData = SkillManager->GetSlotSkillData(USkillManagerComponent::DashSlotIndex);
 	LaunchCharacter(Dir * DashData.DashImpulse, true, false);
 	if (Engravings) Engravings->NotifyMovementSkill();  // 추진력
+	if (ArkPassive) ArkPassive->NotifyMovementSkill();  // 점멸 — 환류의 기운·마력 충전·응집되는 마력
 }
 
 float ALoACharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,

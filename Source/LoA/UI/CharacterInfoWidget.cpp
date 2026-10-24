@@ -2,10 +2,12 @@
 #include "Stat/StatComponent.h"
 #include "Item/EquipmentComponent.h"
 #include "Item/ItemTypes.h"
+#include "Item/AccessoryPolish.h"
 #include "Engine/Texture2D.h"
 #include "UI/CharacterPreviewActor.h"
 #include "UI/GemPageWidget.h"
 #include "UI/EngravingPageWidget.h"
+#include "Stat/ArkPassiveComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "LoAPlayerController.h"
 #include "Blueprint/WidgetTree.h"
@@ -247,7 +249,66 @@ UWidget* UCharacterInfoWidget::BuildProfileColumn()
 			S->SetPadding(FMargin(6.f, 0.f));
 		}
 	}
+
+	// ── 아크 패시브 — 진화·깨달음·도약에 쓴 포인트 (로아는 같은 자리에 깨달음 카르마 랭크). 클릭하면 아크 패시브 창 ──
+	ArkPassiveBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ArkPassiveBox"));
+	ArkPassiveBox->SetBrush(FSlateRoundedBoxBrush(FLinearColor(0.06f, 0.05f, 0.10f, 1.f), 4.f, CharInfo_Gold, 1.5f));
+	ArkPassiveBox->SetPadding(FMargin(6.f, 6.f, 6.f, 8.f));
+	ArkPassiveBox->SetToolTipText(NSLOCTEXT("CharInfo", "ArkPassiveTip", "아크 패시브 창 열기 (단축키 .)"));
+	if (UVerticalBoxSlot* S = Column->AddChildToVerticalBox(ArkPassiveBox)) S->SetPadding(FMargin(0.f, 8.f, 0.f, 0.f));
+	UVerticalBox* ArkLines = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	ArkPassiveBox->SetContent(ArkLines);
+	if (UVerticalBoxSlot* S = ArkLines->AddChildToVerticalBox(MakeText(TEXT("아크 패시브"), 11, FLinearColor(0.75f, 0.62f, 1.f, 1.f))))
+	{
+		S->SetHorizontalAlignment(HAlign_Center);
+		S->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
+	}
+	UHorizontalBox* ArkRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	if (UVerticalBoxSlot* S = ArkLines->AddChildToVerticalBox(ArkRow)) S->SetHorizontalAlignment(HAlign_Center);
+	ArkPassiveTexts.Reset();
+	for (int32 i = 0; i < static_cast<int32>(EArkPassiveTree::MAX); ++i)
+	{
+		const EArkPassiveTree Tree = static_cast<EArkPassiveTree>(i);
+		const FLinearColor Color = LoAArkPassive::GetTreeColor(Tree);
+		UVerticalBox* Cell = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		UBorder* Pill = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+		Pill->SetBrush(FSlateRoundedBoxBrush(FLinearColor(0.03f, 0.03f, 0.05f, 1.f), 10.f, Color, 1.5f));
+		Pill->SetPadding(FMargin(10.f, 2.f));
+		UTextBlock* Value = MakeText(TEXT("0"), 12, FLinearColor::White);
+		Pill->SetContent(Value);
+		if (UVerticalBoxSlot* S = Cell->AddChildToVerticalBox(Pill)) S->SetHorizontalAlignment(HAlign_Center);
+		if (UVerticalBoxSlot* S = Cell->AddChildToVerticalBox(MakeText(LoAArkPassive::GetTreeName(Tree).ToString(), 9, Color)))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetPadding(FMargin(0.f, 2.f, 0.f, 0.f));
+		}
+		if (UHorizontalBoxSlot* S = ArkRow->AddChildToHorizontalBox(Cell)) S->SetPadding(FMargin(4.f, 0.f));
+		ArkPassiveTexts.Add(Value);
+	}
 	return Column;
+}
+
+void UCharacterInfoWidget::SetArkPassive(UArkPassiveComponent* InArkPassive)
+{
+	if (ArkPassive.Get() != InArkPassive)
+	{
+		if (UArkPassiveComponent* Old = ArkPassive.Get()) Old->OnArkPassiveChanged.Remove(ArkPassiveChangedHandle);
+		ArkPassive = InArkPassive;
+		if (InArkPassive) ArkPassiveChangedHandle = InArkPassive->OnArkPassiveChanged.AddUObject(this, &UCharacterInfoWidget::RefreshArkPassiveBox);
+	}
+	RefreshArkPassiveBox();
+}
+
+void UCharacterInfoWidget::RefreshArkPassiveBox()
+{
+	const UArkPassiveComponent* Comp = ArkPassive.Get();
+	for (int32 i = 0; i < ArkPassiveTexts.Num(); ++i)
+	{
+		if (!ArkPassiveTexts[i]) continue;
+		// 로아처럼 그 트리의 보유 포인트 (장착 장비 기준)
+		const int32 Points = Comp ? Comp->GetBudget().Get(static_cast<EArkPassiveTree>(i)) : 0;
+		ArkPassiveTexts[i]->SetText(FText::AsNumber(Points));
+	}
 }
 
 UWidget* UCharacterInfoWidget::BuildEquipmentArea()
@@ -272,7 +333,40 @@ UWidget* UCharacterInfoWidget::BuildEquipmentArea()
 		for (int32 i = 0; i < Parts.Num(); ++i)
 		{
 			FGearSlotWidgets* Out = i < GearCount ? &GearSlots.AddDefaulted_GetRef() : nullptr;
-			if (UVerticalBoxSlot* S = Slots->AddChildToVerticalBox(MakeEquipSlot(Parts[i], FName(*FString::Printf(TEXT("%s_%d"), Prefix, i)), Out)))
+			UWidget* SlotWidget = MakeEquipSlot(Parts[i], FName(*FString::Printf(TEXT("%s_%d"), Prefix, i)), Out);
+
+			// 장신구 줄은 칸 왼쪽에 연마 효과 ◆ 3개를 세로로 (로아 캐릭터 정보 창처럼). 팔찌·스톤 칸도 자리만 비워 줄을 맞춤
+			const int32 SlotIndex = GearSlots.Num() - 1;
+			if (Out && !LoAEquipRules::IsGearSlot(static_cast<EEquipSlot>(SlotIndex)))
+			{
+				UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+				USizeBox* MarkBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+				MarkBox->SetWidthOverride(12.f);
+				MarkBox->SetHeightOverride(CharInfo_SlotSize);
+				UVerticalBox* Marks = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+				MarkBox->SetContent(Marks);
+				if (LoAEquipRules::IsAccessorySlot(static_cast<EEquipSlot>(SlotIndex)))
+				{
+					for (int32 m = 0; m < LoAPolish::MaxLevel; ++m)
+					{
+						UTextBlock* Mark = MakeText(TEXT("◆"), 9, CharInfo_DimColor);
+						Mark->SetShadowOffset(FVector2D(1.f, 1.f));
+						Mark->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.9f));
+						Mark->SetVisibility(ESlateVisibility::Hidden);
+						if (UVerticalBoxSlot* MS = Marks->AddChildToVerticalBox(Mark))
+						{
+							MS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+							MS->SetHorizontalAlignment(HAlign_Center);
+							MS->SetVerticalAlignment(VAlign_Center);
+						}
+						Out->PolishMarks.Add(Mark);
+					}
+				}
+				if (UHorizontalBoxSlot* HS = Row->AddChildToHorizontalBox(MarkBox)) HS->SetPadding(FMargin(0.f, 0.f, 3.f, 0.f));
+				Row->AddChildToHorizontalBox(SlotWidget);
+				SlotWidget = Row;
+			}
+			if (UVerticalBoxSlot* S = Slots->AddChildToVerticalBox(SlotWidget))
 			{
 				S->SetPadding(FMargin(0.f, i == 0 ? 0.f : 6.f, 0.f, 0.f));
 			}
@@ -587,6 +681,7 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 void UCharacterInfoWidget::NativeDestruct()
 {
 	SetStatComponent(nullptr);
+	SetArkPassive(nullptr);
 	Super::NativeDestruct();
 }
 
@@ -857,6 +952,16 @@ void UCharacterInfoWidget::RefreshGearSlots()
 		FGearSlotWidgets& W = GearSlots[i];
 		const FEquipmentInstance* Instance = Equip ? Equip->GetEquipped(static_cast<EEquipSlot>(i)) : nullptr;
 		const FItemDefinition* Def = Instance ? LoAItems::Find(Instance->ItemId) : nullptr;
+
+		// 연마 효과 ◆ — 붙은 효과마다 등급 색, 없는 단계는 숨김(자리는 유지)
+		for (int32 m = 0; m < W.PolishMarks.Num(); ++m)
+		{
+			UTextBlock* Mark = W.PolishMarks[m];
+			const bool bHasEffect = Def && Instance->PolishEffects.IsValidIndex(m);
+			Mark->SetVisibility(bHasEffect ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+			if (bHasEffect) Mark->SetColorAndOpacity(FSlateColor(LoAPolish::GetGradeColor(Instance->PolishEffects[m].Grade)));
+		}
+
 		if (!Def)
 		{
 			W.Icon->SetVisibility(ESlateVisibility::Collapsed);
@@ -882,8 +987,8 @@ void UCharacterInfoWidget::RefreshGearSlots()
 			W.PartText->SetColorAndOpacity(FSlateColor(CharInfo_ValueColor));
 			W.PartText->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
-		W.RefineText->SetText(FText::FromString(LoAItems::GetEquipmentBadge(*Instance)));
-		W.RefineText->SetVisibility(ESlateVisibility::HitTestInvisible);
+		// 칸 위 글자(재련 +N · 깨달음 깨N · 스톤 77 등)는 안 띄운다 (2026-10-25 유저 요청) — 자세한 건 툴팁에
+		W.RefineText->SetVisibility(ESlateVisibility::Collapsed);
 		W.Frame->SetBrushColor(CharInfo_Gold);
 		W.Frame->SetToolTipText(FText::Format(NSLOCTEXT("CharInfo", "EquippedSlotTip", "{0}\n\n우클릭: 해제"),
 			UEquipmentComponent::DescribeEquipment(*Instance)));
@@ -963,6 +1068,17 @@ FReply UCharacterInfoWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 				return FReply::Handled();
 			}
 		}
+	}
+
+	// [아크 패시브] 칸 — 아크 패시브 창
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && ArkPassiveBox && CurrentTab == 0  // 장비 탭에만 있다
+		&& ArkPassiveBox->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+	{
+		if (ALoAPlayerController* PC = GetOwningPlayer<ALoAPlayerController>())
+		{
+			PC->SetArkPassiveOpen(!PC->IsArkPassiveOpen());
+		}
+		return FReply::Handled();
 	}
 
 	// 제목 줄을 좌클릭 — 창 끌기 시작

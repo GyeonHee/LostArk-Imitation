@@ -115,17 +115,22 @@ namespace LoAEngravings
 	/** 읽은 권수 → 단계 0~4 (0권도 유물 0단계) */
 	LOA_API int32 LevelFromBooks(int32 BooksRead);
 
+	// StoneLevel = 어빌리티 스톤이 그 각인에 주는 레벨 0~4 (장착한 각인에만, LoAStone::GetEngravingLevel)
+
 	/** 장착만 해도 붙는 효과 (중첩 각인은 중첩과 무관한 부분만) */
-	LOA_API void AppendStaticModifiers(FName Id, int32 Level, TArray<FStatModifier>& Out);
+	LOA_API void AppendStaticModifiers(FName Id, int32 Level, TArray<FStatModifier>& Out, int32 StoneLevel = 0);
 
 	/** 중첩 각인의 현재 중첩에 따른 효과 */
-	LOA_API void AppendStackModifiers(FName Id, int32 Level, int32 Stacks, TArray<FStatModifier>& Out);
+	LOA_API void AppendStackModifiers(FName Id, int32 Level, int32 Stacks, TArray<FStatModifier>& Out, int32 StoneLevel = 0);
 
 	/** 창에 쓰는 효과 설명 한 줄 */
-	LOA_API FString Describe(FName Id, int32 Level);
+	LOA_API FString Describe(FName Id, int32 Level, int32 StoneLevel = 0);
 
 	/** P창 "장착 중인 각인" 목록 — (효과 이름, 값) 줄들. 로아 각인 창처럼 */
-	LOA_API void DescribeLines(FName Id, int32 Level, TArray<TPair<FString, FString>>& Out);
+	LOA_API void DescribeLines(FName Id, int32 Level, TArray<TPair<FString, FString>>& Out, int32 StoneLevel = 0);
+
+	/** 어빌리티 스톤 레벨이 효과를 올려주는 각인인가 (표에 없으면 스톤 레벨이 있어도 수치 변화 없음) */
+	LOA_API bool HasStoneBonus(FName Id);
 
 	/** 아이콘 텍스처 (/Game/LostArk/UI/Engraving/T_Eng_<Id>) — 없으면 null */
 	LOA_API class UTexture2D* LoadIcon(FName Id);

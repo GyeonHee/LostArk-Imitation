@@ -2,7 +2,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 
 AExplosionMeteorActor::AExplosionMeteorActor()
 {
@@ -72,14 +71,6 @@ void AExplosionMeteorActor::Activate(const FVector& InCharWaistLoc, const FVecto
     {
         StartFlying();
     }
-
-    // 디버그
-    const float EstTravel = (MeteorSpeed > 0.f) ? FVector::Dist(SpawnLoc, TargetLocation) / MeteorSpeed : 1.f;
-    const float TotalTime = CircleShowTime + EstTravel + LifeAfterLanding;
-    DrawDebugSphere(World, TargetLocation, 50.f, 12, FColor::Red, false, TotalTime);
-    DrawDebugSphere(World, TargetLocation, InternalExplosionRadius, 16, FColor::Purple, false, TotalTime);
-    DrawDebugSphere(World, SpawnLoc, 40.f, 12, FColor::Orange, false, CircleShowTime + 0.5f);
-    DrawDebugLine(World, SpawnLoc, TargetLocation, FColor::Yellow, false, TotalTime, 0, 3.f);
 }
 
 void AExplosionMeteorActor::StartFlying()

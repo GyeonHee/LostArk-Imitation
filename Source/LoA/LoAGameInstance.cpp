@@ -56,6 +56,12 @@ void ULoAGameInstance::LoadFromDisk()
 	GemFuseInputs = Save->GemFuseInputs;
 	bGemsUpgradedToLv7 = Save->bGemsUpgradedToLv7;
 	bEngravingBooksV2 = Save->bEngravingBooksV2;
+	bHasStarterArkPassive = Save->bHasStarterArkPassive;
+	ArkPassiveLevels = Save->ArkPassiveLevels;
+	bArkPassiveBudgetV2 = Save->bArkPassiveBudgetV2;
+	bHasStarterPolishShards = Save->bHasStarterPolishShards;
+	bAccessoryPolishPresetV1 = Save->bAccessoryPolishPresetV1;
+	bHasStarterBraceletStone = Save->bHasStarterBraceletStone;
 	PendingRewards = Save->PendingRewards;
 	bFirstClearRewarded = Save->bFirstClearRewarded;
 	if (Save->SaveVersion < CurrentSaveVersion)
@@ -108,6 +114,12 @@ void ULoAGameInstance::SaveToDisk()
 	Save->GemFuseInputs = GemFuseInputs;
 	Save->bGemsUpgradedToLv7 = bGemsUpgradedToLv7;
 	Save->bEngravingBooksV2 = bEngravingBooksV2;
+	Save->bHasStarterArkPassive = bHasStarterArkPassive;
+	Save->ArkPassiveLevels = ArkPassiveLevels;
+	Save->bArkPassiveBudgetV2 = bArkPassiveBudgetV2;
+	Save->bHasStarterPolishShards = bHasStarterPolishShards;
+	Save->bAccessoryPolishPresetV1 = bAccessoryPolishPresetV1;
+	Save->bHasStarterBraceletStone = bHasStarterBraceletStone;
 	Save->PendingRewards = PendingRewards;
 	Save->bFirstClearRewarded = bFirstClearRewarded;
 

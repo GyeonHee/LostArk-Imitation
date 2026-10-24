@@ -47,6 +47,9 @@ public:
 	/** [보석] 탭이 열려 있을 때 소지품에서 보석을 우클릭 — 스킬 선택 창 */
 	void BeginGemEquip(FName GemItemId);
 
+	/** 왼쪽 아래 [아크 패시브] 칸 — 진화·깨달음·도약에 쓴 포인트. 클릭하면 아크 패시브 창 */
+	void SetArkPassive(class UArkPassiveComponent* InArkPassive);
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeDestruct() override;
@@ -87,6 +90,8 @@ private:
 		UTextBlock* PartText = nullptr;
 		UTextBlock* RefineText = nullptr;
 		FText PartName;
+		// 장신구 칸 왼쪽 연마 효과 ◆ 3개 — 등급 색(상 노랑 · 중 보라 · 하 파랑), 장신구가 아니면 비어 있다
+		TArray<UTextBlock*> PolishMarks;
 	};
 	TArray<FGearSlotWidgets> GearSlots; // EEquipSlot 순서
 
@@ -97,6 +102,7 @@ private:
 	UWidget* BuildProfileColumn();
 	UWidget* BuildEquipmentArea();
 	UWidget* BuildStatColumn();
+	void RefreshArkPassiveBox();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBorder> Panel;
@@ -147,4 +153,10 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UWidget> EquipBody;
 	UPROPERTY(Transient) TObjectPtr<class UGemPageWidget> GemPage;
 	UPROPERTY(Transient) TObjectPtr<class UEngravingPageWidget> EngravingPage;
+
+	// ── 아크 패시브 칸 (왼쪽 아래) ──
+	UPROPERTY(Transient) TObjectPtr<UBorder> ArkPassiveBox;
+	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> ArkPassiveTexts;  // 진화 / 깨달음 / 도약
+	TWeakObjectPtr<class UArkPassiveComponent> ArkPassive;
+	FDelegateHandle ArkPassiveChangedHandle;
 };

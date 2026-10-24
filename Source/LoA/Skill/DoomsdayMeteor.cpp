@@ -2,7 +2,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 
 ADoomsdayMeteor::ADoomsdayMeteor()
 {
@@ -59,11 +58,6 @@ void ADoomsdayMeteor::Activate(const FVector& InTargetLocation, float InFallDela
     {
         StartFalling();
     }
-
-    // 디버그: 정확한 목표(빨강) + 폭발 반경(보라)
-    const float TotalTime = TotalDelay + VFXTravelTime + LifeAfterLanding;
-    DrawDebugSphere(GetWorld(), TargetLocation, 50.f, 12, FColor::Red, false, TotalTime);
-    DrawDebugSphere(GetWorld(), TargetLocation, InternalExplosionRadius, 16, FColor::Purple, false, TotalTime);
 }
 
 void ADoomsdayMeteor::StartFalling()
@@ -77,9 +71,6 @@ void ADoomsdayMeteor::StartFalling()
         const FRotator DownRotation = FRotator(-90.f, 0.f, 0.f);
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, MeteorVFXSystem, StartLoc, DownRotation,
             FVector(VFXScale));
-
-        DrawDebugSphere(World, StartLoc, 60.f, 12, FColor::Orange, false, VFXTravelTime + 0.5f);
-        DrawDebugLine(World, StartLoc, TargetLocation, FColor::Yellow, false, VFXTravelTime + 0.5f, 0, 3.f);
     }
 
     // NS_Magma_Shot 재생 시간에 맞춰 데미지 — VFXTravelTime 직접 지정

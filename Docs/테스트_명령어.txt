@@ -23,6 +23,9 @@ LoAInvTest                      회복약 묶음 8개를 빈 칸에 흩뿌림 (�
   - 재련 재료         GuardianStone(수호석) / DestructionStone(파괴석) / LeapStone(돌파석)
   - 숨결              RefineBreath(빙하의 숨결, 방어구) / LavaBreath(용암의 숨결, 무기)
   - 장비 성장         FateFragment(운명의 파편)
+  - 장신구 연마       PolishShard(영롱한 보석 파편)   예) LoAGiveItem PolishShard 100
+  - 팔찌              Bracelet_Desire (효과 무작위)    예) LoAGiveItem Bracelet_Desire 1
+  - 어빌리티 스톤     Stone_Desire (세공 전 — 소지품 우클릭으로 세공)   예) LoAGiveItem Stone_Desire 1
   - 장비(재련 0단계)  Equip_StarterHelmet / Equip_StarterShoulder / Equip_StarterChest
                       Equip_StarterPants / Equip_StarterGloves / Equip_StarterWeapon
   - 장신구            Acc_StarterNecklace / Acc_StarterEarring / Acc_StarterRing   (특성 고정)

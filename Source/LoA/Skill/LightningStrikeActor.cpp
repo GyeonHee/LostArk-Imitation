@@ -2,7 +2,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 
 ALightningStrikeActor::ALightningStrikeActor()
 {
@@ -45,10 +44,6 @@ void ALightningStrikeActor::Activate(const FVector& InTargetLocation, float InEx
             }
         }
     }
-
-    const float TotalTime = CircleShowTime + StrikeDelay + LifeAfterStrike;
-    DrawDebugSphere(GetWorld(), TargetLocation, 50.f, 12, FColor::Yellow, false, TotalTime);
-    DrawDebugSphere(GetWorld(), TargetLocation, InternalExplosionRadius, 16, FColor::Cyan, false, TotalTime);
 
     // CircleShowTime 후 번개 VFX + 데미지 타이머 시작
     if (World)

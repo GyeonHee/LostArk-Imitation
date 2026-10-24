@@ -36,7 +36,123 @@ enum class EEquipSlot : uint8
 	Earring2 UMETA(DisplayName="귀걸이"),
 	Ring1    UMETA(DisplayName="반지"),
 	Ring2    UMETA(DisplayName="반지"),
+	Bracelet UMETA(DisplayName="팔찌"),            // 2026-10-25
+	AbilityStone UMETA(DisplayName="어빌리티 스톤"),
 	MAX      UMETA(Hidden),
+};
+
+/** 장신구 연마 효과 종류 (로아 T4) — 앞 12개가 부위 전용(목걸이 4 · 귀걸이 4 · 반지 4), 뒤 6개가 공통. 저장 파일에 들어가니 **뒤에만 추가할 것** */
+UENUM(BlueprintType)
+enum class EPolishEffect : uint8
+{
+	AdditionalDamage   UMETA(DisplayName="추가 피해"),
+	DamageToEnemies    UMETA(DisplayName="적에게 주는 피해"),
+	SupportGauge       UMETA(DisplayName="세레나데·신앙·조화 게이지 획득량"),
+	BrandPower         UMETA(DisplayName="낙인력"),
+	AttackPowerPercent UMETA(DisplayName="공격력 %"),
+	WeaponPowerPercent UMETA(DisplayName="무기 공격력 %"),
+	PartyHeal          UMETA(DisplayName="파티원 회복 효과"),
+	PartyShield        UMETA(DisplayName="파티원 보호막 효과"),
+	CritRate           UMETA(DisplayName="치명타 적중률"),
+	CritDamage         UMETA(DisplayName="치명타 피해"),
+	AllyAttackBuff     UMETA(DisplayName="아군 공격력 강화 효과"),
+	AllyDamageBuff     UMETA(DisplayName="아군 피해량 강화 효과"),
+	MaxHP              UMETA(DisplayName="최대 생명력"),
+	AttackPowerFlat    UMETA(DisplayName="공격력"),
+	WeaponPowerFlat    UMETA(DisplayName="무기 공격력"),
+	MaxMP              UMETA(DisplayName="최대 마나"),
+	StatusDuration     UMETA(DisplayName="상태이상 공격 지속시간"),
+	CombatHPRegen      UMETA(DisplayName="전투 중 생명력 회복량"),
+};
+
+/** 팔찌 효과 종류 (로아 T4, Maxroll itemRandom 2133000x3) — 기본 효과 · 전투 특성 · 특수 효과. 저장 파일에 들어가니 **뒤에만 추가할 것** */
+UENUM(BlueprintType)
+enum class EBraceletEffect : uint8
+{
+	// 기본 효과 (값 = 수치)
+	PrimaryStat        UMETA(DisplayName="주 스탯"),
+	Vitality           UMETA(DisplayName="체력"),
+	// 전투 특성 (값 = 포인트)
+	Crit               UMETA(DisplayName="치명"),
+	Specialization     UMETA(DisplayName="특화"),
+	Domination         UMETA(DisplayName="제압"),
+	Swiftness          UMETA(DisplayName="신속"),
+	Endurance          UMETA(DisplayName="인내"),
+	Expertise          UMETA(DisplayName="숙련"),
+	// 특수 효과 (값 = 등급 0 하 / 1 중 / 2 상)
+	DamageToEnemies    UMETA(DisplayName="적에게 주는 피해"),
+	AdditionalDamage   UMETA(DisplayName="추가 피해"),
+	CritRate           UMETA(DisplayName="치명타 적중률"),
+	CritDamage         UMETA(DisplayName="치명타 피해"),
+	WeaponPower        UMETA(DisplayName="무기 공격력"),
+	OnHitWeaponPower   UMETA(DisplayName="적중 시 무기 공격력"),
+	StaggeredDamage    UMETA(DisplayName="적에게 주는 피해(무력화)"),
+	NonDirectional     UMETA(DisplayName="비방향성 공격 피해"),
+	BackAttack         UMETA(DisplayName="백어택 피해"),
+	HeadAttack         UMETA(DisplayName="헤드어택 피해"),
+	PhysDefense        UMETA(DisplayName="물리 방어력"),
+	MagicDefense       UMETA(DisplayName="마법 방어력"),
+	MaxHP              UMETA(DisplayName="최대 생명력"),
+	CombatHPRegen      UMETA(DisplayName="전투 중 생명력 회복량"),
+	AllyAttackBuff     UMETA(DisplayName="아군 공격력 강화 효과"),
+	AllyDamageBuff     UMETA(DisplayName="아군 피해량 강화 효과"),
+	ChallengeDamage    UMETA(DisplayName="도전 이하 몬스터 피해"),
+	ChallengeDefense   UMETA(DisplayName="도전 이하 몬스터 받는 피해 감소"),
+	CCImmunity         UMETA(DisplayName="마비·밀려남 면역"),
+};
+
+/** 팔찌 효과 한 줄 — 기본 효과·전투 특성은 Value(수치), 특수 효과는 Grade(0~2) */
+USTRUCT(BlueprintType)
+struct FBraceletEffectRoll
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	EBraceletEffect Effect = EBraceletEffect::Crit;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Value = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Grade = 0;
+
+	// 고정 효과(획득 시 무작위, 부여·변환으로 안 바뀜) / false = 부여 효과(팔찌 효과 부여 NPC)
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	bool bFixed = false;
+};
+
+/** 어빌리티 스톤 한 줄 — 각인(증가 2줄) 또는 감소 효과(3번째 줄), 세공 10칸의 성공 수·시도 수 */
+USTRUCT(BlueprintType)
+struct FStoneLine
+{
+	GENERATED_BODY()
+
+	// 증가 줄 = 각인 Id(LoAEngravings), 감소 줄 = LoAStone 감소 효과 Id(AtkReduction 등)
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	FName Id;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Successes = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Attempts = 0;
+
+	// 세공 칸 결과 순서 (true = 성공) — 창의 ◆◇ 표시용
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	TArray<bool> Results;
+};
+
+/** 장신구에 붙은 연마 효과 하나 — 종류 + 등급(0 하 / 1 중 / 2 상). 수치는 LoAPolish 표에서 읽는다 */
+USTRUCT(BlueprintType)
+struct FPolishEffectRoll
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	EPolishEffect Effect = EPolishEffect::MaxHP;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 Grade = 0;
 };
 
 /** 장신구에 붙은 전투 특성 하나 (예: 치명 +385) */
@@ -171,10 +287,41 @@ struct FEquipmentInstance
 	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
 	TArray<FStatRoll> StatRolls;
 
-	// 장신구 주 스탯·체력 등급 0~3 (로아 T4 장신구는 부위마다 4단계 고정값 중 하나) — 값은 LoAItems::GetAccessoryStats.
-	// 이 필드가 생기기 전 저장 파일의 장신구는 0 = 최하 등급(= 시작 장신구 값)으로 읽힌다
+	// [미사용, 2026-10-25] 장신구 주 스탯·체력 등급 0~3을 굴려 넣던 자리 — 게임 데이터를 다시 보니 이 4단계는 등급이 아니라
+	// 연마 단계별 기본 효과였다. 지금은 PolishLevel로 읽는다(LoAItems::GetAccessoryStats). 저장 파일 호환을 위해 남겨둠
 	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
 	int32 AccessoryTier = 0;
+
+	// [미사용] 장신구 깨달음 포인트를 굴려 넣던 자리 — 지금은 등급·부위·연마 단계 표(LoAArkPassive::GetAccessoryEnlightenment)로 정한다.
+	// 저장 파일 호환을 위해 남겨둠
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 EnlightenmentPoints = 0;
+
+	// 장신구 연마 단계 0~3 — 기본 효과(주 스탯·체력)와 깨달음 포인트가 표대로 오른다(유물 목걸이 4→5→7→10). 연마 NPC(LoAPolish)
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 PolishLevel = 0;
+
+	// 연마 효과 — 단계마다 하나씩 (PolishLevel개)
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	TArray<FPolishEffectRoll> PolishEffects;
+
+	// 팔찌 효과 (LoABracelet) — 고정 효과(bFixed) 먼저, 그 뒤 부여 효과. 팔찌가 아니면 비어 있다
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	TArray<FBraceletEffectRoll> BraceletEffects;
+
+	// 팔찌 부여 효과 칸 수 / 남은 부여·변환 횟수
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 BraceletEnchantSlots = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 BraceletEnchantsLeft = 0;
+
+	// 어빌리티 스톤 (LoAStone) — 0·1 = 증가 각인, 2 = 감소 효과. StoneChance = 다음 세공 성공 확률 %(75 → 성공 -10 / 실패 +10, 25~75)
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	TArray<FStoneLine> StoneLines;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
+	int32 StoneChance = 75;
 
 	// 장비 성장 — 다음 단계 재련 전에 운명의 파편 + 실링으로 경험치를 100% 채워야 한다(로아). 재련에 성공하면 다시 false
 	UPROPERTY(BlueprintReadOnly, Category = "Equipment")
@@ -210,6 +357,8 @@ namespace LoAEquipRules
 {
 	constexpr int32 SlotCount = static_cast<int32>(EEquipSlot::MAX);  // 장신구까지 전부 (장착 GUID 배열 크기)
 	constexpr int32 GearSlotCount = 6;                                 // 재련 장비 (방어구 5 + 무기) — 아이템 레벨 평균·재련 대상
+	// 장신구 5칸 = Necklace ~ Ring2. 그 뒤 팔찌·어빌리티 스톤 (2026-10-25)
+	inline bool IsAccessorySlot(EEquipSlot Slot) { return Slot >= EEquipSlot::Necklace && Slot <= EEquipSlot::Ring2; }
 	inline bool IsGearSlot(EEquipSlot Slot) { return static_cast<int32>(Slot) < GearSlotCount; }
 	/** Def의 부위(귀걸이·반지는 1번 칸으로 정의)가 장착 칸 Slot에 들어갈 수 있는지 — 귀걸이·반지는 두 칸 다 */
 	LOA_API bool CanEquipInSlot(EEquipSlot DefSlot, EEquipSlot Slot);
@@ -243,6 +392,7 @@ namespace LoAItems
 	LOA_API extern const FName GlacierBreath;  // 빙하의 숨결 — ID는 숨결이 하나이던 시절의 "RefineBreath" 그대로(저장 파일 호환)
 	LOA_API extern const FName LavaBreath;     // 용암의 숨결
 	LOA_API extern const FName FateFragment;   // 운명의 파편 — 장비 성장(재련 전 단계) 재료
+	LOA_API extern const FName PolishShard;    // 영롱한 보석 파편 — 장신구 연마 재료
 
 	/** 부위별 시작 장비 (1640 세트 = 재련 +10) — EEquipSlot 순서 */
 	LOA_API FName GetStarterEquipment(EEquipSlot Slot);
@@ -250,7 +400,7 @@ namespace LoAItems
 	/** 장신구 정의로 전투 특성을 굴린다 — 치명·특화·신속·제압 중 서로 다른 AccessoryStatCount종 (인내·숙련은 효과가 없어 빼둠) */
 	LOA_API TArray<FStatRoll> RollAccessoryStats(const FItemDefinition& Def);
 
-	/** 칸 왼쪽 위 표시 — 재련 장비는 "+10", 장신구는 특성 첫 글자("치특") */
+	/** 칸 왼쪽 위 표시 — 재련 장비만 "+10", 장신구·팔찌·스톤은 빈 문자열 */
 	LOA_API FString GetEquipmentBadge(const FEquipmentInstance& Instance);
 
 	/** 시작 장신구 (EEquipSlot::Necklace ~ Ring2 순서) — 정의 ID와 고정 특성 */
@@ -266,9 +416,9 @@ namespace LoAItems
 	/** 재련 장비 부위의 RefineLevel(0~25) 단계 기본 효과 — 로아 T4 운명의 업화 표 (부위마다, 단계마다 오르는 양이 다르다) */
 	LOA_API FGearStats GetGearStats(EEquipSlot Slot, int32 RefineLevel);
 
-	/** 장신구 부위의 등급(0~3) 주 스탯·체력 — 로아 T4 장신구 표 (목걸이 > 귀걸이 > 반지) */
+	/** 장신구 부위의 연마 단계(0~3) 기본 효과 주 스탯·체력 — 로아 T4 장신구 표 (목걸이 > 귀걸이 > 반지, itemRandom 5000~5003 = 연마 0~3) */
 	constexpr int32 AccessoryTierCount = 4;
-	LOA_API FGearStats GetAccessoryStats(EEquipSlot Slot, int32 Tier);
+	LOA_API FGearStats GetAccessoryStats(EEquipSlot Slot, int32 PolishLevel);
 
 	/** 세 자리마다 쉼표 — 100000000 → "100,000,000". 언어 설정과 무관하게 항상 쉼표 */
 	LOA_API FString FormatWithCommas(int64 Value);

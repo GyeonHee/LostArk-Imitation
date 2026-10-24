@@ -1,7 +1,6 @@
 #include "Skill/IceArrowZoneActor.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
 
 AIceArrowZoneActor::AIceArrowZoneActor()
 {
@@ -25,10 +24,6 @@ void AIceArrowZoneActor::Activate(float InTickDamage, AController* InInstigator,
 
     UWorld* World = GetWorld();
     if (!World) return;
-
-    DrawDebugCylinder(World, GetActorLocation(), GetActorLocation() + FVector(0, 0, 10),
-        ZoneRadius, 32, FColor::Blue, false,
-        (MaxTicks - 1) * TickInterval + LifeAfterDone);
 
     // 첫 틱 즉시
     ApplyTick();
