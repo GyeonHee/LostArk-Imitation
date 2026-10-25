@@ -23,11 +23,18 @@
 - 3스택(`MaxCharmGauge`), 1스택당 30초마다 1개씩 감소(루핑, 재히트 시 재시작). 3스택 도달 → `bIsCharmed` 5초 → `EndCharm`이 스택 0. 매혹 중 `AddCharmGauge`는 바로 return(연장 금지). 스택 증가는 보스 정산 게이지에도 알림
 - 매혹 중 컨트롤러 `PerformRandomCharmAction`(0.8초마다): 스킬을 붙잡고 있으면 그대로 둠(이동 목표를 덮으면 사거리 이동과 싸움) → 무작위 이동 목표 → **쿨타임 아닌 슬롯만** 골라 `SkillManager->HandleKeyDown` 직접 → 타입별로 발동에 필요한 만큼 붙잡음(Cast = CastTime+0.3 등), Tick이 `HandleKeyHeld` 대신 흘림. 화면 연기 출처 "Charm"
 
+### 소서리스 아이덴티티 (`ASorceress` + `USorceressIdentityComponent`)
+- `BP_Sorceress`의 부모가 `ASorceress`. 수치는 `LoASorceressIdentity`(헤더) — 로아 값(나무위키) + 자료에 없는 것은 "추정" 주석
+- 신비한 마력: 보스·허수아비 피격마다 **그 타격의 계수 × 1.8%**(`ULoADamageLibrary::NotifyIdentityHit` — 피해 ÷ 계수 1 피해, BP 기본공격은 공격력으로 나눔). 강화·해방 중엔 안 참
+- Z 마력 방출: 30~99% 강화(속성 피해 +9%) / 100% 해방(+18%·쿨감 25%·슈퍼아머 = 넉다운·경직만 무시). 지속 = 게이지 × 0.08초, 쿨 2초. 효과는 수정치 출처 "Identity"
+- X 점멸: 30%, 15m, 쿨 1초. WorldStatic에서 멈추고 보스는 넘음, 바닥 없으면 당김. 아크 패시브 "점멸" 노드는 여기(스페이스 대시는 추진력만)
+- 환류·응집되는 마력이면 Z 사용 불가. 마력 방출·점멸도 `OnSkillUsed(INDEX_NONE)`(아드레날린·달인)
+
 ## ALoAPlayerController
 - 이동: 클릭 → `RequestDirectMove`(NavMesh 없음). `BP_LoAPlayerController` EventGraph의 이동 노드는 C++와 충돌해서 제거됨
 - Tick 순서: `UpdateRaidIntro`/`UpdateDefeat`/`UpdateClear`는 **폰 체크보다 앞**, `UpdateCastBar`/`UpdateEnrageTimer`는 **`IsActionLocked` 조기 return보다 앞**
 - **HUD 슬롯 클릭 차단**: HUD가 HitTestInvisible이라 컨트롤러가 커서와 슬롯 위젯 지오메트리를 직접 비교(`FindHUDSlotUnderCursor`) → 슬롯 위 클릭은 이동·기본공격으로 안 씀(`ConsumeHUDSlotPress`, 창 위(`IsCursorOverPanel`)도). UI 위에서 시작된 클릭은 Triggered·Released 이동도 무시(`bMovePressSuppressed`). 6px 이상 끌면 같은 그룹끼리 스왑
-- 키 1~4·I 등은 입력 액션 없이 `SetupInputComponent`의 `FInputKeyBinding`
+- 키 1~4·I·Z·X 등은 입력 액션 없이 `SetupInputComponent`의 `FInputKeyBinding`
 - 위젯 생성은 BeginPlay(보스·아레나가 있을 때만 해당 위젯), 위젯 클래스는 BP Details에서 유저가 직접 할당
 - **레벨 이동은 전부 `TravelToLevelWithFade()`**(페이드 아웃 → OpenLevel, 도착 `bFadeInOnArrive`). 레벨은 소프트 참조라 패키징 `+MapsToCook` 필요
 - 보스 처치(`OnBossDefeated`): 무적 + 보상 지급 + 클리어 화면(12초 또는 [정비소로 이동]) / 사망(`OnPlayerDied`): 흑백 후처리 + 패배 화면 3초 / 중단: 확인 창 → 무적+붙잡힘 → 복귀. 셋 다 `ReturnToLobby()`, 먼저 뜬 쪽 우선

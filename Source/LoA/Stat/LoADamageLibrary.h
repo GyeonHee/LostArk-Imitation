@@ -55,4 +55,10 @@ public:
 	 */
 	static void ReportDamageDealt(const AActor* Instigator, const AActor* Target, const AActor* DamageCauser,
 		float FinalDamage, bool bCritical, bool bTrainingTarget);
+
+	/**
+	 * 아이덴티티 게이지 — 보스·허수아비 TakeDamage가 치명 전 피해(DamageAmount)로 부른다.
+	 * 이 타격의 계수 = 피해 ÷ (그 스킬 계수 1일 때 피해)를 공격자의 아이덴티티 컴포넌트에 넘긴다(소서리스만)
+	 */
+	static void NotifyIdentityHit(const AActor* Instigator, const AActor* DamageCauser, float BaseDamage);
 };

@@ -127,6 +127,10 @@ protected:
 	UPROPERTY()
 	TObjectPtr<class UResourceBarWidget> ResourceBarWidget;
 
+	// 소서리스 아이덴티티 게이지 (스킬 칸 위) — 소서리스가 아니면 위젯이 스스로 숨는다
+	UPROPERTY(Transient)
+	TObjectPtr<class UIdentityGaugeWidget> IdentityGaugeWidget;
+
 	// ── 화면 연기 (랜잡 패턴) ──
 	UPROPERTY(Transient)
 	TObjectPtr<class UScreenFogWidget> ScreenFogWidget;
@@ -368,6 +372,10 @@ public:
 	/** 테스트용 콘솔 명령 — 플레이어 즉사(사망 확인용) */
 	UFUNCTION(Exec)
 	void LoAKillSelf();
+
+	/** 테스트용 콘솔 명령 — 소서리스 신비한 마력 게이지 설정(0~100). 예) LoAIdentity 100 */
+	UFUNCTION(Exec)
+	void LoAIdentity(float Gauge);
 
 	/** 테스트용 콘솔 명령 — 소지품에 아이템 추가. 예) LoAGiveItem SpiritRecoveryPotion 50 */
 	UFUNCTION(Exec)
@@ -654,6 +662,12 @@ protected:
 
 	/** 대쉬 입력 핸들러 */
 	void OnDashInput();
+
+	/** 소서리스 아이덴티티 — Z 마력 방출 / X 점멸 (입력 액션 없이 키 직접 바인딩) */
+	void OnIdentityReleaseKey();
+	void OnIdentityBlinkKey();
+	/** 아이덴티티 입력을 받을 수 있는 상태인지 (CC·매혹 중이면 nullptr) */
+	class ASorceress* GetIdentityInputPawn() const;
 
 	/** 현재 빙의된 캐릭터의 SkillManager 반환 */
 	UFUNCTION(BlueprintCallable, Category="Skills")

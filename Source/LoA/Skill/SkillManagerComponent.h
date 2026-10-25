@@ -105,6 +105,9 @@ public:
      *  같은 프레임에 뒤따라 오는 StartCooldown도 건너뛴다 */
     void ResetCounterSkillCooldowns();
 
+    /** 스킬 슬롯(0~7, Q~F)의 남은 쿨타임을 Ratio만큼 줄인다 — 소서리스 점화(마력 해방 발동). 기본공격·대시·기상 제외 */
+    void ReduceRemainingSkillCooldowns(float Ratio);
+
     /** 모든 슬롯(대시·즉시기상 포함) 쿨타임 즉시 초기화 — 대기 지역 정비소 */
     UFUNCTION(BlueprintCallable, Category = "Skill")
     void ResetAllCooldowns();

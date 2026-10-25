@@ -8,7 +8,7 @@
 - **클릭을 먹는 C++ 위젯은 `NativeOnMouseButtonDoubleClick`도 Handled**(빠른 두 번째 클릭이 DoubleClick으로 와서 맵 이동으로 샜음)
 - 위젯 클래스는 `BP_LoAPlayerController` Details에서 **유저가 직접 할당**(MCP CDO 쓰기는 PIE에서 null). 생성 지점마다 `[HUD]`/`[CastBar]` 같은 성공/실패 로그를 남길 것
 - ViewModel 순서: Initialize → SetViewModel → AddToViewport
-- ZOrder: 연기 -1 · HUD 0 · 미니맵/자원 띠 5 · 중단 버튼 6 · 대사 7 · 구역 알림 8 · 스킬트리·창 10 · 안내 11 · 드래그 아이콘 20 · 패배/클리어 30 · 툴팁 50
+- ZOrder: 연기 -1 · 아이덴티티 틀 0(HUD보다 먼저) · HUD 0 · 미니맵/자원 띠 5 · 중단 버튼 6 · 대사 7 · 구역 알림 8 · 스킬트리·창 10 · 안내 11 · 드래그 아이콘 20 · 패배/클리어 30 · 툴팁 50
 - 창 이동 공용 `FLoAWindowDrag`(`WindowDragHelper.h`) — 헤더를 끌어 이동, 화면 밖 클램프
 
 ## WBP_HUD (MVVM, `HUD_ViewModel`)
@@ -32,6 +32,7 @@
 
 ## 공용 HUD
 - **`UMinimapWidget`**(C++만, 모든 맵): `NativePaint`에서 Slate 커스텀 버텍스로 직접 그림. 카메라 Yaw 기준. 보스 맵 = 타일·보스(숨김이면 숨김)·플레이어, 로비 = 바닥 사각형·구역·NPC(`MinimapIcon`, 비면 노란 점). `UUserWidget::Padding`과 이름이 겹쳐 `MapPadding`
+- **`UIdentityGaugeWidget`**(C++만, 하단 가운데 = 스킬 칸 Q~F와 아이템 칸 사이): 유저 캡처를 두 층으로 — `/Game/LostArk/UI/Identity/T_IdentityArt`(틀·Z·X 아이콘, 바 안쪽 비움, 배경 완전 투명) + `T_IdentityGlow`(푸른 불빛)를 `M_IdentityGlow`(UI 머티리얼: 노이즈로 UV 흔들기·밝기 일렁임, 파라미터 `Strength`·`Tint`·`Tint2`(노이즈로 섞는 둘째 색)·`OpacityScale`)로 틀 아래에. 평소 불투명, 100%면 맥동 + Z 테두리 빛 고리(98%와 구분 — 해방은 정확히 100%), 해방은 흰빛+보랏빛. 나머지는 NativePaint — 게이지 채움, 해방 중 Z 테두리 반시계 빛 두 줄기, 환류면 Z 자물쇠, 점멸 쿨 초. **좌표는 텍스처 픽셀 기준 상수(`IdFrame_*`) — 텍스처를 바꾸면 같이**(두 층 분리 스크립트는 남기지 않음 — 캡처를 바꾸면 새로 만들 것). HUD보다 먼저 ZOrder 0으로 넣어 날개가 슬롯 밑에 깔림. CVar `LoA.Identity.OffsetY`·`LoA.Identity.Scale`
 - **`UResourceBarWidget`**(좌상단): 시간·실링·골드·운명의 파편, 인벤토리 델리게이트로만 갱신. 보스 맵에선 정산 게이지를 그 아래로 내림
 - **`UCharmGaugeWidget`** + `WBP_CharmGauge`: 머리 위 WidgetComponent(Screen). 연꽃 120도 부채꼴 3조각(`/Game/UI/CharmGauge/T_CharmPetal_{1,2,3}_{Color,Gray}`) — Overlay에 흑백 3 → 컬러 3 겹침, `SetStacks(N)`. 이미지 크기를 원본으로 두면 화면을 덮음(작게 72x49)
 - **`USkillTooltipWidget`**: HUD 스킬·대시·기상 칸, 스킬트리 줄(ListView → `GetListObjectFromEntry` → `GetRowName`)에 마우스 오버. 내용은 대상이 바뀔 때만 만들고 Tick엔 위치만(배치 전 `ForceLayoutPrepass` — 주기적으로 재생성하면 크기 계산 전 프레임에 겹쳐 깜빡임). 설명 `{D}` = 스펙 피해, 쿨타임은 기본값만

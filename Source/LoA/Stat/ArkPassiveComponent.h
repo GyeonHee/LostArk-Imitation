@@ -12,7 +12,7 @@ DECLARE_MULTICAST_DELEGATE(FOnArkPassiveChanged);
 /**
  * 아크 패시브 배치(노드별 레벨)와 효과. 효과는 UStatComponent 수정치 두 출처로:
  *   "ArkPassive"     — 레벨만 있으면 붙는 상시 효과 (LoAArkPassive::BuildStaticModifiers)
- *   "ArkPassiveBuff" — 발동형: 달인(스킬 사용 시 중첩) / 마력 충전·응집되는 마력(점멸 = 대시 사용 시)
+ *   "ArkPassiveBuff" — 발동형: 달인(스킬 사용 시 중첩) / 마력 충전·응집되는 마력(점멸 사용 시)
  * 환류의 기운(점멸 시 마나 7% 회복)도 여기서. 바꾸기는 각인과 같은 규칙 — 보스 맵 밖에서만, [저장]을 눌러야 적용
  * 포인트는 장착 장비에서 계산(LoAArkPassive::ComputeBudget) — 장비가 바뀔 때마다 + BeginPlay 다음 틱에 다시
  * (컴포넌트 BeginPlay 순서는 보장되지 않아 장비 장착 전에 계산될 수 있다). 장비를 벗어 쓴 포인트가 모자라면
@@ -42,7 +42,8 @@ public:
 	/** 아크 패시브 창의 [저장] — 규칙에 맞지 않거나 레이드 중이면 false */
 	bool SetAllLevels(const TMap<FName, int32>& NewLevels, FText& OutFailReason);
 
-	/** 점멸(대시) 사용 — 환류의 기운·마력 충전·응집되는 마력 */
+	/** 점멸(소서리스 X — USorceressIdentityComponent) — 환류의 기운·마력 충전·응집되는 마력.
+	 *  마력 해방에 걸린 노드(점화·점화의 불씨·발화·마나 순환·점멸 폭발·해방 봉인)는 아이덴티티 컴포넌트가 직접 읽는다 */
 	void NotifyMovementSkill();
 
 	int32 GetMasterStacks() const { return MasterStacks; }

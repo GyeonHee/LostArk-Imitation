@@ -253,8 +253,7 @@ void ALoACharacter::ExecuteDash_Implementation(const FVector& TargetLocation)
 
 	const FSkillData DashData = SkillManager->GetSlotSkillData(USkillManagerComponent::DashSlotIndex);
 	LaunchCharacter(Dir * DashData.DashImpulse, true, false);
-	if (Engravings) Engravings->NotifyMovementSkill();  // 추진력
-	if (ArkPassive) ArkPassive->NotifyMovementSkill();  // 점멸 — 환류의 기운·마력 충전·응집되는 마력
+	if (Engravings) Engravings->NotifyMovementSkill();  // 추진력 (아크 패시브의 "점멸"은 소서리스 X — ASorceress)
 }
 
 float ALoACharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,

@@ -54,7 +54,6 @@ namespace LoAArkPassive
 			const EArkPassiveTree Evo = EArkPassiveTree::Evolution;
 			const EArkPassiveTree Enl = EArkPassiveTree::Enlightenment;
 			const EArkPassiveTree Leap = EArkPassiveTree::Leap;
-			const TCHAR* NoIdentity = TEXT("아이덴티티(신비한 마력·마력 해방)가 아직 없어 효과 없음");
 			const TCHAR* NoAwakening = TEXT("각성기·초각성기가 아직 없어 효과 없음");
 
 			// ── 진화 1티어 — 전투 특성 (1P, 레벨당 +50) ──
@@ -105,7 +104,7 @@ namespace LoAArkPassive
 					TEXT("공격 적중 시 아이덴티티 게이지 획득량이 {0}% 증가한다. 전투 중 주변 파티원에게 정열의 춤사위를 건다 — 진화형 피해가 {1}% 증가한다."), { 10, 20 }, { 7, 14 });
 				N.Requires = TEXT("Evo_Goddess");
 				N.RequiresLevel = 3;
-				N.Note = TEXT("아이덴티티가 없어 진화형 피해만 (자신에게)");
+				N.Note = TEXT("파티가 없어 진화형 피해는 자신에게만");
 			}
 
 			// ── 진화 4티어 (10P, 1레벨) ──
@@ -141,8 +140,7 @@ namespace LoAArkPassive
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Evo_StableManager"), TEXT("안정된 관리자"), Evo, 4, 5, 15, 2,
 					TEXT("낙인력이 {0}% 증가한다. 아이덴티티 게이지 획득량이 {1}% 감소한다."), { 10, 20 }, { 3, 6 });
-				N.bHasEffect = false;
-				N.Note = TEXT("낙인력·아이덴티티가 없어 효과 없음");
+				N.Note = TEXT("낙인력이 없어 아이덴티티 게이지 감소만");
 			}
 
 			// ── 깨달음 (소서리스) — 점화(왼쪽 줄) / 환류(오른쪽 줄) ──
@@ -150,28 +148,25 @@ namespace LoAArkPassive
 				FArkPassiveNode& N = B.Add(TEXT("Enl_Igniter"), TEXT("점화"), Enl, 0, 1, 8, 3,
 					TEXT("마력 해방 발동 시 각성기·이동기·기상기를 제외한 스킬의 남은 재사용 대기시간이 {0}% 감소한다."), { 33, 41, 50 });
 				N.ExclusiveGroup = TEXT("IgniteReflux");
-				N.bHasEffect = false;
-				N.Note = NoIdentity;
 			}
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Enl_Reflux"), TEXT("환류"), Enl, 0, 2, 8, 3,
 					TEXT("마력 해방을 사용할 수 없는 대신 스킬 재사용 대기시간이 {0}% 감소한다 (각성기·이동기 제외)."), { 3, 6, 10 });
 				N.ExclusiveGroup = TEXT("IgniteReflux");
+				N.Note = TEXT("마력 방출(Z)을 쓸 수 없고 신비한 마력은 점멸(X)에만");
 			}
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Enl_IgniterEmber"), TEXT("점화의 불씨"), Enl, 1, 1, 8, 3,
 					TEXT("마력 해방 중 치명타 적중률이 {0}% 증가한다."), { 10, 20, 30 });
 				N.Requires = TEXT("Enl_Igniter");
 				N.RequiresLevel = 3;
-				N.bHasEffect = false;
-				N.Note = NoIdentity;
 			}
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Enl_RefluxEnergy"), TEXT("환류의 기운"), Enl, 1, 2, 8, 3,
 					TEXT("점멸 사용 시 마나를 7% 회복하고, 신비한 마력 소모량이 {0}% 감소한다."), { 3, 6, 10 });
 				N.Requires = TEXT("Enl_Reflux");
 				N.RequiresLevel = 3;
-				N.Note = TEXT("점멸 = 대시(Space). 신비한 마력 게이지가 없어 마나 회복만");
+				N.Note = TEXT("점멸 = X");
 			}
 			B.Add(TEXT("Enl_FirepowerCharge"), TEXT("화력 충전"), Enl, 2, 0, 2, 5,
 				TEXT("기본 조작이 홀딩·캐스팅인 스킬의 피해가 {0}% 증가한다."), { 1.2f, 2.4f, 3.6f, 4.8f, 6 });
@@ -180,8 +175,7 @@ namespace LoAArkPassive
 					TEXT("마력 해방 중 무력화 피해가 20%, 치명타 피해가 {0}% 증가한다."), { 18, 36, 55 });
 				N.Requires = TEXT("Enl_IgniterEmber");
 				N.RequiresLevel = 3;
-				N.bHasEffect = false;
-				N.Note = NoIdentity;
+				N.Note = TEXT("무력화 피해는 없음 (치명타 피해만)");
 			}
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Enl_RefluxEnhance"), TEXT("환류 강화"), Enl, 2, 2, 8, 3,
@@ -191,31 +185,26 @@ namespace LoAArkPassive
 			}
 			B.Add(TEXT("Enl_ReleaseSeal"), TEXT("해방 봉인"), Enl, 2, 3, 2, 5,
 				TEXT("적에게 주는 피해가 {0}% 증가하지만, 마력 강화·마력 해방 중엔 적에게 주는 피해가 {1}% 감소한다."),
-				{ 1.2f, 2.4f, 3.6f, 4.8f, 6 }, { 1, 2, 3, 4, 5 }).Note = TEXT("마력 강화·해방 상태가 없어 증가만");
-			{
-				FArkPassiveNode& N = B.Add(TEXT("Enl_BlinkExplosion"), TEXT("점멸 폭발"), Enl, 3, 0, 2, 5,
-					TEXT("점멸 사용 시 신비한 마력을 소모하지 않는다. 점멸 재사용 대기시간이 20초 증가한다. 마력 강화·마력 해방 중 피해가 {0}% 증가한다."), { 1, 2, 3, 4, 5 });
-				N.bHasEffect = false;
-				N.Note = NoIdentity;
-			}
+				{ 1.2f, 2.4f, 3.6f, 4.8f, 6 }, { 1, 2, 3, 4, 5 });
+			B.Add(TEXT("Enl_BlinkExplosion"), TEXT("점멸 폭발"), Enl, 3, 0, 2, 5,
+				TEXT("점멸 사용 시 신비한 마력을 소모하지 않는다. 점멸 재사용 대기시간이 20초 증가한다. 마력 강화·마력 해방 중 피해가 {0}% 증가한다."), { 1, 2, 3, 4, 5 });
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Enl_MagickCycle"), TEXT("마나 순환"), Enl, 3, 1, 8, 3,
 					TEXT("종말의 날·익스플로전·천벌의 피해가 {0}% 증가한다. 마력 해방 사용 시 적에게 주는 피해가 {1}% 증가하고, 끝나면 공격 속도가 8% 증가한다(최대 30초)."),
 					{ 5, 10, 15 }, { 10, 14, 18 });
 				N.Requires = TEXT("Enl_Ignite");
 				N.RequiresLevel = 3;
-				N.Note = TEXT("마력 해방이 없어 스킬 피해 증가만");
 			}
 			{
 				FArkPassiveNode& N = B.Add(TEXT("Enl_MagickCharge"), TEXT("마력 충전"), Enl, 3, 2, 8, 3,
 					TEXT("점멸 사용 시 마력 충전 — 45초간 공격력이 {0}% 증가한다."), { 8, 17, 26 });
 				N.Requires = TEXT("Enl_RefluxEnhance");
 				N.RequiresLevel = 3;
-				N.Note = TEXT("점멸 = 대시(Space)");
+				N.Note = TEXT("점멸 = X");
 			}
 			B.Add(TEXT("Enl_ConcentratedMagick"), TEXT("응집되는 마력"), Enl, 3, 3, 2, 5,
 				TEXT("마력 해방을 사용할 수 없는 대신, 점멸 사용 시 45초간 마력 가속 — 적에게 주는 피해가 {0}% 증가한다 (최대 2중첩). 최대 중첩 시 공격 속도가 {1}% 증가한다."),
-				{ 0.6f, 1.2f, 1.8f, 2.4f, 3 }, { 3, 3.5f, 4, 4.5f, 5 }).Note = TEXT("점멸 = 대시(Space)");
+				{ 0.6f, 1.2f, 1.8f, 2.4f, 3 }, { 3, 3.5f, 4, 4.5f, 5 }).Note = TEXT("마력 방출(Z)을 쓸 수 없음. 점멸 = X");
 
 			// ── 도약 (소서리스) — 전부 각성기·초각성기 관련 ──
 			B.Add(TEXT("Leap_Transcendent"), TEXT("초월적인 힘"), Leap, 0, 0, 4, 5, TEXT("초각성기 피해가 {0}% 증가한다."), Ark_Steps(10.f, 5));
@@ -575,6 +564,7 @@ namespace LoAArkPassive
 				}
 			}
 			// 환류의 기운·마력 충전·응집되는 마력·달인 중첩은 발동형 — UArkPassiveComponent
+			// 점화·점화의 불씨·발화·마나 순환(해방 중)·점멸 폭발·해방 봉인(강화·해방 중)·정열의 춤사위·안정된 관리자(게이지)는 USorceressIdentityComponent
 		}
 	}
 

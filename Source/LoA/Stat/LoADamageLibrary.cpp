@@ -7,6 +7,8 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "LoACharacter.h"
+#include "Character/Sorceress.h"
+#include "Character/SorceressIdentityComponent.h"
 
 namespace
 {
@@ -183,4 +185,20 @@ void ULoADamageLibrary::ReportDamageDealt(const AActor* Instigator, const AActor
 	Event.bTrainingTarget = bTrainingTarget;
 	Event.Target = Target;
 	Meter->RecordHit(Event);
+}
+
+void ULoADamageLibrary::NotifyIdentityHit(const AActor* Instigator, const AActor* DamageCauser, float BaseDamage)
+{
+	const ASorceress* Sorceress = Cast<ASorceress>(Damage_ResolvePawn(Instigator));
+	const UStatComponent* Stats = Damage_FindStats(Sorceress);
+	if (!Sorceress || !Sorceress->Identity || !Stats || BaseDamage <= 0.f) return;
+
+	// 다단히트는 틱마다 계수를 나눠 갖고 있어 합치면 스킬 계수가 된다.
+	// BP 기본공격은 CalcOutgoingDamage를 안 거치고 공격력 × 계수라 공격력으로 나눈다
+	const FName SkillRowName = GetDamageSourceSkill(DamageCauser);
+	const double PerCoefficient = (SkillRowName.IsNone() || Damage_IsBasicAttack(Sorceress, SkillRowName))
+		? Stats->GetStats().AttackPower
+		: CalcOutgoingDamage(Sorceress, 1.f, SkillRowName);
+	if (PerCoefficient <= 0.0) return;
+	Sorceress->Identity->AddGaugeFromHit(static_cast<float>(BaseDamage / PerCoefficient));
 }

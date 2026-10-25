@@ -52,6 +52,7 @@ float ATrainingDummy::TakeDamage(float DamageAmount, const FDamageEvent& DamageE
 	bool bCritical = false;
 	const float FinalDamage = ULoADamageLibrary::ResolveIncomingHit(DamageAmount, EventInstigator, false, bCritical);
 	ULoADamageLibrary::ReportDamageDealt(EventInstigator, this, DamageCauser, FinalDamage, bCritical, true);
+	ULoADamageLibrary::NotifyIdentityHit(EventInstigator, DamageCauser, DamageAmount);
 	SpawnDamageNumber(FinalDamage, bCritical);
 
 	if (!bInfiniteHP)

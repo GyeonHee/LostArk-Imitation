@@ -27,7 +27,9 @@
 ## 아크 패시브 (`ArkPassiveComponent`, `ArkPassiveRegistry.cpp`)
 - 노드 = Maxroll `arkPassives`(진화 group 0, 깨달음 1·도약 2 class 205). `.` 키 또는 P창
 - 포인트는 장착 장비에서 계산(`ComputeBudget`): 진화 = 방어구당 20 + 레벨 70 / 깨달음 = 장신구(등급·부위·연마 단계 표) + 레벨 / 도약 = 팔찌 + 레벨×2. BeginPlay·다음 틱·`OnEquipmentChanged`마다(컴포넌트 BeginPlay 순서가 보장 안 됨)
+  - 깨달음 66(유물 3연마 46 + 레벨 20)은 로아 내실 0 기준. 실제 1640급 76~77은 깨달음 물약(+3·상급 +5)·평판 등 내실분 — 미구현
 - 규칙: 진화 티어 상한 40/30/20/20/30 + 아래 티어를 채워야 다음, 깨달음 연계 + 점화/환류 택1, 도약 1티어 40 사용 후 2티어. `Validate`, `TryChange`
 - **포인트가 모자라면 배치는 남기고 (티어, 열) 순서로 들어가는 만큼만 적용**(`EffectiveLevels`) — 통째로 끄는 규칙 때문에 치명·특화가 0이 된 버그 전례
-- 효과 없는 노드는 `bHasEffect=false`(아이덴티티·각성기 없음 → 점화 계열·도약 대부분). 점멸 = 대시
+- 효과 없는 노드는 `bHasEffect=false`(각성기 없음 → 도약 전부). 점멸 = 소서리스 X(스페이스 대시 아님)
+- 마력 해방·게이지에 걸린 노드(점화·점화의 불씨·발화·마나 순환 해방 효과·점멸 폭발·해방 봉인 감소분·정열의 춤사위·안정된 관리자)는 `USorceressIdentityComponent`가 레벨을 직접 읽는다 — 상시 효과만 `BuildStaticModifiers`
 - 시작 = 추천 세팅(점화), `bHasStarterArkPassive`/`bArkPassiveBudgetV2`

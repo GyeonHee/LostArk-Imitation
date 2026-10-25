@@ -56,7 +56,7 @@
 | 천벌 | 16.6 | 28 | 19% |
 | 종말의 날 | 23.5 | 30 | 25% |
 - 스킬 점유율 = Σ(시전 + 후딜) ÷ 쿨타임 ≈ 0.35(실제 로아 약 0.52). 빈 시간은 기본공격·회피가 채움 → 기본공격 계수를 올리면 "좌클릭 연타가 최적"이 됨
-- 쿨감 = 1 - (1 - 신속·각인) × (1 - 작열 보석), 상한 80%(`GetTotalCooldownReductionOf`). 카운터 스킬 쿨 오버라이드는 Raid 문서의 거울 카운터 참조
+- 쿨감 = 1 - (1 - 신속·각인) × (1 - 작열 보석), 상한 80%(`GetTotalCooldownReductionOf`). 점화(마력 해방 발동)는 `ReduceRemainingSkillCooldowns` — 슬롯 0~7의 남은 쿨만. 카운터 스킬 쿨 오버라이드는 Raid 문서의 거울 카운터 참조
 
 ## 범위 VFX 자동 스케일 (종말·천벌·인페르노)
 - 캐스팅 완료 → `CircleShowTime` 동안 발판 원 → 효과. `AutoScale = ExplosionRadius / CircleBaseRadius`(Scale 1로 실측해 BP에 입력)

@@ -515,6 +515,20 @@ void USkillManagerComponent::ResetCounterSkillCooldowns()
     }
 }
 
+void USkillManagerComponent::ReduceRemainingSkillCooldowns(float Ratio)
+{
+    UWorld* World = GetWorld();
+    if (!World || Ratio <= 0.f) return;
+    const float Now = World->GetTimeSeconds();
+    for (int32 i = 0; i < BasicAttackSlotIndex && i < CooldownEndTimes.Num(); ++i)
+    {
+        if (CooldownEndTimes[i] > Now)
+        {
+            CooldownEndTimes[i] = Now + (CooldownEndTimes[i] - Now) * (1.f - FMath::Clamp(Ratio, 0.f, 1.f));
+        }
+    }
+}
+
 void USkillManagerComponent::ResetAllCooldowns()
 {
     for (float& EndTime : CooldownEndTimes)

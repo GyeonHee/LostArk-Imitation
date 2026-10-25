@@ -4,11 +4,11 @@
 #include "Character/MageCharacter.h"
 #include "Sorceress.generated.h"
 
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnIdentityOrbsChanged, int32 /*NewOrbs*/);
+class USorceressIdentityComponent;
 
 /**
- * 소서리스: Identity = 마법 구슬 (Arcane Torrent, 최대 3개)
- * 스킬 시전 시 구슬 충전 → ActivateIdentity()로 소모하여 효과 발동
+ * 소서리스 — 아이덴티티 = 신비한 마력 게이지 + 마력 방출(Z) / 점멸(X). 규칙은 USorceressIdentityComponent
+ * 스페이스 대시는 짧은 순간이동(DT 대시 행 DashImpulse 거리) — 이동기라 추진력만 발동, 아크 패시브의 "점멸"은 X
  */
 UCLASS()
 class LOA_API ASorceress : public AMageCharacter
@@ -18,19 +18,21 @@ class LOA_API ASorceress : public AMageCharacter
 public:
 	ASorceress();
 
-	static constexpr int32 MaxIdentityOrbs = 3;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Identity")
-	int32 IdentityOrbs = 0;
+	TObjectPtr<USorceressIdentityComponent> Identity;
 
-	/** 구슬 변경 시 브로드캐스트 (UI 바인딩용) */
-	FOnIdentityOrbsChanged OnIdentityOrbsChanged;
-
-	/** 스킬 시전 후 스킬 클래스에서 호출하여 구슬 충전 */
-	void AddIdentityOrb(int32 Count = 1);
+	/** 점멸 이동 — 커서 쪽으로 최대 15m. 벽(WorldStatic)에서 멈추고 보스는 넘는다. 바닥이 없는 곳이면 앞으로 당긴다 */
+	bool BlinkTo(const FVector& TargetLocation);
 
 	virtual void ExecuteDash_Implementation(const FVector& TargetLocation) override;
 
+	/** 마력 해방 슈퍼아머 — 넉다운·경직 무시 */
+	virtual void ApplyKnockdown(const FVector& SourceLocation) override;
+	virtual void ApplyStagger() override;
+
+	/** 마력 방출 (MageCharacter 공통 진입점) */
 	virtual void ActivateIdentity() override;
 	virtual float GetIdentityGaugePercent() const override;
+
+	virtual void BeginPlay() override;
 };

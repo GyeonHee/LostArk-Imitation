@@ -30,6 +30,7 @@
 |---|---|
 | `ALoAPlayerController` | 이동, 스킬 입력, UI 생성·토글, NPC 메뉴, 인트로/사망/클리어, 레벨 이동 |
 | `ALoACharacter` | HP/MP, CC, 매혹, 카메라 오버라이드, 컴포넌트 보유 |
+| `ASorceress` / `USorceressIdentityComponent` | 소서리스(`BP_Sorceress` 부모), 아이덴티티(신비한 마력·마력 방출 Z·점멸 X) |
 | `USkillManagerComponent` | 슬롯(0~7 Q~F, 8 기본공격, 18 대시, 19 즉시 기상), 쿨타임, 잠금, 자동이동 틱 |
 | `UStatComponent` | 전투 스탯·수정치·데미지 계산 |
 | `UInventoryComponent` / `UEquipmentComponent` / `UGemComponent` / `UEngravingComponent` / `UArkPassiveComponent` / `UBattleItemComponent` | 성장 시스템 |
@@ -76,8 +77,7 @@
 - [ ] `BP_EchidnaHeart` 다시 열어 컴파일 확인(HeartMeshComp가 PMC로 바뀌어 옛 오버라이드가 남았을 수 있음)
 - [ ] 애니메이션 BP 연결: 사망 `OnDeathVisualChanged`, 보스 처치 `OnDefeatedVisual`, 각종 CC `On*VisualChanged`
 - [ ] PIE 육안 확인: 매혹 게이지 머리 위 UI 위치·크기, `Border_GetUp` 위치/스타일
-- [ ] K(6.09) 허수아비 `LoADpsTest`로 실측 보정
+- [ ] K(6.09) 허수아비 `LoADpsTest`로 실측 보정 — 소서리스 아이덴티티(마력 해방·점화) 추가로 DPS가 크게 오름(추정 ×1.5~1.8), 실측 후 `DA_Sorceress`에 반영
 - [ ] 미구현: 파훼 성공 보상(그네·거울잇기)·거울 카운터 실패 페널티, 그로기 중 받는 피해 증가, 스킬 레벨 → 데미지 계수 연동, 스킬 포인트 UI, 잡화상점, 로아 각인 영웅·전설 단계
 - [ ] 밸런스 미결: 신속 몰빵 시 이동속도·쿨감이 커서 회피 패턴이 쉬워질 수 있음, 보석 Lv5→10 성장 속도
-- [ ] 에셋 정리(지워도 됨): `T_HeartShape`, `M_HeartSprite`, `T_SlotShineStreak`, `/Game/LostArk/UI/Gem/`(네모 보석 아이콘), PIL 미니맵 아이콘 `T_MinimapIcon_Polish/Bracelet/Stone`, `T_Acc_*`·`T_Bracelet`·`T_AbilityStone`(PIL)
 - [ ] VFX 다듬기: `NS_Inferno_Impact` AddVelocity Z, `PER_Lava_Brutal` 스케일, 거울 레이저 `LaserVFXWidth`

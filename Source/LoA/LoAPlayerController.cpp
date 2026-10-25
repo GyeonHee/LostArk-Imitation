@@ -32,6 +32,9 @@
 #include "Camera/PlayerCameraManager.h"
 #include "UI/MinimapWidget.h"
 #include "UI/ResourceBarWidget.h"
+#include "UI/IdentityGaugeWidget.h"
+#include "Character/Sorceress.h"
+#include "Character/SorceressIdentityComponent.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Raid/HexArena.h"
 #include "GameFramework/Pawn.h"
@@ -118,6 +121,17 @@ void ALoAPlayerController::BeginPlay()
 
 	HUDViewModel = NewObject<UHUD_ViewModel>(this);
 	SkillTreeViewModel = NewObject<USkillTree_ViewModel>(this);
+
+	// 소서리스 아이덴티티 (스킬 칸과 아이템 칸 사이 장식 틀) — HUD와 같은 ZOrder 0으로 HUD보다 먼저 넣어 날개 장식이 슬롯 밑에 깔리게.
+	// 폰이 소서리스가 아니면 위젯이 스스로 숨는다
+	if (IsLocalController())
+	{
+		IdentityGaugeWidget = CreateWidget<UIdentityGaugeWidget>(this, UIdentityGaugeWidget::StaticClass());
+		if (IdentityGaugeWidget)
+		{
+			IdentityGaugeWidget->AddToViewport(0);
+		}
+	}
 
 	if (HUDWidgetClass && IsLocalController())
 	{
@@ -760,7 +774,7 @@ void ALoAPlayerController::BeginRaidIntro(AEchidnaBoss* Boss)
 	// 연출 중엔 전투 UI를 숨긴다 (원래 Visibility를 기억했다가 되돌림). 캐스팅 바는 원래 숨어 있으니 제외
 	IntroHiddenWidgets.Reset();
 	IntroHiddenVisibilities.Reset();
-	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), ResourceBarWidget.Get(), AbandonWidget.Get() })
+	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), ResourceBarWidget.Get(), IdentityGaugeWidget.Get(), AbandonWidget.Get() })
 	{
 		if (!Widget) continue;
 		IntroHiddenWidgets.Add(Widget);
@@ -1421,6 +1435,18 @@ void ALoAPlayerController::SetupInputComponent()
 				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
 			}
 
+			// 소서리스 아이덴티티 — 마력 방출 (Z) / 점멸 (X)
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::Z), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnIdentityReleaseKey);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+			{
+				FInputKeyBinding Binding(FInputChord(EKeys::X), IE_Pressed);
+				Binding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &ALoAPlayerController::OnIdentityBlinkKey);
+				EnhancedInputComponent->KeyBindings.Emplace(MoveTemp(Binding));
+			}
+
 		}
 		else
 		{
@@ -1743,6 +1769,62 @@ void ALoAPlayerController::OnDashInput()
 	Char->ExecuteDash(TargetLocation);
 	Char->SkillManager->TriggerCooldown(USkillManagerComponent::DashSlotIndex);
 	StopMovement();
+}
+
+ASorceress* ALoAPlayerController::GetIdentityInputPawn() const
+{
+	// 대시와 같은 조건 — CC·매혹 중엔 못 쓴다
+	ASorceress* Sorceress = GetPawn<ASorceress>();
+	if (!Sorceress || !Sorceress->Identity || Sorceress->IsActionLocked() || Sorceress->IsCharmed()) return nullptr;
+	return Sorceress;
+}
+
+void ALoAPlayerController::OnIdentityReleaseKey()
+{
+	ASorceress* Sorceress = GetIdentityInputPawn();
+	if (!Sorceress) return;
+	FText Reason;
+	if (!Sorceress->Identity->TryRelease(Reason) && !Reason.IsEmpty())
+	{
+		ShowTimedNotice(Reason, FText::GetEmpty(), 1.5f);
+	}
+}
+
+void ALoAPlayerController::OnIdentityBlinkKey()
+{
+	ASorceress* Sorceress = GetIdentityInputPawn();
+	if (!Sorceress) return;
+
+	// 캐스팅·사거리 이동 중이던 스킬은 끊고 순간이동 (대시와 같은 처리)
+	FVector Target;
+	if (!GetCursorAimLocation(Target))
+	{
+		Target = Sorceress->GetActorLocation() + Sorceress->GetActorForwardVector() * LoASorceressIdentity::BlinkDistance;
+	}
+	FText Reason;
+	if (Sorceress->Identity->TryBlink(Target, Reason))
+	{
+		if (Sorceress->SkillManager)
+		{
+			Sorceress->SkillManager->CancelActiveCastSkill();
+			Sorceress->SkillManager->CancelPendingRangeMove();
+		}
+		CancelAutoMove();
+		StopMovement();
+	}
+	else if (!Reason.IsEmpty())
+	{
+		ShowTimedNotice(Reason, FText::GetEmpty(), 1.5f);
+	}
+}
+
+void ALoAPlayerController::LoAIdentity(float Gauge)
+{
+	ASorceress* Sorceress = GetPawn<ASorceress>();
+	if (!Sorceress || !Sorceress->Identity) return;
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAIdentity %.0f"), Gauge);
+	bCheatUsedThisRaid = true;
+	Sorceress->Identity->SetGaugeForTest(Gauge);
 }
 
 void ALoAPlayerController::OnSkillKeyDown(int32 SlotIndex)

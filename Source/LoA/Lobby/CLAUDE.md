@@ -21,4 +21,4 @@
 - **재련** `ARefineNPCActor`(칼도르, BP 없음): 재련 창 + 확인 팝업(숨결 개수) + 성장 팝업 + 성공 창. 규칙은 `Item/` 문서
 - **장신구 연마** `APolishNPCActor`(페메르): 소지품에서 연마가 안 끝난 장신구만 목록
 - **팔찌 효과 부여** `ABraceletNPCActor`(리엔, 이름 임시) / **스톤 세공** `AStoneNPCActor`(어비르): 목록은 소지품(착용 제외)에서 손볼 게 남은 것만(`LoAGearList::CollectWorkable/CommitChange`)
-- 미니맵 아이콘 `/Game/LostArk/UI/Minimap/T_MinimapIcon_*NPC`(유저 캡처에서 잘라냄 — PIL로 만든 `T_MinimapIcon_Polish/Bracelet/Stone`은 미사용)
+- 미니맵 아이콘 `/Game/LostArk/UI/Minimap/T_MinimapIcon_*NPC`(유저 캡처에서 잘라냄)

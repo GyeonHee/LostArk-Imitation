@@ -274,6 +274,7 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 	if (!bDefeated)
 	{
 		ULoADamageLibrary::ReportDamageDealt(EventInstigator, this, DamageCauser, FinalDamage, bCritical, false);
+		ULoADamageLibrary::NotifyIdentityHit(EventInstigator, DamageCauser, DamageAmount);
 	}
 	ReceiveDamage(FinalDamage, bCritical);
 	return FinalDamage;
