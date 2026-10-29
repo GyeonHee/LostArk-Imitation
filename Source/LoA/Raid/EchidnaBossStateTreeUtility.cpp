@@ -17,6 +17,8 @@
 #include "EchidnaSwingChainActor.h"
 #include "EchidnaButterflyActor.h"
 #include "EchidnaMirrorWallActor.h"
+#include "EchidnaGaugeRectActor.h"
+#include "EchidnaBarrierActor.h"
 #include "HexTile.h"
 #include "LoAPlayerController.h"
 #include "Camera/CameraActor.h"
@@ -32,6 +34,11 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Animation/SkeletalMeshActor.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Raid/PatternVFXUtil.h"
 #include "GameFramework/DamageType.h"
 
 #define LOCTEXT_NAMESPACE "EchidnaBoss"
@@ -63,7 +70,49 @@ namespace
 		}
 		Boss->SetActiveTimedPattern(PatternName);
 	}
+
+	FName GetProcessedStateName(FStateTreeExecutionContext& Context)
+	{
+		const FCompactStateTreeState* State = Context.GetStateFromHandle(Context.GetCurrentlyProcessedState());
+		return State ? State->Name : NAME_None;
+	}
+
+	/** 짤패턴 Task 진입 시 자기 State 이름을 기록 — Echidna Not Recent Small Pattern 조건이 연속 등장을 막는 데 씀 */
+	void RecordSmallPatternEntered(FStateTreeExecutionContext& Context, AEchidnaBoss* Boss)
+	{
+		if (Boss)
+		{
+			Boss->RecordSmallPattern(GetProcessedStateName(Context));
+		}
+	}
 }
+
+bool FStateTreeCondition_EchidnaNotRecentSmallPattern::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	const FName StateName = GetProcessedStateName(Context);
+	if (!InstanceData.Boss)
+	{
+		return true;
+	}
+	if (StateName.IsNone())
+	{
+		// Enter Condition 평가 중 자기 State를 못 찾으면 막지 않는다 — 이 로그가 보이면 연속 방지가 안 먹는 중
+		UE_LOG(LogLoA, Warning, TEXT("[NotRecentSmallPattern] 평가 중인 State 이름을 못 찾음 — 연속 방지 비활성"));
+		return true;
+	}
+
+	const bool bRecent = InstanceData.Boss->WasRecentSmallPattern(StateName, InstanceData.AvoidRecentCount);
+	UE_LOG(LogLoA, Log, TEXT("[NotRecentSmallPattern] %s — %s"), *StateName.ToString(), bRecent ? TEXT("직전에 나옴, 제외") : TEXT("통과"));
+	return !bRecent;
+}
+
+#if WITH_EDITOR
+FText FStateTreeCondition_EchidnaNotRecentSmallPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("NotRecentSmallPatternDesc", "<b>Echidna Not Recent Small Pattern</b>");
+}
+#endif // WITH_EDITOR
 
 bool FStateTreeCondition_BossLineThreshold::TestCondition(FStateTreeExecutionContext& Context) const
 {
@@ -893,7 +942,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorLinkPattern::Tick(FStateTreeExec
 			}
 			for (TActorIterator<ALoACharacter> It(Boss->GetWorld()); It; ++It)
 			{
-				UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * InstanceData.FailDamageRatio, Boss->GetController(), Boss, ULoATrueDamageType::StaticClass());
+				UGameplayStatics::ApplyDamage(*It, It->GetMaxHP() * InstanceData.FailMaxHPRatio, Boss->GetController(), Boss, ULoATrueDamageType::StaticClass());
 			}
 			InstanceData.Phase = EEchidnaMirrorLinkPhase::Failing;
 			InstanceData.PhaseElapsed = 0.f;
@@ -1033,13 +1082,54 @@ EStateTreeRunStatus FStateTreeTask_EchidnaSwingPattern::EnterState(FStateTreeExe
 	return EStateTreeRunStatus::Running;
 }
 
+namespace
+{
+	// 외곽 링 반지름 R일 때 큐브 좌표 (q, r, s=-q-r) 중 |값| == R인 축 개수 — 1이면 변 가운데, 2면 꼭짓점
+	int32 GetSwingRingRadius(const FIntPoint& Coord)
+	{
+		return AHexArena::GetHexDistance(Coord, FIntPoint(0, 0));
+	}
+
+	int32 GetSwingBorderAxisCount(const FIntPoint& Coord)
+	{
+		const int32 R = GetSwingRingRadius(Coord);
+		const int32 Cube[3] = { Coord.X, Coord.Y, -Coord.X - Coord.Y };
+		int32 Count = 0;
+		for (int32 V : Cube) { if (R > 0 && FMath::Abs(V) == R) ++Count; }
+		return Count;
+	}
+
+	// BossCoord가 선 변(|축| == R인 축)의 반대 변 = 같은 축이 -값인 외곽 타일 전부
+	TArray<FIntPoint> GetSwingOppositeSideCoords(const AHexArena* Arena, const FIntPoint& BossCoord)
+	{
+		TArray<FIntPoint> Result;
+		const int32 R = GetSwingRingRadius(BossCoord);
+		const int32 BossCube[3] = { BossCoord.X, BossCoord.Y, -BossCoord.X - BossCoord.Y };
+		int32 Axis = INDEX_NONE;
+		for (int32 i = 0; i < 3; ++i) { if (R > 0 && FMath::Abs(BossCube[i]) == R) { Axis = i; break; } }
+		if (!Arena || Axis == INDEX_NONE)
+		{
+			Result.Add(FIntPoint(-BossCoord.X, -BossCoord.Y));
+			return Result;
+		}
+		for (const FIntPoint& Coord : Arena->GetOuterRingCoords())
+		{
+			const int32 Cube[3] = { Coord.X, Coord.Y, -Coord.X - Coord.Y };
+			if (Cube[Axis] == -BossCube[Axis]) Result.Add(Coord);
+		}
+		return Result;
+	}
+}
+
 bool FStateTreeTask_EchidnaSwingPattern::AppearAtRandomEdge(FInstanceDataType& InstanceData) const
 {
 	AEchidnaBoss* Boss = InstanceData.Boss;
 	AHexArena* Arena = InstanceData.Arena;
 	if (!Boss || !Arena) return false;
 
-	const TArray<FIntPoint> Ring = Arena->GetOuterRingCoords();
+	// 꼭짓점 타일은 두 변에 걸쳐 "보스가 선 변"이 정해지지 않으므로 변 가운데 타일에서만 등장
+	TArray<FIntPoint> Ring = Arena->GetOuterRingCoords();
+	Ring.RemoveAll([](const FIntPoint& Coord) { return GetSwingBorderAxisCount(Coord) != 1; });
 	if (Ring.Num() == 0) return false;
 	InstanceData.BossCoord = Ring[FMath::RandRange(0, Ring.Num() - 1)];
 
@@ -1098,7 +1188,7 @@ void FStateTreeTask_EchidnaSwingPattern::StartChainPhase(FInstanceDataType& Inst
 			PC->SetScreenFog(true, InstanceData.FogFadeTime);
 		}
 
-		// 사슬 — 보스 반대편 타일 = 아레나 중심 대칭
+		// 사슬 — 보스가 선 변과 마주보는 반대 변의 타일 전부(꼭짓점 포함 4개)가 끊는 타일
 		UClass* ChainClass = InstanceData.ChainClass ? InstanceData.ChainClass.Get() : AEchidnaSwingChainActor::StaticClass();
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = Boss;
@@ -1106,8 +1196,7 @@ void FStateTreeTask_EchidnaSwingPattern::StartChainPhase(FInstanceDataType& Inst
 		InstanceData.Chain = Boss->GetWorld()->SpawnActor<AEchidnaSwingChainActor>(ChainClass, Boss->GetActorLocation(), FRotator::ZeroRotator, SpawnParams);
 		if (InstanceData.Chain)
 		{
-			const FIntPoint BreakCoord(-InstanceData.BossCoord.X, -InstanceData.BossCoord.Y);
-			InstanceData.Chain->Activate(Boss, Player, InstanceData.Arena, BreakCoord);
+			InstanceData.Chain->Activate(Boss, Player, InstanceData.Arena, GetSwingOppositeSideCoords(InstanceData.Arena, InstanceData.BossCoord));
 		}
 	}
 
@@ -1330,6 +1419,7 @@ FText FStateTreeTask_WaitRandomDuration::GetDescription(const FGuid& ID, FStateT
 EStateTreeRunStatus FStateTreeTask_EchidnaFourMirrorPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.SpawnedMirrors.Reset();
 
 	if (!InstanceData.Boss || !InstanceData.MirrorClass)
@@ -1455,6 +1545,7 @@ void FStateTreeTask_EchidnaEightMirrorPattern::SpawnSpokeGroup(FInstanceDataType
 			// bActivateNow=false면 몸체만 보이는 채로 대기(Tick의 bActivated 가드 덕에 혼자 타임아웃되지 않음) —
 			// 자기 차례(다음 파동)가 되면 Task가 별도로 Activate()를 호출
 			Mirror->bLockDirectionOnSpawn = true;
+			Mirror->ScaleBeamWidth(InstanceData.SpokeBeamWidthScale);
 			if (bActivateNow)
 			{
 				Mirror->Activate(InstanceData.Damage, BossController);
@@ -1517,6 +1608,7 @@ bool FStateTreeTask_EchidnaEightMirrorPattern::AreMirrorsFinished(const TArray<T
 EStateTreeRunStatus FStateTreeTask_EchidnaEightMirrorPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.PlusMirrors.Reset();
 	InstanceData.CrossMirrors.Reset();
 	InstanceData.GuidedMirror = nullptr;
@@ -1639,6 +1731,16 @@ bool FStateTreeTask_EchidnaRetreatFanPattern::HasGroundBelow(const FInstanceData
 	UWorld* World = InstanceData.Boss->GetWorld();
 	if (!World) return false;
 
+	// 아레나 타일 그리드 안이면 바닥 있음 — 라인트레이스만 쓰면 타일 사이 틈(HexGap)에 빠져 홉이 매번 취소됐음
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		FIntPoint Coord;
+		if (It->WorldToTileCoord(Location, Coord) && It->GetTile(Coord))
+		{
+			return true;
+		}
+	}
+
 	FHitResult Hit;
 	const FVector TraceStart = Location + FVector(0.f, 0.f, 200.f);
 	const FVector TraceEnd = Location - FVector(0.f, 0.f, 500.f);
@@ -1649,14 +1751,12 @@ bool FStateTreeTask_EchidnaRetreatFanPattern::HasGroundBelow(const FInstanceData
 	return World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, QueryParams);
 }
 
-void FStateTreeTask_EchidnaRetreatFanPattern::HopBackward(FInstanceDataType& InstanceData) const
+bool FStateTreeTask_EchidnaRetreatFanPattern::HopBackward(FInstanceDataType& InstanceData) const
 {
-	if (!InstanceData.Boss) return;
+	if (!InstanceData.Boss) return false;
 
-	// 그 순간의 플레이어 위치가 아니라 장판이 실제로 뻗어나가는 고정 기준선(BaseAimRotation)의 정반대 방향으로
-	// 물러나야 장판과 일직선이 됨 — 플레이어 위치 기준으로 계산하면 플레이어가 옆으로 이동해 있을 때
-	// 장판 방향과 다른 대각선으로 튀어서 "장판이랑 따로 노는" 것처럼 보였음
-	FVector AwayFromZone = -InstanceData.BaseAimRotation.Vector();
+	// 1번 장판을 쏜 방향(LockedYaw)을 바라본 채 그 정반대로 — 플레이어 위치는 안 봄
+	FVector AwayFromZone = -FRotator(0.f, InstanceData.LockedYaw, 0.f).Vector();
 	AwayFromZone.Z = 0.f;
 	if (AwayFromZone.IsNearlyZero())
 	{
@@ -1672,7 +1772,7 @@ void FStateTreeTask_EchidnaRetreatFanPattern::HopBackward(FInstanceDataType& Ins
 	if (!HasGroundBelow(InstanceData, LandingPoint))
 	{
 		UE_LOG(LogLoA, Log, TEXT("[EchidnaRetreatFan] 후방 홉 취소 — 착지 예상 지점에 바닥 없음: %s"), *LandingPoint.ToString());
-		return;
+		return false;
 	}
 
 	const FVector LaunchVelocity = AwayFromZone * InstanceData.HopBackStrength + FVector(0.f, 0.f, InstanceData.HopUpwardStrength);
@@ -1680,13 +1780,14 @@ void FStateTreeTask_EchidnaRetreatFanPattern::HopBackward(FInstanceDataType& Ins
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaRetreatFan] 후방 홉 — Loc=%s Velocity=%s"),
 		*InstanceData.Boss->GetActorLocation().ToString(), *LaunchVelocity.ToString());
+	return true;
 }
 
 FRotator FStateTreeTask_EchidnaRetreatFanPattern::ComputeAimRotation(const AEchidnaBoss* Boss) const
 {
 	// 패턴 시작 순간의 플레이어 방향을 한 번만 계산해서 고정 기준선으로 씀(플레이어 없으면 보스 정면 fallback).
-	// 1번/2번 장판 모두 이 값 + FanYawOffset만 쓰고 다시 조준하지 않으므로, 두 장판의 방향 차이는 항상
-	// 2*FanYawOffset(고정값)로 일정함 — "2번이 플레이어를 다시 보면서 크게 틀어지는" 것처럼 보였던 원인은
+	// 1번/2번 장판 모두 이 값 + FanSideYaw만 쓰고 다시 조준하지 않으므로, 두 장판의 방향 차이는 항상
+	// 2*FanSideYaw(고정값)로 일정함 — "2번이 플레이어를 다시 보면서 크게 틀어지는" 것처럼 보였던 원인은
 	// 이 조준 계산이 아니라 후방 홉(LaunchCharacter) 중 보스 캐릭터무브먼트가 이동 방향으로 자동 회전하던
 	// 것이었음(HopBackward 참고, bOrientRotationToMovement 비활성화로 별도 수정)
 	if (!Boss)
@@ -1709,7 +1810,7 @@ FRotator FStateTreeTask_EchidnaRetreatFanPattern::ComputeAimRotation(const AEchi
 	return AimRotation;
 }
 
-AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg) const
+AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg, const FVector& Origin, float ExtraRange, float TelegraphOverride) const
 {
 	if (!InstanceData.Boss || !InstanceData.FanZoneClass)
 	{
@@ -1722,10 +1823,9 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanc
 		return nullptr;
 	}
 
-	// 1번/2번 모두 EnterState에서 한 번만 고정해둔 BaseSpawnLocation을 그대로 씀 — 매번 Boss->GetActorLocation()을
-	// 쓰면 1번 발동 순간 보스가 후방으로 홉해버려서 2번은 완전히 다른 지점에서 스폰되고, 결과적으로 두 부채꼴의
-	// 원점이 달라져 "각도가 심하게 어긋나 보이는" 문제가 있었음. 보스 자신은 계속 뒤로 물러나도 장판 원점은 고정
-	const FVector SpawnLocation = InstanceData.BaseSpawnLocation;
+	// 1번 = 시작 위치, 2번 = 백점프 착지 위치(공략 그림 — 물러난 자리에서 다시 쏨). 보스는 정면을 본 채 곧게 뒤로
+	// 물러나므로 두 원점이 같은 정면 축 위에 있어 방향이 어긋나지 않는다
+	const FVector SpawnLocation = Origin;
 
 	// 매 캐스팅마다 플레이어 위치를 다시 조준하면 1번(왼쪽)과 2번(오른쪽)의 기준선이 서로 달라져
 	// 패턴이 시작된 후 플레이어가 움직이면 겹치는 구간이 어긋나 보임 — EnterState에서 한 번만 정한
@@ -1733,8 +1833,8 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanc
 	FRotator SpawnRotation = InstanceData.BaseAimRotation;
 	SpawnRotation.Yaw += YawOffsetDeg;
 
-	// 보스가 실제로 쏘는 방향을 쳐다보도록 — 장판과 동일한 Yaw로 직접 회전시킴
-	InstanceData.Boss->SetActorRotation(FRotator(0.f, SpawnRotation.Yaw, 0.f));
+	// 보스 방향은 정면(LockedYaw)으로 고정 — 장판 방향 따라 돌지 않음
+	InstanceData.Boss->SetActorRotation(FRotator(0.f, InstanceData.LockedYaw, 0.f));
 
 	AController* BossController = InstanceData.Boss->GetController();
 
@@ -1752,6 +1852,12 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanc
 		if (InstanceData.RingVFXSpacing > 0.f) Fan->RingVFXSpacing = InstanceData.RingVFXSpacing;
 		if (InstanceData.RingVFXScale > 0.f) Fan->RingVFXScale = InstanceData.RingVFXScale;
 
+		Fan->NearHalfWidth = InstanceData.NearHalfWidth;
+		// 2번은 물러난 거리만큼 길게 — 바깥 끝이 1번과 비슷한 곳까지 닿게
+		Fan->FanRange = Fan->FanRange * InstanceData.FanRangeScale + ExtraRange;
+		if (InstanceData.FanAngle > 0.f) Fan->FanAngle = InstanceData.FanAngle;
+		if (TelegraphOverride > 0.f) Fan->TelegraphDuration = TelegraphOverride;
+
 		Fan->Activate(InstanceData.Damage, BossController);
 	}
 	else
@@ -1765,8 +1871,11 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanc
 EStateTreeRunStatus FStateTreeTask_EchidnaRetreatFanPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.CurrentFan = nullptr;
 	InstanceData.bHoppedForCurrentCast = false;
+	InstanceData.SinceFirstExplode = 0.f;
+	InstanceData.FirstFan = nullptr;
 
 	if (!InstanceData.Boss || !InstanceData.FanZoneClass)
 	{
@@ -1786,22 +1895,12 @@ EStateTreeRunStatus FStateTreeTask_EchidnaRetreatFanPattern::EnterState(FStateTr
 	// 1번/2번 캐스팅 모두 이 기준선에 좌/우 각도만 더해서 씀 (매번 플레이어 위치로 다시 조준하지 않음)
 	InstanceData.BaseAimRotation = ComputeAimRotation(InstanceData.Boss);
 
-	// 장판 원점도 패턴 시작 시점의 보스 위치로 한 번만 고정 — 1번 발동 후 보스가 후방으로 홉해도
-	// 2번 장판은 계속 이 지점에서 스폰됨(보스 자신의 위치와는 별개)
-	InstanceData.BaseSpawnLocation = InstanceData.Boss->GetActorLocation();
-	if (const UCapsuleComponent* Capsule = InstanceData.Boss->GetCapsuleComponent())
-	{
-		InstanceData.BaseSpawnLocation.Z -= Capsule->GetScaledCapsuleHalfHeight();
-	}
-
-	// 1번째 장판 — 정면 기준 왼쪽으로 비스듬히
-	InstanceData.CurrentFan = SpawnFan(InstanceData, -InstanceData.FanYawOffset);
-	if (!InstanceData.CurrentFan)
-	{
-		return EStateTreeRunStatus::Failed;
-	}
-
-	InstanceData.Phase = EEchidnaRetreatFanPhase::Casting1;
+	// 보스는 패턴 끝까지 정면을 본다. 먼저 1번째 백점프 — 착지 자리에서 1번 장판(Tick)
+	InstanceData.LockedYaw = InstanceData.BaseAimRotation.Yaw;
+	InstanceData.Boss->SetActorRotation(FRotator(0.f, InstanceData.LockedYaw, 0.f));
+	InstanceData.bHopLaunched = HopBackward(InstanceData);
+	InstanceData.HopElapsed = 0.f;
+	InstanceData.Phase = EEchidnaRetreatFanPhase::Hop1;
 	return EStateTreeRunStatus::Running;
 }
 
@@ -1814,24 +1913,73 @@ EStateTreeRunStatus FStateTreeTask_EchidnaRetreatFanPattern::Tick(FStateTreeExec
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 홉 중에도·장판 때도 정면 그대로 (AI 포커스 등 다른 회전에 끌려가지 않게 매 틱)
+	InstanceData.Boss->SetActorRotation(FRotator(0.f, InstanceData.LockedYaw, 0.f));
+
+	// 백점프 착지 판정 — 발사 직후엔 아직 IsFalling이 false라 최소 0.15초는 기다린다. 취소된 홉은 바로 착지로 봄
+	InstanceData.HopElapsed += DeltaTime;
+	const UCharacterMovementComponent* Move = InstanceData.Boss->GetCharacterMovement();
+	const bool bLanded = !InstanceData.bHopLaunched || (InstanceData.HopElapsed >= 0.15f && !(Move && Move->IsFalling()));
+
+	auto GetFeet = [&InstanceData]()
+	{
+		FVector Feet = InstanceData.Boss->GetActorLocation();
+		if (const UCapsuleComponent* Capsule = InstanceData.Boss->GetCapsuleComponent())
+		{
+			Feet.Z -= Capsule->GetScaledCapsuleHalfHeight();
+		}
+		return Feet;
+	};
+
 	switch (InstanceData.Phase)
 	{
-	case EEchidnaRetreatFanPhase::Casting1:
+	case EEchidnaRetreatFanPhase::Hop1:
 	{
-		if (!InstanceData.bHoppedForCurrentCast && InstanceData.CurrentFan && InstanceData.CurrentFan->HasStartedExploding())
-		{
-			HopBackward(InstanceData);
-			InstanceData.bHoppedForCurrentCast = true;
-		}
-
-		if (!InstanceData.CurrentFan || !InstanceData.CurrentFan->IsFinished())
+		if (!bLanded)
 		{
 			return EStateTreeRunStatus::Running;
 		}
 
-		// 2번째 장판 — 정면 기준 오른쪽으로 비스듬히 (가운데가 1번과 겹침)
+		// 1번째 장판 — 1번째 백점프 착지 자리에서 정면 기준 왼쪽으로 살짝
+		InstanceData.BaseSpawnLocation = GetFeet();
+		InstanceData.CurrentFan = SpawnFan(InstanceData, -InstanceData.FanSideYaw, InstanceData.BaseSpawnLocation, 0.f);
+		if (!InstanceData.CurrentFan)
+		{
+			return EStateTreeRunStatus::Failed;
+		}
 		InstanceData.bHoppedForCurrentCast = false;
-		InstanceData.CurrentFan = SpawnFan(InstanceData, InstanceData.FanYawOffset);
+		InstanceData.Phase = EEchidnaRetreatFanPhase::Casting1;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaRetreatFanPhase::Casting1:
+	{
+		// 1번이 터지기 시작하면 2번째 백점프
+		if (!InstanceData.bHoppedForCurrentCast && InstanceData.CurrentFan && InstanceData.CurrentFan->HasStartedExploding())
+		{
+			InstanceData.bHopLaunched = HopBackward(InstanceData);
+			InstanceData.HopElapsed = 0.f;
+			InstanceData.bHoppedForCurrentCast = true;
+			return EStateTreeRunStatus::Running;
+		}
+		if (!InstanceData.bHoppedForCurrentCast)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		InstanceData.SinceFirstExplode += DeltaTime * AEchidnaBoss::GetEnrageTimeScale(InstanceData.Boss);
+		if (!bLanded)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 2번째 장판 — 2번째 백점프 착지 자리에서 정면 기준 오른쪽으로 살짝 (가운데가 1번과 겹침).
+		// 1번 폭발 시작부터 SecondFanInterval 뒤에 터지도록 남은 시간을 예고로
+		const float SecondTelegraph = FMath::Max(InstanceData.SecondFanMinTelegraph, InstanceData.SecondFanInterval - InstanceData.SinceFirstExplode);
+		InstanceData.FirstFan = InstanceData.CurrentFan;
+		const FVector LandedFeet = GetFeet();
+		const FVector Forward = InstanceData.BaseAimRotation.Vector().GetSafeNormal2D();
+		const float Retreated = FMath::Max(0.f, static_cast<float>(FVector::DotProduct(InstanceData.BaseSpawnLocation - LandedFeet, Forward)));
+		InstanceData.CurrentFan = SpawnFan(InstanceData, InstanceData.FanSideYaw, LandedFeet, Retreated, SecondTelegraph);
 		if (!InstanceData.CurrentFan)
 		{
 			return EStateTreeRunStatus::Failed;
@@ -1841,12 +1989,11 @@ EStateTreeRunStatus FStateTreeTask_EchidnaRetreatFanPattern::Tick(FStateTreeExec
 	}
 	case EEchidnaRetreatFanPhase::Casting2:
 	{
-		if (!InstanceData.bHoppedForCurrentCast && InstanceData.CurrentFan && InstanceData.CurrentFan->HasStartedExploding())
+		// 1번이 아직 퍼지는 중일 수 있어 둘 다 끝나야 종료
+		if (IsValid(InstanceData.FirstFan) && !InstanceData.FirstFan->IsFinished())
 		{
-			HopBackward(InstanceData);
-			InstanceData.bHoppedForCurrentCast = true;
+			return EStateTreeRunStatus::Running;
 		}
-
 		if (!InstanceData.CurrentFan || !InstanceData.CurrentFan->IsFinished())
 		{
 			return EStateTreeRunStatus::Running;
@@ -2034,6 +2181,7 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaDragFanPattern::SpawnFan(FInstanceDa
 EStateTreeRunStatus FStateTreeTask_EchidnaDragFanPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.CurrentFan = nullptr;
 	InstanceData.SpawnedTethers.Reset();
 
@@ -2246,8 +2394,10 @@ void FStateTreeTask_EchidnaDonutSlashPattern::EndRiseFall(FInstanceDataType& Ins
 EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.CurrentFan = nullptr;
 	InstanceData.InnerDonut = nullptr;
+	InstanceData.AirborneZone = nullptr;
 	InstanceData.OuterDonut = nullptr;
 	InstanceData.PhaseElapsed = 0.f;
 
@@ -2278,8 +2428,8 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::EnterState(FStateTr
 	}
 
 	// 1번 — 우측 대각 슬래시 (중심이 아니라 호 끝부분만 때리는 얇은 부채꼴 고리, 예고 후 단발 판정)
-	InstanceData.CurrentFan = SpawnZone(InstanceData, InstanceData.SlashZoneClass, InstanceData.Slash1YawOffset,
-		InstanceData.SlashFanAngle, InstanceData.SlashInnerRadius, InstanceData.SlashRange,
+	InstanceData.CurrentFan = SpawnZone(InstanceData, InstanceData.SlashZoneClass, InstanceData.Slash1Yaw,
+		InstanceData.SlashArcAngle, InstanceData.SlashInnerRadius, InstanceData.SlashRange,
 		InstanceData.SlashTelegraphDuration, 1);
 	if (!InstanceData.CurrentFan)
 	{
@@ -2313,8 +2463,8 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 		}
 
 		// 2번 — 좌측 대각 슬래시 (1번과 동일하게 호 끝부분만)
-		InstanceData.CurrentFan = SpawnZone(InstanceData, InstanceData.SlashZoneClass, InstanceData.Slash2YawOffset,
-			InstanceData.SlashFanAngle, InstanceData.SlashInnerRadius, InstanceData.SlashRange,
+		InstanceData.CurrentFan = SpawnZone(InstanceData, InstanceData.SlashZoneClass, InstanceData.Slash2Yaw,
+			InstanceData.SlashArcAngle, InstanceData.SlashInnerRadius, InstanceData.SlashRange,
 			InstanceData.SlashTelegraphDuration, 1);
 		if (!InstanceData.CurrentFan)
 		{
@@ -2333,7 +2483,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 		// 3단계 시작 — 작은 도넛(3번) 예고 스폰 (FanAngle=360 오버라이드로 원형 고리가 됨). 보스는 아직 지상에
 		// 그대로 둠 — "예고 표시 → 폭발 → 그제서야 상승"이어야 하므로 여기서는 Flying 전환/상승을 시작하지 않음
 		InstanceData.InnerDonut = SpawnZone(InstanceData, InstanceData.FanZoneClass, 0.f, 360.f,
-			InstanceData.InnerDonutInnerRadius, InstanceData.InnerDonutOuterRadius,
+			InstanceData.SmallDonutHoleRadius, InstanceData.SmallDonutOuterRadius,
 			InstanceData.InnerDonutTelegraphDuration, 1);
 		if (!InstanceData.InnerDonut)
 		{
@@ -2351,7 +2501,25 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 			return EStateTreeRunStatus::Running;
 		}
 
-		// 폭발이 끝난 바로 이 시점부터 상승 시작
+		// 3번이 끝나면 보스 주변 꽉 찬 원(에어본) 예고 — 터지는 순간 보스가 뜸
+		InstanceData.AirborneZone = SpawnZone(InstanceData, InstanceData.FanZoneClass, 0.f, 360.f,
+			0.f, InstanceData.AirborneRadius, InstanceData.AirborneTelegraphDuration, 1);
+		if (!InstanceData.AirborneZone)
+		{
+			return EStateTreeRunStatus::Failed;
+		}
+
+		InstanceData.Phase = EEchidnaDonutSlashPhase::AirborneTelegraph;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaDonutSlashPhase::AirborneTelegraph:
+	{
+		if (!InstanceData.AirborneZone || !InstanceData.AirborneZone->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 에어본 판정이 끝난 바로 이 시점부터 상승 시작
 		InstanceData.GroundActorZ = InstanceData.Boss->GetActorLocation().Z;
 		InstanceData.PhaseElapsed = 0.f;
 		if (UCharacterMovementComponent* Movement = InstanceData.Boss->GetCharacterMovement())
@@ -2381,7 +2549,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 
 		// 4단계 시작 — 외곽 도넛(4번) 예고 스폰(하강과 동시에 보여짐) + 하강 시작, 예고 후 단발 판정
 		InstanceData.OuterDonut = SpawnZone(InstanceData, InstanceData.OuterDonutClass, 0.f, 360.f,
-			InstanceData.OuterDonutInnerRadius, InstanceData.OuterDonutOuterRadius,
+			InstanceData.BigDonutHoleRadius, InstanceData.OuterDonutOuterRadius,
 			InstanceData.OuterDonutTelegraphDuration, 1);
 		if (!InstanceData.OuterDonut)
 		{
@@ -2497,6 +2665,7 @@ void FStateTreeTask_EchidnaHeartBurstPattern::FireRandomWave(FInstanceDataType& 
 EStateTreeRunStatus FStateTreeTask_EchidnaHeartBurstPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.TelegraphHeart = nullptr;
 	InstanceData.PhaseElapsed = 0.f;
 	InstanceData.FireIntervalElapsed = 0.f;
@@ -2730,11 +2899,30 @@ void FStateTreeTask_EchidnaBackstepHeartPattern::FireFan(FInstanceDataType& Inst
 			UE_LOG(LogLoA, Warning, TEXT("[EchidnaBackstepHeart] Heart SpawnActor 실패 (YawOffset=%.1f)"), YawOffset);
 		}
 	}
+
+	// 하트를 쏜 방향 그대로 부채꼴 한 번 폭발 — 맞았든 안 맞았든
+	FVector FanOrigin = InstanceData.Boss->GetActorLocation();
+	FanOrigin.Z -= InstanceData.Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	UClass* FanClass = InstanceData.BlastFanClass ? InstanceData.BlastFanClass.Get() : AEchidnaFanZoneActor::StaticClass();
+	FActorSpawnParameters FanParams;
+	FanParams.Owner = InstanceData.Boss;
+	FanParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (AEchidnaFanZoneActor* Fan = World->SpawnActor<AEchidnaFanZoneActor>(FanClass, FanOrigin,
+		FRotator(0.f, InstanceData.BaseAimRotation.Yaw, 0.f), FanParams))
+	{
+		Fan->FanAngle = FMath::Clamp(InstanceData.FanSpreadAngle + InstanceData.BlastExtraAngle, 1.f, 360.f);
+		Fan->FanRange = InstanceData.BlastRange;
+		Fan->FanInnerRadius = 0.f;
+		Fan->RingCount = 1;
+		Fan->TelegraphDuration = InstanceData.BlastTelegraph;
+		Fan->Activate(InstanceData.BlastDamage, BossController);
+	}
 }
 
 EStateTreeRunStatus FStateTreeTask_EchidnaBackstepHeartPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 
 	if (!InstanceData.Boss)
 	{
@@ -2938,6 +3126,7 @@ bool FStateTreeTask_EchidnaReturningOrbPattern::AreOrbsFinished(const FInstanceD
 EStateTreeRunStatus FStateTreeTask_EchidnaReturningOrbPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.SpawnedOrbs.Reset();
 
 	if (!InstanceData.Boss)
@@ -3239,6 +3428,7 @@ void FStateTreeTask_EchidnaRibbonPattern::SpawnArcZone(FInstanceDataType& Instan
 EStateTreeRunStatus FStateTreeTask_EchidnaRibbonPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	InstanceData.SpawnedRibbons.Reset();
 	InstanceData.CurrentZone = nullptr;
 
@@ -3443,6 +3633,7 @@ FText FStateTreeTask_EchidnaPatrol::GetDescription(const FGuid& ID, FStateTreeDa
 EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
 	AEchidnaBoss* Boss = InstanceData.Boss;
 	if (!Boss)
 	{
@@ -3452,6 +3643,8 @@ EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::EnterState(FStateTreeE
 
 	InstanceData.Phase = EEchidnaCounterPhase::Window;
 	InstanceData.Elapsed = 0.f;
+	InstanceData.ArmEnds.Reset();
+	InstanceData.Clones.Reset();
 
 	if (InstanceData.AIController)
 	{
@@ -3475,13 +3668,222 @@ EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::EnterState(FStateTreeE
 	return EStateTreeRunStatus::Running;
 }
 
+void FStateTreeTask_EchidnaCounterPattern::StartSplit(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss->GetWorld();
+
+	AHexArena* Arena = nullptr;
+	for (TActorIterator<AHexArena> It(World); It; ++It)
+	{
+		Arena = *It;
+		break;
+	}
+
+	// 갈래 4개 — 정면·오른쪽·뒤·왼쪽. 끝이 아레나 밖이면 안쪽으로 줄임(본체가 그 끝에 나타나야 하므로)
+	InstanceData.Origin = Boss->GetActorLocation();
+	InstanceData.ArmEnds.Reset();
+	for (int32 i = 0; i < 4; ++i)
+	{
+		const FVector Dir = FRotator(0.f, InstanceData.LockedYaw + 90.f * i, 0.f).Vector();
+		float Distance = FMath::Max(InstanceData.SplitDistance, 0.f);
+		FIntPoint Coord;
+		while (Arena && Distance > 0.f && !(Arena->WorldToTileCoord(InstanceData.Origin + Dir * Distance, Coord) && Arena->GetTile(Coord)))
+		{
+			Distance -= 50.f;
+		}
+		InstanceData.ArmEnds.Add(InstanceData.Origin + Dir * FMath::Max(Distance, 0.f));
+	}
+
+	// 분신 — 보스 메시를 씌운 SkeletalMeshActor, 포즈는 숨긴 본체를 따라감
+	USkeletalMeshComponent* BossMesh = Boss->GetMesh();
+	InstanceData.CloneMeshStart = BossMesh ? BossMesh->GetComponentLocation() : InstanceData.Origin;
+	InstanceData.CloneMeshYawOffset = BossMesh ? BossMesh->GetComponentRotation().Yaw - InstanceData.LockedYaw : 0.f;
+	InstanceData.Clones.Reset();
+	if (BossMesh && BossMesh->GetSkeletalMeshAsset())
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		for (int32 i = 0; i < 4; ++i)
+		{
+			const FRotator Rotation(0.f, InstanceData.LockedYaw + 90.f * i + InstanceData.CloneMeshYawOffset, 0.f);
+			ASkeletalMeshActor* Clone = World->SpawnActor<ASkeletalMeshActor>(ASkeletalMeshActor::StaticClass(), InstanceData.CloneMeshStart, Rotation, Params);
+			if (!Clone) continue;
+
+			USkeletalMeshComponent* CloneMesh = Clone->GetSkeletalMeshComponent();
+			CloneMesh->SetMobility(EComponentMobility::Movable);
+			CloneMesh->SetSkeletalMesh(BossMesh->GetSkeletalMeshAsset());
+			CloneMesh->SetWorldScale3D(BossMesh->GetComponentScale());
+			CloneMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			for (int32 MatIndex = 0; MatIndex < BossMesh->GetNumMaterials(); ++MatIndex)
+			{
+				CloneMesh->SetMaterial(MatIndex, BossMesh->GetMaterial(MatIndex));
+			}
+			CloneMesh->SetLeaderPoseComponent(BossMesh);
+			InstanceData.Clones.Add(Clone);
+		}
+	}
+
+	// 본체는 숨기고 충돌을 끈 채 중심에 둔다 — 충돌을 끄면 Walking은 바닥을 뚫고 떨어지므로 Flying
+	Boss->SetActorHiddenInGame(true);
+	Boss->SetActorEnableCollision(false);
+	if (UCharacterMovementComponent* Move = Boss->GetCharacterMovement())
+	{
+		Move->SetMovementMode(MOVE_Flying);
+		Move->StopMovementImmediately();
+	}
+
+	if (!InstanceData.TrailVFX)
+	{
+		InstanceData.TrailVFX = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan"));
+	}
+	InstanceData.TrailComps.Reset();
+	InstanceData.TrailCompAges.Reset();
+	InstanceData.TrailSpawnedLength.Reset();
+
+	InstanceData.Elapsed = 0.f;
+	InstanceData.bDashHitDone = false;
+	InstanceData.Phase = EEchidnaCounterPhase::SplitOut;
+}
+
+void FStateTreeTask_EchidnaCounterPattern::CheckDashHit(FInstanceDataType& InstanceData, const FVector& Prev, const FVector& Cur) const
+{
+	if (InstanceData.bDashHitDone || !InstanceData.Boss) return;
+
+	ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(InstanceData.Boss->GetWorld(), 0));
+	if (!Player) return;
+
+	const FVector PlayerLoc = Player->GetActorLocation();
+	const FVector Closest = FMath::ClosestPointOnSegment(PlayerLoc, Prev, Cur);
+	float Radius = InstanceData.DashHitRadius;
+	if (const UCapsuleComponent* Capsule = Player->GetCapsuleComponent())
+	{
+		Radius += Capsule->GetScaledCapsuleRadius();
+	}
+	if (FVector::Dist2D(PlayerLoc, Closest) > Radius || FMath::Abs(PlayerLoc.Z - Closest.Z) > 300.f)
+	{
+		return;
+	}
+
+	InstanceData.bDashHitDone = true;
+	UGameplayStatics::ApplyDamage(Player, InstanceData.DashDamage, InstanceData.Boss->GetController(), InstanceData.Boss, UDamageType::StaticClass());
+
+	// 넉다운은 SourceLocation 반대쪽으로 튕기므로 캐릭터 뒤쪽 지점을 넘겨 돌진 방향으로 밀려나게
+	FVector DashDir = (Cur - Prev).GetSafeNormal2D();
+	if (DashDir.IsNearlyZero())
+	{
+		DashDir = (PlayerLoc - Closest).GetSafeNormal2D();
+	}
+	Player->ApplyKnockdown(PlayerLoc - DashDir * 300.f);
+}
+
+void FStateTreeTask_EchidnaCounterPattern::DestroyClones(FInstanceDataType& InstanceData) const
+{
+	for (AActor* Clone : InstanceData.Clones)
+	{
+		if (IsValid(Clone))
+		{
+			Clone->Destroy();
+		}
+	}
+	InstanceData.Clones.Reset();
+}
+
+void FStateTreeTask_EchidnaCounterPattern::SpawnTrailSegment(FInstanceDataType& InstanceData, int32 ArmIndex, float FromLength, float ToLength) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss || !InstanceData.TrailVFX || !InstanceData.ArmEnds.IsValidIndex(ArmIndex) || ToLength - FromLength < 1.f) return;
+
+	const FVector ArmVec = InstanceData.ArmEnds[ArmIndex] - InstanceData.Origin;
+	if (ArmVec.IsNearlyZero()) return;
+
+	// 캡슐 중심 → 바닥
+	FVector Floor = InstanceData.Origin;
+	if (const UCapsuleComponent* Capsule = Boss->GetCapsuleComponent())
+	{
+		Floor.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+	const FTransform ArmXform(FRotator(0.f, ArmVec.Rotation().Yaw, 0.f), Floor);
+
+	TArray<UNiagaraComponent*> Spawned;
+	PatternVFX::SpawnRectArea(Boss, InstanceData.TrailVFX, ArmXform, FromLength, ToLength,
+		InstanceData.DashHitRadius, InstanceData.TrailVFXSpacing, InstanceData.TrailVFXScale, 60, &Spawned);
+	for (UNiagaraComponent* Comp : Spawned)
+	{
+		InstanceData.TrailComps.Add(Comp);
+		InstanceData.TrailCompAges.Add(0.f);
+	}
+}
+
+void FStateTreeTask_EchidnaCounterPattern::TickTrail(FInstanceDataType& InstanceData, float ScaledDelta, float SplitAlpha) const
+{
+	// 깐 지 TrailHoldTime이 지난 이펙트는 불꽃이 올라온 상태로 멈춰 둠 (버스트형이라 그냥 두면 1초 뒤 꺼짐)
+	for (int32 i = 0; i < InstanceData.TrailComps.Num(); ++i)
+	{
+		UNiagaraComponent* Comp = InstanceData.TrailComps[i];
+		if (!IsValid(Comp) || !InstanceData.TrailCompAges.IsValidIndex(i) || InstanceData.TrailCompAges[i] < 0.f) continue;
+
+		InstanceData.TrailCompAges[i] += ScaledDelta;
+		if (InstanceData.TrailCompAges[i] >= InstanceData.TrailHoldTime)
+		{
+			Comp->SetPaused(true);
+			InstanceData.TrailCompAges[i] = -1.f;
+		}
+	}
+
+	// 분신이 나아간 만큼만 이어서 깖 — 한 자리에 한 번만
+	const float Step = FMath::Max(InstanceData.TrailVFXSpacing, 30.f);
+	InstanceData.TrailSpawnedLength.SetNumZeroed(InstanceData.ArmEnds.Num());
+	for (int32 i = 0; i < InstanceData.ArmEnds.Num(); ++i)
+	{
+		const float Reached = FVector::Dist2D(InstanceData.Origin, InstanceData.ArmEnds[i]) * SplitAlpha;
+		float& Spawned = InstanceData.TrailSpawnedLength[i];
+		if (Reached - Spawned >= Step || (SplitAlpha >= 1.f && Reached - Spawned >= 1.f))
+		{
+			SpawnTrailSegment(InstanceData, i, Spawned, Reached);
+			Spawned = Reached;
+		}
+	}
+}
+
+void FStateTreeTask_EchidnaCounterPattern::ClearTrail(FInstanceDataType& InstanceData) const
+{
+	// 멈춰 둔 재생을 풀고 끔 — 남은 파티클이 자연스럽게 사그라짐
+	for (UNiagaraComponent* Comp : InstanceData.TrailComps)
+	{
+		if (IsValid(Comp))
+		{
+			Comp->SetPaused(false);
+			Comp->Deactivate();
+		}
+	}
+	InstanceData.TrailComps.Reset();
+	InstanceData.TrailCompAges.Reset();
+	InstanceData.TrailSpawnedLength.Reset();
+}
+
+void FStateTreeTask_EchidnaCounterPattern::RestoreBoss(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss) return;
+
+	Boss->SetActorHiddenInGame(false);
+	Boss->SetActorEnableCollision(true);
+	if (UCharacterMovementComponent* Move = Boss->GetCharacterMovement())
+	{
+		Move->SetMovementMode(MOVE_Walking);
+	}
+}
+
 EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	AEchidnaBoss* Boss = InstanceData.Boss;
 	if (!Boss) return EStateTreeRunStatus::Failed;
 
-	// 창·그로기 내내 제자리 + 정면 고정
+	const float ScaledDelta = DeltaTime * AEchidnaBoss::GetEnrageTimeScale(Boss);
+
+	// 전 구간 이동 입력 없음 + 방향 고정 (돌아올 땐 LockedYaw가 돌진 방향으로 바뀜)
 	if (UCharacterMovementComponent* Move = Boss->GetCharacterMovement())
 	{
 		Move->StopMovementImmediately();
@@ -3491,20 +3893,21 @@ EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::Tick(FStateTreeExecuti
 	switch (InstanceData.Phase)
 	{
 	case EEchidnaCounterPhase::Window:
-		// 카운터 성공은 스킬 쪽(TryCounter)에서 일어나므로 여기선 그 결과(그로기)만 본다
+		// 카운터 성공은 스킬 쪽(TryCounter)에서 일어나므로 여기선 그 결과(그로기)만 본다.
+		// 보스 공용 CounterGroggyDuration 대신 이 패턴의 시간으로 다시 건다(이미 그로기면 시간만 갱신)
 		if (Boss->IsGroggy())
 		{
+			Boss->StartGroggy(InstanceData.GroggyDuration);
 			InstanceData.Phase = EEchidnaCounterPhase::Groggy;
 			return EStateTreeRunStatus::Running;
 		}
 
-		InstanceData.Elapsed += DeltaTime;
-		if (InstanceData.Elapsed >= InstanceData.CounterWindowDuration)
+		InstanceData.Elapsed += ScaledDelta;
+		if (InstanceData.Elapsed >= InstanceData.CounterWindowTime)
 		{
 			Boss->CloseCounterWindow();
-			UE_LOG(LogLoA, Log, TEXT("[EchidnaCounter] 카운터 실패 — 창 종료"));
-			InstanceData.Phase = EEchidnaCounterPhase::Done;
-			return EStateTreeRunStatus::Succeeded;
+			UE_LOG(LogLoA, Log, TEXT("[EchidnaCounter] 카운터 실패 — + 모양 분신 돌진"));
+			StartSplit(InstanceData);
 		}
 		return EStateTreeRunStatus::Running;
 
@@ -3516,6 +3919,82 @@ EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::Tick(FStateTreeExecuti
 		}
 		return EStateTreeRunStatus::Running;
 
+	case EEchidnaCounterPhase::SplitOut:
+	{
+		const float Duration = FMath::Max(InstanceData.SplitDuration, KINDA_SMALL_NUMBER);
+		const float PrevAlpha = FMath::Clamp(InstanceData.Elapsed / Duration, 0.f, 1.f);
+		InstanceData.Elapsed += ScaledDelta;
+		const float Alpha = FMath::Clamp(InstanceData.Elapsed / Duration, 0.f, 1.f);
+
+		for (int32 i = 0; i < InstanceData.ArmEnds.Num(); ++i)
+		{
+			const FVector Prev = FMath::Lerp(InstanceData.Origin, InstanceData.ArmEnds[i], PrevAlpha);
+			const FVector Cur = FMath::Lerp(InstanceData.Origin, InstanceData.ArmEnds[i], Alpha);
+			CheckDashHit(InstanceData, Prev, Cur);
+			if (InstanceData.Clones.IsValidIndex(i) && IsValid(InstanceData.Clones[i]))
+			{
+				InstanceData.Clones[i]->SetActorLocation(InstanceData.CloneMeshStart + (Cur - InstanceData.Origin));
+			}
+		}
+		TickTrail(InstanceData, ScaledDelta, Alpha);
+		if (Alpha < 1.f)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 분신이 사라지고 4갈래 끝 중 한 곳에 본체가 나타나 중심을 바라봄
+		DestroyClones(InstanceData);
+		InstanceData.ReturnArm = FMath::RandRange(0, FMath::Max(InstanceData.ArmEnds.Num() - 1, 0));
+		const FVector ReturnStart = InstanceData.ArmEnds.IsValidIndex(InstanceData.ReturnArm) ? InstanceData.ArmEnds[InstanceData.ReturnArm] : InstanceData.Origin;
+		const FVector ToOrigin = InstanceData.Origin - ReturnStart;
+		if (!ToOrigin.IsNearlyZero())
+		{
+			InstanceData.LockedYaw = ToOrigin.Rotation().Yaw;
+		}
+		Boss->SetActorLocation(ReturnStart);
+		Boss->SetActorRotation(FRotator(0.f, InstanceData.LockedYaw, 0.f));
+		Boss->SetActorHiddenInGame(false);
+
+		InstanceData.Elapsed = 0.f;
+		InstanceData.bDashHitDone = false;
+		InstanceData.Phase = EEchidnaCounterPhase::ReturnWait;
+		return EStateTreeRunStatus::Running;
+	}
+
+	case EEchidnaCounterPhase::ReturnWait:
+		TickTrail(InstanceData, ScaledDelta, 1.f);
+		InstanceData.Elapsed += ScaledDelta;
+		if (InstanceData.Elapsed >= InstanceData.ReturnDelay)
+		{
+			InstanceData.Elapsed = 0.f;
+			InstanceData.Phase = EEchidnaCounterPhase::ReturnDash;
+		}
+		return EStateTreeRunStatus::Running;
+
+	case EEchidnaCounterPhase::ReturnDash:
+	{
+		TickTrail(InstanceData, ScaledDelta, 1.f);
+		const FVector ReturnStart = InstanceData.ArmEnds.IsValidIndex(InstanceData.ReturnArm) ? InstanceData.ArmEnds[InstanceData.ReturnArm] : InstanceData.Origin;
+		const float Duration = FMath::Max(InstanceData.ReturnDuration, KINDA_SMALL_NUMBER);
+		const float PrevAlpha = FMath::Clamp(InstanceData.Elapsed / Duration, 0.f, 1.f);
+		InstanceData.Elapsed += ScaledDelta;
+		const float Alpha = FMath::Clamp(InstanceData.Elapsed / Duration, 0.f, 1.f);
+
+		const FVector Prev = FMath::Lerp(ReturnStart, InstanceData.Origin, PrevAlpha);
+		const FVector Cur = FMath::Lerp(ReturnStart, InstanceData.Origin, Alpha);
+		CheckDashHit(InstanceData, Prev, Cur);
+		Boss->SetActorLocation(Cur);
+		if (Alpha < 1.f)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		RestoreBoss(InstanceData);
+		ClearTrail(InstanceData);
+		InstanceData.Phase = EEchidnaCounterPhase::Done;
+		return EStateTreeRunStatus::Succeeded;
+	}
+
 	default:
 		return EStateTreeRunStatus::Succeeded;
 	}
@@ -3524,11 +4003,20 @@ EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::Tick(FStateTreeExecuti
 void FStateTreeTask_EchidnaCounterPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	// 중간에 끊겨도 발광이 남지 않게
+	// 중간에 끊겨도 발광·분신이 남지 않고 본체가 숨거나 떠 있지 않게
 	if (InstanceData.Boss)
 	{
 		InstanceData.Boss->CloseCounterWindow();
+
+		const EEchidnaCounterPhase Phase = InstanceData.Phase;
+		if (Phase == EEchidnaCounterPhase::SplitOut || Phase == EEchidnaCounterPhase::ReturnWait || Phase == EEchidnaCounterPhase::ReturnDash)
+		{
+			InstanceData.Boss->SetActorLocation(InstanceData.Origin);
+			RestoreBoss(InstanceData);
+		}
 	}
+	DestroyClones(InstanceData);
+	ClearTrail(InstanceData);
 }
 
 #if WITH_EDITOR
@@ -3553,8 +4041,10 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::EnterState(FStat
 	InstanceData.IntroRow = nullptr;
 	InstanceData.IntroCamera = nullptr;
 	InstanceData.SideColumns.Reset();
+	InstanceData.Barriers.Reset();
 	InstanceData.bCleanedUp = false;
 	InstanceData.bGroggyStarted = false;
+	InstanceData.bCounterFailed = false;
 
 	AEchidnaBoss* Boss = InstanceData.Boss;
 	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
@@ -3639,8 +4129,16 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnWave(FInstanceDataType& In
 		return;
 	}
 
-	// 불길은 아레나 외곽선부터 — 맵 밖 구간(OutsideMargin)엔 깔지 않는다
-	Wall->Activate(Boss, StartDistance * 2.f, InstanceData.OutsideMargin, Boss->GetController(), RowWidth);
+	// 앞 줄을 한 번이라도 놓쳤으면 이 줄은 카운터 거울 없이 나온다 — 기믹 실패 확정
+	if (InstanceData.bCounterFailed)
+	{
+		Wall->DisableCounter();
+	}
+
+	// 정사각형 앞 선 → 뒤 선(플레이어가 더 못 물러나는 투명 벽)까지. 불길은 시작부터
+	float HalfWidth = 0.f, Front = 0.f, Back = 0.f;
+	GetSquareExtents(InstanceData, HalfWidth, Front, Back);
+	Wall->Activate(Boss, Front + Back, 0.f, Boss->GetController(), RowWidth);
 	InstanceData.Walls.Add(Wall);
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaMirrorCounter] %d번째 줄"), InstanceData.Walls.Num());
@@ -3672,15 +4170,38 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::Tick(FStateTreeE
 
 	InstanceData.Elapsed += DeltaTime;
 
+	// 뒤 벽 VFX는 한 번 재생형이라 주기적으로 다시 깐다
+	InstanceData.BackWallVFXElapsed += DeltaTime;
+	if (InstanceData.BackWallVFXElapsed >= InstanceData.BackWallVFXRespawnInterval)
+	{
+		InstanceData.BackWallVFXElapsed = 0.f;
+		SpawnBackWallVFX(InstanceData);
+	}
+
+	// 카운터 못 치고 끝까지 간 줄 감지 (카운터로 쓰러진 줄은 IsCountered)
+	for (const TObjectPtr<AEchidnaMirrorWallActor>& Wall : InstanceData.Walls)
+	{
+		if (IsValid(Wall) && Wall->IsFinished() && !Wall->IsCountered() && !InstanceData.bCounterFailed)
+		{
+			// 이미 나와 있는 뒷줄은 카운터 거울이 사라지고, 다음 줄은 더 안 나온다 — 남은 줄이 끝나면 패턴 종료(그로기 없음)
+			InstanceData.bCounterFailed = true;
+			for (const TObjectPtr<AEchidnaMirrorWallActor>& Other : InstanceData.Walls)
+			{
+				if (IsValid(Other) && !Other->IsFinished()) Other->RemoveCounterMirror();
+			}
+			UE_LOG(LogLoA, Log, TEXT("[EchidnaMirrorCounter] 카운터 실패 — 나와 있는 줄 카운터 제거, 다음 줄 없음"));
+		}
+	}
+
 	// 다음 줄 — 정해진 시간마다 (앞 줄을 일찍 카운터쳤어도 당기지 않는다)
 	const int32 Spawned = InstanceData.Walls.Num();
-	if (Spawned < InstanceData.WaveCount
+	if (!InstanceData.bCounterFailed && Spawned < InstanceData.WaveCount
 		&& InstanceData.Elapsed >= InstanceData.FirstWaveDelay + InstanceData.WaveInterval * Spawned)
 	{
 		SpawnWave(InstanceData);
 	}
 
-	if (InstanceData.Walls.Num() < InstanceData.WaveCount)
+	if (!InstanceData.bCounterFailed && InstanceData.Walls.Num() < InstanceData.WaveCount)
 	{
 		return EStateTreeRunStatus::Running;
 	}
@@ -3700,12 +4221,25 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorCounterPattern::Tick(FStateTreeE
 		return EStateTreeRunStatus::Running;
 	}
 
-	// 그로기 조건 = 마지막 줄을 카운터쳤는가 (앞 줄 결과는 상관없음). 정리하면 줄이 파괴되므로 그 전에 본다
+	// 그로기 조건 = 모든 줄을 카운터쳤는가. 한 줄이라도 놓치면 이후 줄은 카운터 거울이 없으므로 마지막 줄 성공 = 전부 성공이지만,
+	// 결과는 줄 전부로 확인한다. 정리하면 줄이 파괴되므로 그 전에 본다
 	const AEchidnaMirrorWallActor* LastWall = InstanceData.Walls.Num() > 0 ? InstanceData.Walls.Last().Get() : nullptr;
-	const bool bSuccess = IsValid(LastWall) && LastWall->IsCountered();
+	bool bSuccess = !InstanceData.bCounterFailed && IsValid(LastWall);
+	for (const TObjectPtr<AEchidnaMirrorWallActor>& Wall : InstanceData.Walls)
+	{
+		bSuccess &= IsValid(Wall) && Wall->IsCountered();
+	}
+	const FVector CounteredLocation = bSuccess ? LastWall->GetCounteredMirrorLocation() : FVector::ZeroVector;
+	const float CounteredYaw = bSuccess ? LastWall->GetActorRotation().Yaw : 0.f;
 
 	// 패턴 끝 — 줄·카메라를 먼저 정리해 보스가 나타난 상태로 그로기에 들어간다
 	CleanupPattern(InstanceData);
+	if (bSuccess)
+	{
+		// 마지막으로 카운터 맞은 거울 자리에서, 거울이 보던 방향(줄 진행 방향)을 보고 나타난다
+		const FVector BossLocation = CounteredLocation + FVector(0.f, 0.f, Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+		Boss->SetActorLocationAndRotation(BossLocation, FRotator(0.f, CounteredYaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	}
 	if (InstanceData.GroggyDuration > 0.f && (bSuccess || !InstanceData.bGroggyOnlyOnSuccess))
 	{
 		Boss->StartGroggy(InstanceData.GroggyDuration);
@@ -3733,13 +4267,108 @@ bool FStateTreeTask_EchidnaMirrorCounterPattern::ComputeRowGeometry(const FInsta
 	// 중심 → 외곽선 거리 = 외곽 타일 줄 중심까지(R*D*√3/2) + 타일 내접원 반지름(TileSpacing/2)
 	const float D = Arena->TileSpacing + Arena->HexGap;
 	OutEdgeDistance = (Arena->SideCount - 1) * D * 0.8660254f + Arena->TileSpacing * 0.5f;
-	OutStartDistance = OutEdgeDistance + InstanceData.OutsideMargin;
-	OutStartLocation = OutCenter + Outward * OutStartDistance;
 
-	// 줄 폭 = 출발 변의 길이. 변은 타일 SideCount칸이 이웃 방향으로 붙어 있어 길이 = SideCount × D(중심 간 거리).
-	// 줄은 변과 평행하게 중심선을 따라 전진하고, 육각형은 가운데로 갈수록 넓어지므로 변 길이에 맞추면 끝까지 맵 안에 있다
-	OutRowWidth = FMath::Max(D, Arena->SideCount * D - 2.f * InstanceData.RowEdgeInset);
+	// 줄은 정사각형 앞 선에서 나타나고 폭 = 정사각형 폭 (거울 7개가 맞닿게 크기를 맞춤)
+	float HalfWidth = 0.f, Front = 0.f, Back = 0.f;
+	GetSquareExtents(InstanceData, HalfWidth, Front, Back);
+	OutStartDistance = Front;
+	OutStartLocation = OutCenter + Outward * Front;
+	OutRowWidth = 2.f * HalfWidth;
 	return true;
+}
+
+bool FStateTreeTask_EchidnaMirrorCounterPattern::GetSquareExtents(const FInstanceDataType& InstanceData, float& OutHalfWidth, float& OutFront, float& OutBack) const
+{
+	const AHexArena* Arena = InstanceData.Arena;
+	if (!Arena) return false;
+	const float D = Arena->TileSpacing + Arena->HexGap;
+	OutHalfWidth = InstanceData.SquareHalfWidthTiles * D;
+	OutFront = InstanceData.SquareFrontTiles * D;
+	OutBack = InstanceData.SquareBackTiles * D;
+	return true;
+}
+
+void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnBackWallVFX(FInstanceDataType& InstanceData) const
+{
+	// 뒤 벽 = Barriers[1] (SpawnSquareBarriers의 Specs 순서: 앞·뒤·오른쪽·왼쪽)
+	AEchidnaBarrierActor* BackBarrier = InstanceData.Barriers.IsValidIndex(1) ? InstanceData.Barriers[1].Get() : nullptr;
+	UNiagaraSystem* BackVFX = BackBarrier ? InstanceData.BackWallRayVFX.LoadSynchronous() : nullptr;
+	FVector Center, TravelDir, StartLocation;
+	float StartDistance = 0.f, EdgeDistance = 0.f, RowWidth = 0.f;
+	float HalfWidth = 0.f, Front = 0.f, Back = 0.f;
+	if (!BackVFX || !ComputeRowGeometry(InstanceData, Center, TravelDir, StartLocation, StartDistance, EdgeDistance, RowWidth)
+		|| !GetSquareExtents(InstanceData, HalfWidth, Front, Back)) return;
+
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, TravelDir).GetSafeNormal();
+	const float Spacing = FMath::Max(InstanceData.BackWallVFXSpacing, 20.f);
+	const int32 Count = FMath::Max(2, FMath::CeilToInt(2.f * HalfWidth / Spacing) + 1);
+	const FVector LineStart = Center + TravelDir * Back - Right * HalfWidth + FVector(0.f, 0.f, InstanceData.BackWallVFXHeight);
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const FVector Location = LineStart + Right * (2.f * HalfWidth * i / (Count - 1));
+		UNiagaraFunctionLibrary::SpawnSystemAttached(BackVFX, BackBarrier->GetRootComponent(), NAME_None, Location, TravelDir.Rotation(),
+			FVector(InstanceData.BackWallVFXScale), EAttachLocation::KeepWorldPosition, true, ENCPoolMethod::None);
+	}
+}
+
+void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnSquareBarriers(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	FVector Center, TravelDir, StartLocation;
+	float StartDistance = 0.f, EdgeDistance = 0.f, RowWidth = 0.f;
+	float HalfWidth = 0.f, Front = 0.f, Back = 0.f;
+	if (!World || !ComputeRowGeometry(InstanceData, Center, TravelDir, StartLocation, StartDistance, EdgeDistance, RowWidth)
+		|| !GetSquareExtents(InstanceData, HalfWidth, Front, Back)) return;
+
+	const FVector Outward = -TravelDir;
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, TravelDir).GetSafeNormal();
+	const FRotator Facing = TravelDir.Rotation();
+	const float HalfT = InstanceData.BarrierThickness * 0.5f;
+	const float HalfH = InstanceData.BarrierHeight * 0.5f;
+	const float MidAlong = (Front - Back) * 0.5f;	// 정사각형 중심의 앞뒤 위치 (Outward 기준)
+	const float HalfDepth = (Front + Back) * 0.5f;
+
+	// 박스 로컬 X = 진행 방향, Y = 좌우. 벽 두께는 정사각형 바깥쪽으로 둔다
+	struct FWallSpec { FVector Offset; FVector HalfExtent; };
+	const FWallSpec Specs[] = {
+		{ Outward * (Front + HalfT),  FVector(HalfT, HalfWidth + 2.f * HalfT, HalfH) },	// 앞
+		{ -Outward * (Back + HalfT),  FVector(HalfT, HalfWidth + 2.f * HalfT, HalfH) },	// 뒤
+		{ Outward * MidAlong + Right * (HalfWidth + HalfT),  FVector(HalfDepth + 2.f * HalfT, HalfT, HalfH) },	// 오른쪽
+		{ Outward * MidAlong - Right * (HalfWidth + HalfT),  FVector(HalfDepth + 2.f * HalfT, HalfT, HalfH) },	// 왼쪽
+	};
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	for (const FWallSpec& Spec : Specs)
+	{
+		if (AEchidnaBarrierActor* Barrier = World->SpawnActor<AEchidnaBarrierActor>(AEchidnaBarrierActor::StaticClass(),
+			Center + Spec.Offset + FVector(0.f, 0.f, HalfH), Facing, SpawnParams))
+		{
+			Barrier->SetHalfExtent(Spec.HalfExtent);
+			InstanceData.Barriers.Add(Barrier);
+		}
+	}
+
+	// 뒤 선 투명 벽 표시 — 이후엔 Tick에서 BackWallVFXRespawnInterval마다 다시 깐다
+	InstanceData.BackWallVFXElapsed = 0.f;
+	SpawnBackWallVFX(InstanceData);
+
+	// 구역 밖에 있으면 벽 바깥에 갇히므로 정사각형 가운데로 옮긴다
+	if (ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(World, 0)))
+	{
+		const float Radius = Player->GetCapsuleComponent()->GetScaledCapsuleRadius();
+		const FVector Local = Player->GetActorLocation() - Center;
+		const float Along = FVector::DotProduct(Local, Outward);
+		const float Side = FVector::DotProduct(Local, Right);
+		if (Along > Front - Radius || Along < -Back + Radius || FMath::Abs(Side) > HalfWidth - Radius)
+		{
+			FVector Target = Center + Outward * MidAlong;
+			Target.Z = Player->GetActorLocation().Z;
+			Player->SetActorLocation(Target, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+	}
 }
 
 void FStateTreeTask_EchidnaMirrorCounterPattern::StartIntro(FInstanceDataType& InstanceData) const
@@ -3754,8 +4383,8 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::StartIntro(FInstanceDataType& I
 		return;
 	}
 
-	// 연출용 줄 — 첫 줄이 나올 변의 맵 안쪽(외곽선에서 IntroRowInset 안). 땅속에 숨겨 두었다가 바닥을 뚫고 솟아오른다
-	const FVector IntroRowLocation = Center - TravelDir * (EdgeDistance - InstanceData.IntroRowInset);
+	// 연출용 줄 — 실제 줄이 나타날 정사각형 앞 선. 땅속에 숨겨 두었다가 바닥을 뚫고 솟아오른다
+	const FVector IntroRowLocation = StartLocation;
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = Boss;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -3872,6 +4501,10 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::FinishIntro(FInstanceDataType& 
 	{
 		SpawnSideColumns(InstanceData);
 	}
+	if (InstanceData.bBlockSquare)
+	{
+		SpawnSquareBarriers(InstanceData);
+	}
 }
 
 void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnSideColumns(FInstanceDataType& InstanceData) const
@@ -3882,15 +4515,18 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnSideColumns(FInstanceDataT
 	float StartDistance = 0.f, EdgeDistance = 0.f, RowWidth = 0.f;
 	if (!World || !ComputeRowGeometry(InstanceData, Center, TravelDir, StartLocation, StartDistance, EdgeDistance, RowWidth)) return;
 
+	float HalfWidth = 0.f, Front = 0.f, Back = 0.f;
+	if (!GetSquareExtents(InstanceData, HalfWidth, Front, Back)) return;
+
 	UClass* WallClass = InstanceData.MirrorWallClass ? InstanceData.MirrorWallClass.Get() : AEchidnaMirrorWallActor::StaticClass();
 	const AEchidnaMirrorWallActor* CDO = GetDefault<AEchidnaMirrorWallActor>(WallClass);
-	const int32 RowCount = FMath::Max(2, CDO->MirrorCount);
-	const float MirrorWidth = CDO->MirrorWidth;
 
-	// 기둥 거울 간격은 줄 거울 간격과 같게 — 서로 거의 맞닿은 같은 밀도. 길이는 출발 변 ~ 반대편 변(아레나 전체)
-	const float Spacing = FMath::Max(MirrorWidth, (RowWidth - MirrorWidth) / (RowCount - 1));
-	const int32 Count = FMath::Max(2, FMath::CeilToInt(2.f * EdgeDistance / Spacing) + 1);
+	// 기둥 거울 = 줄 거울과 같은 크기, 서로 맞닿게. 길이는 정사각형 앞 선 ~ 뒤 선을 덮도록
+	const float MirrorWidth = RowWidth / FMath::Max(1, CDO->MirrorCount);
+	const float Depth = Front + Back;
+	const int32 Count = FMath::Max(2, FMath::CeilToInt(Depth / MirrorWidth));
 	const FVector Right = FVector::CrossProduct(FVector::UpVector, TravelDir).GetSafeNormal();
+	const FVector SquareMid = Center - TravelDir * ((Front - Back) * 0.5f);
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = Boss;
@@ -3899,13 +4535,14 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::SpawnSideColumns(FInstanceDataT
 	for (const float Side : { -1.f, 1.f })
 	{
 		// 줄 양 끝 거울 바깥 가장자리 + 간격. 기둥 거울은 안쪽(줄이 지나가는 통로)을 바라본다
-		const FVector Location = Center + Right * Side * (RowWidth * 0.5f + InstanceData.SideColumnGap);
+		const FVector Location = SquareMid + Right * Side * (RowWidth * 0.5f + InstanceData.SideColumnGap);
 		const FRotator Facing = (-Right * Side).Rotation();
 		AEchidnaMirrorWallActor* Column = World->SpawnActor<AEchidnaMirrorWallActor>(WallClass, Location, Facing, SpawnParams);
 		if (!Column) continue;
 
 		// 상반신 없는 투명 유리 거울
-		Column->SetupDisplayRow(-1.f, Count, Spacing, true, true);
+		Column->FitMirrorSize(MirrorWidth);
+		Column->SetupDisplayRow(-1.f, Count, MirrorWidth, true, true);
 		// 패턴 시작과 함께 빠르게 솟아오름 (돌지 않고)
 		Column->PlayAppear(0.04f, 0.4f, 0.f);
 		InstanceData.SideColumns.Add(Column);
@@ -3954,6 +4591,11 @@ int32 FStateTreeTask_EchidnaMirrorCounterPattern::CleanupPattern(FInstanceDataTy
 		if (IsValid(Column)) Column->Destroy();
 	}
 	InstanceData.SideColumns.Reset();
+	for (const TObjectPtr<AEchidnaBarrierActor>& Barrier : InstanceData.Barriers)
+	{
+		if (IsValid(Barrier)) Barrier->Destroy();
+	}
+	InstanceData.Barriers.Reset();
 	if (ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(Boss ? Boss->GetWorld() : nullptr, 0)))
 	{
 		if (!InstanceData.bIntroDone)
@@ -4006,6 +4648,718 @@ int32 FStateTreeTask_EchidnaMirrorCounterPattern::CleanupPattern(FInstanceDataTy
 FText FStateTreeTask_EchidnaMirrorCounterPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
 {
 	return LOCTEXT("EchidnaMirrorCounterPatternDesc", "<b>Echidna Mirror Counter Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+bool FStateTreeTask_EchidnaRetreatLotusPattern::IsOnArena(const FInstanceDataType& InstanceData, const FVector& Location) const
+{
+	FIntPoint Coord;
+	return InstanceData.Arena && InstanceData.Arena->WorldToTileCoord(Location, Coord) && InstanceData.Arena->GetTile(Coord);
+}
+
+bool FStateTreeTask_EchidnaRetreatLotusPattern::StartCycle(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World) return false;
+
+	// 사이클마다 그 순간의 플레이어 방향으로 다시 조준하고, 사이클 동안은 고정
+	InstanceData.CycleYaw = Boss->GetActorRotation().Yaw;
+	if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(World, 0))
+	{
+		FVector ToPlayer = PlayerChar->GetActorLocation() - Boss->GetActorLocation();
+		ToPlayer.Z = 0.f;
+		if (!ToPlayer.IsNearlyZero())
+		{
+			InstanceData.CycleYaw = ToPlayer.Rotation().Yaw;
+		}
+	}
+	const FRotator Facing(0.f, InstanceData.CycleYaw, 0.f);
+	Boss->SetActorRotation(Facing);
+
+	// 도착 지점 — 아레나 밖으로 나가면 안쪽으로 줄인다
+	InstanceData.SlideStart = Boss->GetActorLocation();
+	const FVector Back = -Facing.Vector();
+	float Distance = FMath::Max(InstanceData.SlideDistance, 0.f);
+	while (Distance > 0.f && !IsOnArena(InstanceData, InstanceData.SlideStart + Back * Distance))
+	{
+		Distance -= 50.f;
+	}
+	Distance = FMath::Max(Distance, 0.f);
+	InstanceData.SlideEnd = InstanceData.SlideStart + Back * Distance;
+
+	// 부채꼴 — 도착 지점(발밑)에서 정면으로. 예고 시간 = 슬라이드 시간이라 도착하는 순간 터진다
+	FVector FanOrigin = InstanceData.SlideEnd;
+	if (const UCapsuleComponent* Capsule = Boss->GetCapsuleComponent())
+	{
+		FanOrigin.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+
+	UClass* FanClass = InstanceData.FanZoneClass ? InstanceData.FanZoneClass.Get() : AEchidnaFanZoneActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AEchidnaFanZoneActor* Fan = World->SpawnActor<AEchidnaFanZoneActor>(FanClass, FanOrigin, Facing, SpawnParams);
+	if (!Fan)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRetreatLotus] 부채꼴 SpawnActor 실패"));
+		return false;
+	}
+	Fan->FanAngle = InstanceData.FanAngle;
+	Fan->FanRange = InstanceData.FanRange;
+	Fan->FanInnerRadius = 0.f;
+	Fan->RingCount = FMath::Max(InstanceData.FanRingCount, 1);
+	Fan->RingInterval = 0.08f;
+	Fan->TelegraphDuration = InstanceData.SlideDuration;
+	if (!InstanceData.FanZoneClass)
+	{
+		// 맞으면 경직 + 매혹 1스택 (그림 9번)
+		Fan->bApplyKnockdownOnHit = false;
+		Fan->bApplyStaggerOnHit = true;
+		Fan->bApplyCharmGaugeOnHit = true;
+		Fan->CharmGaugePerHit = 1;
+	}
+	Fan->Activate(InstanceData.FanDamage, Boss->GetController());
+	InstanceData.CurrentFan = Fan;
+
+	// 미끄러지는 동안은 위치를 직접 보간 — 중력·바닥 보정이 끼어들지 않게 Flying
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+	if (UCharacterMovementComponent* Movement = Boss->GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->SetMovementMode(MOVE_Flying);
+	}
+
+	InstanceData.PhaseElapsed = 0.f;
+	InstanceData.LotusSpawnedThisCycle = 0;
+	InstanceData.Phase = EEchidnaRetreatLotusPhase::Sliding;
+
+	UE_LOG(LogLoA, Log, TEXT("[EchidnaRetreatLotus] %d번째 사이클 — Yaw=%.0f 슬라이드 %.0fcm"),
+		InstanceData.CycleIndex + 1, InstanceData.CycleYaw, Distance);
+	return true;
+}
+
+void FStateTreeTask_EchidnaRetreatLotusPattern::SpawnLotusNearBoss(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World || !InstanceData.Arena) return;
+
+	// 보스 주변 랜덤 위치 — 아레나 타일 위가 나올 때까지 몇 번 다시 뽑는다
+	FVector Location = FVector::ZeroVector;
+	bool bFound = false;
+	for (int32 Try = 0; Try < 8 && !bFound; ++Try)
+	{
+		const float Angle = FMath::FRandRange(0.f, 2.f * PI);
+		const float Dist = FMath::FRandRange(InstanceData.LotusMinDistance, FMath::Max(InstanceData.LotusMinDistance, InstanceData.LotusMaxDistance));
+		const FVector Candidate = Boss->GetActorLocation() + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.f) * Dist;
+
+		FIntPoint Coord;
+		FVector Top;
+		if (InstanceData.Arena->WorldToTileCoord(Candidate, Coord) && InstanceData.Arena->GetTileTopLocation(Coord, Top))
+		{
+			Location = FVector(Candidate.X, Candidate.Y, Top.Z);
+			bFound = true;
+		}
+	}
+	if (!bFound) return;
+
+	const FTransform Xform(FRotator(0.f, FMath::FRandRange(0.f, 360.f), 0.f), Location);
+
+	// 연꽃 비주얼 — 랜잡의 작은 연꽃과 같은 방식(큰 꽃 액터를 작게, 바닥 잎 없이)
+	AEchidnaBigFlowerActor* Flower = World->SpawnActorDeferred<AEchidnaBigFlowerActor>(
+		AEchidnaBigFlowerActor::StaticClass(), Xform, Boss, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (Flower)
+	{
+		Flower->PetalLength = InstanceData.LotusRadius;
+		Flower->LeafCount = 0;
+		Flower->FinishSpawning(Xform);
+	}
+
+	// 폭발 — 360도 원형 장판, 연꽃 자체가 예고라 메시는 투명
+	AEchidnaFanZoneActor* Zone = World->SpawnActorDeferred<AEchidnaFanZoneActor>(
+		AEchidnaFanZoneActor::StaticClass(), Xform, Boss, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Zone)
+	{
+		if (Flower) Flower->Destroy();
+		return;
+	}
+	Zone->FanAngle = 360.f;
+	Zone->FanInnerRadius = 0.f;
+	Zone->FanRange = InstanceData.LotusRadius;
+	Zone->RingCount = 1;
+	Zone->TelegraphDuration = InstanceData.LotusFuseTime;
+	Zone->TelegraphOpacity = 0.f;
+	Zone->bApplyKnockdownOnHit = false;
+	Zone->bApplyStaggerOnHit = true;
+	Zone->bApplyCharmGaugeOnHit = true;
+	Zone->CharmGaugePerHit = 1;
+	Zone->FinishSpawning(Xform);
+	Zone->Activate(InstanceData.LotusDamage, Boss->GetController());
+
+	InstanceData.LotusFlowers.Add(Flower);
+	InstanceData.LotusZones.Add(Zone);
+}
+
+void FStateTreeTask_EchidnaRetreatLotusPattern::TickLotus(FInstanceDataType& InstanceData) const
+{
+	// 터지는 순간 연꽃(비주얼)은 사라지고 폭발 이펙트만 남는다
+	for (int32 i = InstanceData.LotusZones.Num() - 1; i >= 0; i--)
+	{
+		AEchidnaFanZoneActor* Zone = InstanceData.LotusZones[i];
+		if (!IsValid(Zone) || Zone->HasStartedExploding())
+		{
+			if (InstanceData.LotusFlowers.IsValidIndex(i) && IsValid(InstanceData.LotusFlowers[i]))
+			{
+				InstanceData.LotusFlowers[i]->Destroy();
+			}
+			InstanceData.LotusZones.RemoveAtSwap(i);
+			if (InstanceData.LotusFlowers.IsValidIndex(i))
+			{
+				InstanceData.LotusFlowers.RemoveAtSwap(i);
+			}
+		}
+	}
+}
+
+void FStateTreeTask_EchidnaRetreatLotusPattern::EndSlide(FInstanceDataType& InstanceData) const
+{
+	if (!InstanceData.Boss) return;
+	if (UCharacterMovementComponent* Movement = InstanceData.Boss->GetCharacterMovement())
+	{
+		if (Movement->MovementMode == MOVE_Flying)
+		{
+			Movement->StopMovementImmediately();
+			Movement->SetMovementMode(MOVE_Walking);
+		}
+	}
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaRetreatLotusPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
+	InstanceData.CycleIndex = 0;
+	InstanceData.CurrentFan = nullptr;
+	InstanceData.LotusFlowers.Reset();
+	InstanceData.LotusZones.Reset();
+
+	if (!InstanceData.Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaRetreatLotus] EnterState 실패 — Boss 바인딩 없음"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.Arena = nullptr;
+	for (TActorIterator<AHexArena> It(InstanceData.Boss->GetWorld()); It; ++It)
+	{
+		InstanceData.Arena = *It;
+		break;
+	}
+
+	return StartCycle(InstanceData) ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Failed;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaRetreatLotusPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 광폭화 배율 — 부채꼴 예고(액터 타이머는 CustomTimeDilation으로 나눔)와 슬라이드가 같은 비율로 빨라져야 도착 순간에 터진다
+	const float ScaledDelta = DeltaTime * AEchidnaBoss::GetEnrageTimeScale(Boss);
+
+	Boss->SetActorRotation(FRotator(0.f, InstanceData.CycleYaw, 0.f));
+	TickLotus(InstanceData);
+
+	switch (InstanceData.Phase)
+	{
+	case EEchidnaRetreatLotusPhase::Sliding:
+	{
+		InstanceData.PhaseElapsed += ScaledDelta;
+		const float Alpha = FMath::Clamp(InstanceData.PhaseElapsed / FMath::Max(InstanceData.SlideDuration, 0.01f), 0.f, 1.f);
+
+		// 부드럽게 출발·감속 + 가운데서 살짝 떠오름
+		FVector Loc = FMath::Lerp(InstanceData.SlideStart, InstanceData.SlideEnd, FMath::InterpEaseInOut(0.f, 1.f, Alpha, 2.f));
+		Loc.Z += FMath::Sin(Alpha * PI) * InstanceData.SlideHoverHeight;
+		Boss->SetActorLocation(Loc);
+
+		// 연꽃은 슬라이드 시간에 고르게 — i번째는 (i + 0.5) / N 지점에서
+		const int32 LotusCount = FMath::Max(InstanceData.LotusPerCycle, 0);
+		while (InstanceData.LotusSpawnedThisCycle < LotusCount
+			&& Alpha >= (InstanceData.LotusSpawnedThisCycle + 0.5f) / LotusCount)
+		{
+			SpawnLotusNearBoss(InstanceData);
+			InstanceData.LotusSpawnedThisCycle++;
+		}
+
+		if (Alpha < 1.f)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		Boss->SetActorLocation(InstanceData.SlideEnd);
+		EndSlide(InstanceData);
+		InstanceData.Phase = EEchidnaRetreatLotusPhase::Exploding;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaRetreatLotusPhase::Exploding:
+	{
+		if (IsValid(InstanceData.CurrentFan) && !InstanceData.CurrentFan->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		InstanceData.CycleIndex++;
+		if (InstanceData.CycleIndex >= InstanceData.RepeatCount)
+		{
+			InstanceData.Phase = EEchidnaRetreatLotusPhase::Done;
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 다음 사이클 전 숨 고르기 — 플레이어 쪽으로 몇 걸음(아레나 밖이면 줄임)
+		InstanceData.RestStart = Boss->GetActorLocation();
+		InstanceData.RestEnd = InstanceData.RestStart;
+		if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+		{
+			FVector ToPlayer = PlayerChar->GetActorLocation() - InstanceData.RestStart;
+			ToPlayer.Z = 0.f;
+			const float Room = ToPlayer.Size() - InstanceData.RestWalkStopDistance;
+			if (Room > 0.f && !ToPlayer.IsNearlyZero())
+			{
+				InstanceData.CycleYaw = ToPlayer.Rotation().Yaw;
+				const FVector Dir = ToPlayer.GetSafeNormal();
+				float Walk = FMath::Min(InstanceData.RestWalkDistance, Room);
+				while (Walk > 0.f && !IsOnArena(InstanceData, InstanceData.RestStart + Dir * Walk))
+				{
+					Walk -= 50.f;
+				}
+				InstanceData.RestEnd = InstanceData.RestStart + Dir * FMath::Max(Walk, 0.f);
+			}
+		}
+		InstanceData.PhaseElapsed = 0.f;
+		InstanceData.Phase = EEchidnaRetreatLotusPhase::Resting;
+		return EStateTreeRunStatus::Running;
+	}
+	case EEchidnaRetreatLotusPhase::Resting:
+	{
+		InstanceData.PhaseElapsed += ScaledDelta;
+		const float Alpha = InstanceData.CycleRestDuration > 0.f
+			? FMath::Clamp(InstanceData.PhaseElapsed / InstanceData.CycleRestDuration, 0.f, 1.f) : 1.f;
+
+		// 일정한 속도로 걷기 — 쉬는 시간 전체에 걸쳐
+		FVector Loc = FMath::Lerp(InstanceData.RestStart, InstanceData.RestEnd, Alpha);
+		Loc.Z = Boss->GetActorLocation().Z;
+		Boss->SetActorLocation(Loc, true);
+
+		if (Alpha < 1.f)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+		return StartCycle(InstanceData) ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Failed;
+	}
+	case EEchidnaRetreatLotusPhase::Done:
+	default:
+		// 마지막 연꽃까지 다 터져야 끝
+		return InstanceData.LotusZones.Num() > 0 ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Succeeded;
+	}
+}
+
+void FStateTreeTask_EchidnaRetreatLotusPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+
+	// 중간에 끊겨도 보스가 뜬 채로 남거나 연꽃·예고가 남지 않게
+	EndSlide(InstanceData);
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	for (const TObjectPtr<AEchidnaBigFlowerActor>& Flower : InstanceData.LotusFlowers)
+	{
+		if (IsValid(Flower)) Flower->Destroy();
+	}
+	for (const TObjectPtr<AEchidnaFanZoneActor>& Zone : InstanceData.LotusZones)
+	{
+		if (IsValid(Zone) && !Zone->HasStartedExploding()) Zone->Destroy();
+	}
+	if (IsValid(InstanceData.CurrentFan) && !InstanceData.CurrentFan->HasStartedExploding())
+	{
+		InstanceData.CurrentFan->Destroy();
+	}
+	InstanceData.LotusFlowers.Reset();
+	InstanceData.LotusZones.Reset();
+	InstanceData.CurrentFan = nullptr;
+	InstanceData.Arena = nullptr;
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaRetreatLotusPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaRetreatLotusPatternDesc", "<b>Echidna Retreat Lotus Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+// ── 육각 리본 ──────────────────────────────────────────────
+
+void FStateTreeTask_EchidnaHexRibbonPattern::SpawnRibbon(FInstanceDataType& InstanceData, const FVector& Start, const FVector& Direction, float Length,
+	float Telegraph, float Damage, bool bKnockdown) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
+	if (!World || Length <= 1.f || Direction.IsNearlyZero()) return;
+
+	UClass* Class = InstanceData.RibbonClass ? InstanceData.RibbonClass.Get() : AEchidnaTetherActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AEchidnaTetherActor* Ribbon = World->SpawnActor<AEchidnaTetherActor>(Class, Start, FRotator(0.f, Direction.Rotation().Yaw, 0.f), SpawnParams);
+	if (!Ribbon)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaHexRibbon] 리본 스폰 실패 (Class=%s)"), *GetNameSafe(Class));
+		return;
+	}
+
+	// Activate() 전에 대입 — 메시 크기·판정이 이 값으로 잡힘
+	Ribbon->TetherRange = Length;
+	Ribbon->TetherHalfWidth = InstanceData.RibbonHalfWidth;
+	Ribbon->SnapDelay = Telegraph;
+	Ribbon->bApplyPullOnHit = false;
+	Ribbon->bApplyStunOnHit = false;
+	Ribbon->CharmGaugeAmount = 0;
+	Ribbon->HitDamage = Damage;
+	Ribbon->bApplyKnockdownOnHit = bKnockdown;
+	Ribbon->bApplyStaggerOnHit = !bKnockdown;
+	Ribbon->StrikeVFX = InstanceData.StrikeVFX;
+	Ribbon->Activate(Boss->GetActorLocation(), 0.f, Boss->GetController());
+	InstanceData.Ribbons.Add(Ribbon);
+}
+
+void FStateTreeTask_EchidnaHexRibbonPattern::SpawnStep(FInstanceDataType& InstanceData, int32 Step) const
+{
+	const FRotator Facing(0.f, InstanceData.BaseYaw, 0.f);
+	const FVector Forward = Facing.Vector();
+	const FVector Right = FRotationMatrix(Facing).GetUnitAxis(EAxis::Y);
+
+	// 1·2번 시작점 — 팔을 앞으로 나란히 했을 때의 오른손
+	const FVector RightHand = InstanceData.Center + Forward * InstanceData.HandForwardOffset + Right * InstanceData.HandSideOffset;
+	if (Step == 0)
+	{
+		// 1번 — 오른손에서 정면으로 세로
+		SpawnRibbon(InstanceData, RightHand, Forward, InstanceData.Line1Length, InstanceData.LineTelegraph, InstanceData.LineDamage, false);
+		return;
+	}
+	if (Step == 1)
+	{
+		// 2번 — 오른손에서 왼쪽으로 보스 앞을 가로
+		SpawnRibbon(InstanceData, RightHand, -Right, InstanceData.Line2Length, InstanceData.LineTelegraph, InstanceData.LineDamage, false);
+		return;
+	}
+
+	// 3~8번 — 육각형 변 (꼭짓점 Edge → Edge+1) + 끝 꼭짓점에서 바깥으로
+	const int32 Edge = Step - 2;
+	auto VertexDir = [&InstanceData](int32 Index)
+	{
+		return FRotator(0.f, InstanceData.BaseYaw + GetHexVertexYaw(Index), 0.f).Vector();
+	};
+	const FVector From = InstanceData.Center + VertexDir(Edge) * InstanceData.HexRadius;
+	const FVector EndDir = VertexDir(Edge + 1);
+	const FVector To = InstanceData.Center + EndDir * InstanceData.HexRadius;
+
+	SpawnRibbon(InstanceData, From, To - From, FVector::Dist2D(From, To), InstanceData.HexTelegraph, InstanceData.HexDamage, true);
+	SpawnRibbon(InstanceData, To, EndDir, InstanceData.SpikeLength, InstanceData.HexTelegraph, InstanceData.HexDamage, true);
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaHexRibbonPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
+	InstanceData.Ribbons.Reset();
+	InstanceData.Elapsed = 0.f;
+	InstanceData.NextSpawnTime = 0.f;
+	InstanceData.NextStep = 0;
+
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaHexRibbon] EnterState 실패 — Boss 바인딩 없음"));
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+
+	if (!InstanceData.StrikeVFX)
+	{
+		InstanceData.StrikeVFX = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan"));
+	}
+
+	// 플레이어를 조준하지 않음 — 지금 보고 있는 방향 그대로
+	InstanceData.BaseYaw = Boss->GetActorRotation().Yaw;
+	InstanceData.Center = Boss->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = Boss->GetCapsuleComponent())
+	{
+		InstanceData.Center.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaHexRibbonPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss) return EStateTreeRunStatus::Failed;
+
+	if (UCharacterMovementComponent* Move = Boss->GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+	}
+	Boss->SetActorRotation(FRotator(0.f, InstanceData.BaseYaw, 0.f));
+
+	// 리본 예고(액터 타이머는 CustomTimeDilation으로 나눔)와 같은 비율로 간격도 빨라지게
+	InstanceData.Elapsed += DeltaTime * AEchidnaBoss::GetEnrageTimeScale(Boss);
+
+	constexpr int32 TotalSteps = 8;
+	while (InstanceData.NextStep < TotalSteps && InstanceData.Elapsed >= InstanceData.NextSpawnTime)
+	{
+		SpawnStep(InstanceData, InstanceData.NextStep);
+		// 1번 → 2번 → 육각형 시작은 LineInterval, 육각형 변끼리는 HexEdgeInterval
+		InstanceData.NextSpawnTime += (InstanceData.NextStep <= 1) ? InstanceData.LineInterval : InstanceData.HexEdgeInterval;
+		++InstanceData.NextStep;
+	}
+	if (InstanceData.NextStep < TotalSteps)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 마지막 리본까지 판정이 끝나면 종료 (판정 뒤 스스로 사라진 리본은 끝난 것으로 봄)
+	for (const TObjectPtr<AEchidnaTetherActor>& Ribbon : InstanceData.Ribbons)
+	{
+		if (IsValid(Ribbon) && !Ribbon->IsFinished())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+	}
+	return EStateTreeRunStatus::Succeeded;
+}
+
+void FStateTreeTask_EchidnaHexRibbonPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	// 중간에 끊기면 아직 안 터진 리본은 치움
+	for (const TObjectPtr<AEchidnaTetherActor>& Ribbon : InstanceData.Ribbons)
+	{
+		if (IsValid(Ribbon) && !Ribbon->IsFinished())
+		{
+			Ribbon->Destroy();
+		}
+	}
+	InstanceData.Ribbons.Reset();
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaHexRibbonPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaHexRibbonPatternDesc", "<b>Echidna Hex Ribbon Pattern</b>");
+}
+#endif // WITH_EDITOR
+
+// ── 장풍 ──────────────────────────────────────────────
+
+EStateTreeRunStatus FStateTreeTask_EchidnaPalmBlastPattern::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	RecordSmallPatternEntered(Context, InstanceData.Boss);
+	InstanceData.Elapsed = 0.f;
+	InstanceData.bFired = false;
+
+	if (!InstanceData.Boss)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[EchidnaPalmBlast] EnterState 실패 — Boss 바인딩 없음"));
+		return EStateTreeRunStatus::Failed;
+	}
+	if (InstanceData.AIController)
+	{
+		InstanceData.AIController->StopMovement();
+	}
+	if (!InstanceData.BlastVFX)
+	{
+		InstanceData.BlastVFX = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/Free_Magic/VFX_Niagara/NS_Gust.NS_Gust"));
+	}
+
+	ClearTelegraph(InstanceData);
+	UClass* TelegraphClass = InstanceData.TelegraphClass ? InstanceData.TelegraphClass.Get() : AEchidnaGaugeRectActor::StaticClass();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = InstanceData.Boss;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	InstanceData.Telegraph = InstanceData.Boss->GetWorld()->SpawnActor<AEchidnaGaugeRectActor>(TelegraphClass, FTransform::Identity, SpawnParams);
+	if (InstanceData.Telegraph)
+	{
+		InstanceData.Telegraph->Init(InstanceData.BlastLength, InstanceData.BlastHalfWidth);
+	}
+	UpdateTelegraph(InstanceData);
+	return EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaPalmBlastPattern::UpdateTelegraph(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss || !InstanceData.Telegraph) return;
+
+	const FVector Forward = Boss->GetActorForwardVector().GetSafeNormal2D();
+	FVector Origin = Boss->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = Boss->GetCapsuleComponent())
+	{
+		Origin.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+	InstanceData.Telegraph->SetActorLocationAndRotation(Origin + Forward * InstanceData.BlastStartOffset, FRotator(0.f, Forward.Rotation().Yaw, 0.f));
+	InstanceData.Telegraph->SetProgress(InstanceData.TrackDuration > 0.f ? InstanceData.Elapsed / InstanceData.TrackDuration : 1.f);
+}
+
+void FStateTreeTask_EchidnaPalmBlastPattern::ClearTelegraph(FInstanceDataType& InstanceData) const
+{
+	if (IsValid(InstanceData.Telegraph))
+	{
+		InstanceData.Telegraph->Destroy();
+	}
+	InstanceData.Telegraph = nullptr;
+}
+
+void FStateTreeTask_EchidnaPalmBlastPattern::Fire(FInstanceDataType& InstanceData) const
+{
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	UWorld* World = Boss->GetWorld();
+	const FVector Forward = Boss->GetActorForwardVector().GetSafeNormal2D();
+	FVector Origin = Boss->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = Boss->GetCapsuleComponent())
+	{
+		Origin.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+	const FVector Start = Origin + Forward * InstanceData.BlastStartOffset;
+
+	if (InstanceData.BlastVFX)
+	{
+		if (UNiagaraComponent* VFX = UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, InstanceData.BlastVFX, Start,
+			FRotator(0.f, Forward.Rotation().Yaw, 0.f), FVector(InstanceData.BlastVFXScale)))
+		{
+			// NS_Gust 원래 색(청록)의 밝기만 남기고 색조를 바꿈 — 원래 알파 0.5(연기) 등이 반투명해 보여서 알파는 1 이상으로
+			struct FGustColor { const TCHAR* Name; float Intensity; float Alpha; };
+			static const FGustColor GustColors[] = {
+				{ TEXT("Color_Circle"), 10.f, 2.f }, { TEXT("Color_Ray"), 2.f, 1.f }, { TEXT("Color_Smoke"), 1.f, 0.5f },
+				{ TEXT("Color_Sparks1"), 100.f, 1.f }, { TEXT("Color_Spiral1"), 1.f, 1.f }, { TEXT("Color_Spiral2"), 1.f, 1.f },
+			};
+			for (const FGustColor& Entry : GustColors)
+			{
+				FLinearColor Color = InstanceData.BlastVFXTint * (Entry.Intensity * InstanceData.BlastVFXBrightness);
+				Color.A = FMath::Max(Entry.Alpha, 1.f);
+				VFX->SetVariableLinearColor(FName(Entry.Name), Color);
+			}
+		}
+	}
+
+	ALoACharacter* Player = Cast<ALoACharacter>(UGameplayStatics::GetPlayerCharacter(World, 0));
+	if (!Player) return;
+
+	const FVector ToPlayer = Player->GetActorLocation() - Start;
+	const float Along = FVector::DotProduct(ToPlayer, Forward);
+	const float Side = FMath::Abs(FVector::CrossProduct(Forward, ToPlayer).Z);
+	if (Along < 0.f || Along > InstanceData.BlastLength || Side > InstanceData.BlastHalfWidth) return;
+
+	UGameplayStatics::ApplyDamage(Player, InstanceData.BlastDamage, Boss->GetController(), Boss, UDamageType::StaticClass());
+
+	// 맵 밖으로 안 나가게 — 진행 방향으로 아레나 타일이 이어지는 거리를 재서 그 안에 착지하도록 HopScale을 줄인다.
+	// 튕겨나가는 거리 ≈ 수평 힘 × HopScale × 정착 시간 × √HopScale (정착 전까지 공중) = Strength·Settle·H^1.5
+	float HopScale = InstanceData.KnockdownHopScale;
+	AHexArena* Arena = nullptr;
+	for (TActorIterator<AHexArena> It(World); It; ++It) { Arena = *It; break; }
+	if (Arena)
+	{
+		const float Step = 25.f;
+		const float Margin = Player->GetCapsuleComponent()->GetScaledCapsuleRadius() + 60.f;
+		const float BaseDistance = Player->KnockdownHopStrength * Player->KnockdownHopSettleTime;
+		const float MaxCheck = BaseDistance * FMath::Pow(FMath::Max(HopScale, 1.f), 1.5f) + Margin + Step;
+		float Reach = 0.f;
+		for (float D = Step; D <= MaxCheck; D += Step)
+		{
+			FIntPoint Coord;
+			if (!Arena->WorldToTileCoord(Player->GetActorLocation() + Forward * D, Coord) || !Arena->GetTile(Coord)) break;
+			Reach = D;
+		}
+		const float Allowed = FMath::Max(0.f, Reach - Margin);
+		if (BaseDistance > 0.f)
+		{
+			HopScale = FMath::Min(HopScale, FMath::Pow(Allowed / BaseDistance, 2.f / 3.f));
+		}
+	}
+
+	// 보스 쪽이 아니라 장풍 진행 방향으로 날아가게 — 정면 축 뒤쪽 점을 원점으로
+	Player->ApplyKnockdown(Player->GetActorLocation() - Forward * 300.f, HopScale);
+}
+
+EStateTreeRunStatus FStateTreeTask_EchidnaPalmBlastPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEchidnaBoss* Boss = InstanceData.Boss;
+	if (!Boss) return EStateTreeRunStatus::Failed;
+
+	if (UCharacterMovementComponent* Move = Boss->GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+	}
+
+	const float ScaledDelta = DeltaTime * AEchidnaBoss::GetEnrageTimeScale(Boss);
+	InstanceData.Elapsed += ScaledDelta;
+
+	if (!InstanceData.bFired)
+	{
+		// 가까이 따라붙은 뒤엔 TrackTurnRate로만 따라 돎(플레이어가 빨리 돌면 조금씩 뒤처짐), 크게 벌어져 있으면 빨리 따라잡음
+		if (const ACharacter* Player = UGameplayStatics::GetPlayerCharacter(Boss->GetWorld(), 0))
+		{
+			const FVector ToPlayer = Player->GetActorLocation() - Boss->GetActorLocation();
+			if (!ToPlayer.IsNearlyZero(1.f))
+			{
+				const float CurrentYaw = Boss->GetActorRotation().Yaw;
+				const float Delta = FMath::FindDeltaAngleDegrees(CurrentYaw, ToPlayer.Rotation().Yaw);
+				const float CatchUpAlpha = FMath::SmoothStep(InstanceData.TrackCatchUpStartAngle,
+					FMath::Max(InstanceData.TrackCatchUpStartAngle + 1.f, InstanceData.TrackCatchUpFullAngle), FMath::Abs(Delta));
+				const float TurnRate = FMath::Max(InstanceData.TrackTurnRate, FMath::Lerp(InstanceData.TrackTurnRate, InstanceData.TrackCatchUpRate, CatchUpAlpha));
+				const float MaxStep = TurnRate * ScaledDelta;
+				Boss->SetActorRotation(FRotator(0.f, CurrentYaw + FMath::Clamp(Delta, -MaxStep, MaxStep), 0.f));
+			}
+		}
+		UpdateTelegraph(InstanceData);
+
+		if (InstanceData.Elapsed < InstanceData.TrackDuration)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+		InstanceData.bFired = true;
+		InstanceData.Elapsed = 0.f;
+		ClearTelegraph(InstanceData);
+		Fire(InstanceData);
+	}
+
+	return InstanceData.Elapsed >= InstanceData.RecoverDuration ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Running;
+}
+
+void FStateTreeTask_EchidnaPalmBlastPattern::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	ClearTelegraph(Context.GetInstanceData(*this));
+}
+
+#if WITH_EDITOR
+FText FStateTreeTask_EchidnaPalmBlastPattern::GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting /*= EStateTreeNodeFormatting::Text*/) const
+{
+	return LOCTEXT("EchidnaPalmBlastPatternDesc", "<b>Echidna Palm Blast Pattern</b>");
 }
 #endif // WITH_EDITOR
 

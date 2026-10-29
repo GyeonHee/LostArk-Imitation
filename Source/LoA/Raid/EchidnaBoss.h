@@ -124,6 +124,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pattern")
 	void MarkPatternTriggered(FName PatternName);
 
+	// 짤패턴 연속 방지 — 짤패턴 Task가 진입할 때 자기 State 이름을 기록, 조건이 최근 Count개 안에 있었는지 본다
+	void RecordSmallPattern(FName StateName);
+	bool WasRecentSmallPattern(FName StateName, int32 Count) const;
+
 	// 발동 표시를 지워 다시 발동 가능하게 — 정산 게이지가 한 바퀴 돌아 0으로 돌아갈 때 사용
 	UFUNCTION(BlueprintCallable, Category = "Pattern")
 	void UnmarkPatternTriggered(FName PatternName);
@@ -379,6 +383,9 @@ private:
 
 	UPROPERTY(Transient)
 	TSet<FName> TriggeredPatterns;
+
+	// 최근에 나온 짤패턴 State 이름 (마지막이 가장 최근)
+	TArray<FName> RecentSmallPatterns;
 
 	FName ActiveTimedPattern = NAME_None;
 

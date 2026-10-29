@@ -48,6 +48,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Fan")
 	float FanInnerRadius = 60.f;
 
+	// 0보다 크면 끝이 뾰족한 부채꼴 대신 "앞이 잘린 부채꼴"(사다리꼴 + 바깥 호) — 액터 위치에서의 절반 폭 (cm).
+	// 꼭짓점을 NearHalfWidth / tan(FanAngle/2)만큼 뒤로 당긴 부채꼴을 액터 앞(로컬 X >= FanInnerRadius)만 남긴 모양.
+	// 판정·메시·VFX 모두 같은 모양을 따르고, 고리 확장은 그 꼭짓점 기준 거리로 진행. FanRange는 액터에서 잰 사거리 그대로
+	UPROPERTY(EditAnywhere, Category = "Fan", meta = (ClampMin = "0.0"))
+	float NearHalfWidth = 0.f;
+
 	// 예고(텔레그래프) 표시 시간 (초) — 이 동안은 전체 부채꼴만 보이고 데미지 없음
 	UPROPERTY(EditDefaultsOnly, Category = "Fan")
 	float TelegraphDuration = 1.0f;
@@ -164,6 +170,10 @@ private:
 	void ApplyMeshColor(const FLinearColor& Color, float Opacity);
 	void BeginRingExpansion();
 	void RevealNextRing();
+	// NearHalfWidth로 뒤로 당긴 꼭짓점까지의 거리 (0 = 일반 부채꼴). 고리 반지름·판정·VFX는 전부 이 꼭짓점 기준
+	float GetApexBackOffset() const;
+	FVector GetApexLocation() const { return GetActorLocation() - GetActorForwardVector() * GetApexBackOffset(); }
+
 	void BuildFanMesh(float OuterRadius);
 	bool IsActorInRing(const AActor* Actor, float InnerRadius, float OuterRadius) const;
 	void ApplyRingDamage(float InnerRadius, float OuterRadius);

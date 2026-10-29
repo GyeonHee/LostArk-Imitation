@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 class UNiagaraSystem;
+class UNiagaraComponent;
 class UObject;
 
 /**
@@ -22,8 +23,10 @@ namespace PatternVFX
 
 	/**
 	 * 직사각형 영역 — Origin 기준 로컬 X ∈ [XStart, XEnd], Y ∈ [-HalfWidth, HalfWidth].
-	 * 각 인스턴스는 로컬 +X(정면)를 바라본다. 스폰한 개수를 반환
+	 * 각 인스턴스는 로컬 +X(정면)를 바라본다. 스폰한 개수를 반환.
+	 * OutComponents를 넘기면 스폰한 컴포넌트를 담아 줌(패턴이 끝날 때 직접 끄려는 경우)
 	 */
 	int32 SpawnRectArea(UObject* WorldContext, UNiagaraSystem* System, const FTransform& Origin,
-		float XStart, float XEnd, float HalfWidth, float Spacing, float Scale, int32 MaxCount);
+		float XStart, float XEnd, float HalfWidth, float Spacing, float Scale, int32 MaxCount,
+		TArray<UNiagaraComponent*>* OutComponents = nullptr);
 }

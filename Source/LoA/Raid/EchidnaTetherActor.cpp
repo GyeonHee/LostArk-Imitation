@@ -6,7 +6,9 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/OverlapResult.h"
+#include "GameFramework/DamageType.h"
 #include "LoACharacter.h"
+#include "Raid/PatternVFXUtil.h"
 #include "LoA.h"
 
 AEchidnaTetherActor::AEchidnaTetherActor()
@@ -84,7 +86,13 @@ void AEchidnaTetherActor::PerformSnap()
 	{
 		ZoneMeshComp->SetVisibility(false);
 	}
-	if (StrikeMeshComp)
+	if (StrikeVFX)
+	{
+		// 부채꼴 장판과 같은 Niagara를 리본 범위(원점 → TetherRange, 폭 TetherHalfWidth×2)에 깖 — 줄기 메시는 안 씀
+		PatternVFX::SpawnRectArea(this, StrikeVFX, GetActorTransform(), 0.f, TetherRange, TetherHalfWidth,
+			StrikeVFXSpacing, StrikeVFXScale, 60);
+	}
+	else if (StrikeMeshComp)
 	{
 		if (UMaterialInterface* Source = StrikeMeshComp->GetMaterial(0))
 		{
@@ -132,6 +140,25 @@ void AEchidnaTetherActor::PerformSnap()
 		{
 			if (ALoACharacter* HitCharacter = Cast<ALoACharacter>(HitActor))
 			{
+				if (HitDamage > 0.f)
+				{
+					UGameplayStatics::ApplyDamage(HitCharacter, HitDamage, InstigatorController.Get(), this, UDamageType::StaticClass());
+				}
+
+				if (bApplyKnockdownOnHit)
+				{
+					// 넉다운은 SourceLocation 반대쪽으로 튕기므로, 중심선에서 캐릭터 반대편 지점을 넘겨 리본 바깥쪽으로 밀어냄
+					const FVector CharLoc = HitCharacter->GetActorLocation();
+					const FVector OnLine = FMath::ClosestPointOnSegment(CharLoc, Origin, Origin + Direction * TetherRange);
+					const FVector Right = GetActorRightVector();
+					const float Side = FVector::DotProduct(CharLoc - OnLine, Right) >= 0.f ? 1.f : -1.f;
+					HitCharacter->ApplyKnockdown(OnLine - Right * Side * 100.f);
+				}
+				else if (bApplyStaggerOnHit)
+				{
+					HitCharacter->ApplyStagger();
+				}
+
 				if (bApplyPullOnHit)
 				{
 					HitCharacter->ApplyPull(PullTarget, PullStrength);

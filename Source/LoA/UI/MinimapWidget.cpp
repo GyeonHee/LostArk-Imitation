@@ -2,6 +2,7 @@
 #include "Raid/HexArena.h"
 #include "Raid/HexTile.h"
 #include "Raid/EchidnaBoss.h"
+#include "LoACharacter.h"
 #include "Lobby/LobbyZoneActor.h"
 #include "Lobby/InteractableNPCActor.h"
 #include "EngineUtils.h"
@@ -102,8 +103,10 @@ int32 UMinimapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allot
 	const FVector2f MapCenter = MapOrigin + FVector2f(MapSize * 0.5f);
 
 	// ── 월드 → 미니맵 변환 ──
-	// 화면 위쪽 = 카메라 전방(수평 성분), 화면 오른쪽 = 카메라 오른쪽. 그래서 화면과 미니맵의 방향이 항상 같다
-	const float CamYaw = PC->PlayerCameraManager->GetCameraRotation().Yaw;
+	// 위쪽 = 평소 카메라 전방(수평 성분), 오른쪽 = 평소 카메라 오른쪽. NPC 대화·패턴 연출로 카메라가 돌아도
+	// 미니맵은 돌지 않는다 — 플레이어의 기본 카메라 각도(오버라이드 전 BeginPlay 값)로 고정
+	const ALoACharacter* ViewChar = Cast<ALoACharacter>(PC->GetPawn());
+	const float CamYaw = ViewChar ? ViewChar->GetDefaultCameraRotation().Yaw : PC->PlayerCameraManager->GetCameraRotation().Yaw;
 	const FVector CamFwd = FRotator(0.f, CamYaw, 0.f).Vector();
 	const FVector CamRight = FRotator(0.f, CamYaw + 90.f, 0.f).Vector();
 

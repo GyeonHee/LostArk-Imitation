@@ -14,7 +14,7 @@ LoAIdentity <0~100>             소서리스 신비한 마력 게이지 설정 (
 
 ■ 아이템 · 화폐
 ----------------------------------------------------
-LoAGiveItem <아이템ID> <개수>    소지품에 아이템 추가
+LoAGiveItem <아이템ID> <개수>    소지품에 아이템 추가 — 아래 아이템 ID는 반드시 LoAGiveItem 뒤에 (ID만 치면 아무 일도 안 일어남)
 LoAGiveSilling <양>             실링 추가 (음수면 차감)   예) LoAGiveSilling 100000
 LoAGiveGold <양>                골드 추가 (음수면 차감)   예) LoAGiveGold 50000
 LoAInvTest                      회복약 묶음 8개를 빈 칸에 흩뿌림 (정렬·잠금 확인용)
@@ -29,8 +29,11 @@ LoAInvTest                      회복약 묶음 8개를 빈 칸에 흩뿌림 (�
   - 어빌리티 스톤     Stone_Desire (세공 전 — 소지품 우클릭으로 세공)   예) LoAGiveItem Stone_Desire 1
   - 장비(재련 0단계)  Equip_StarterHelmet / Equip_StarterShoulder / Equip_StarterChest
                       Equip_StarterPants / Equip_StarterGloves / Equip_StarterWeapon
-  - 장신구            Acc_StarterNecklace / Acc_StarterEarring / Acc_StarterRing   (특성 고정)
-                      Acc_DesireNecklace / Acc_DesireEarring / Acc_DesireRing      (특성·등급 랜덤)
+                      예) LoAGiveItem Equip_StarterWeapon 1
+  - 장신구            Acc_StarterNecklace / Acc_StarterEarring / Acc_StarterRing   (도전자의)
+                      Acc_DesireNecklace / Acc_DesireEarring / Acc_DesireRing      (욕망의)
+                      → 둘 다 연마 0단계로 들어옴. 주 스탯·체력은 연마 단계로 오름(페메르에게 연마)
+                      예) LoAGiveItem Acc_DesireNecklace 1   /   LoAGiveItem Acc_DesireRing 2
   - 보석 (칸마다 1개) Gem_Dmg_01 ~ Gem_Dmg_10 (겁화 1~10레벨)
                       Gem_Cd_01  ~ Gem_Cd_10  (작열 1~10레벨)
   - 보석 상자         GemBox_Lv1 (1레벨 보석 10개, 우클릭으로 열기 — 빈 칸 10개 필요)

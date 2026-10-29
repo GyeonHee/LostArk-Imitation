@@ -77,10 +77,10 @@ bool ASorceress::BlinkTo(const FVector& TargetLocation)
 	return true;
 }
 
-void ASorceress::ApplyKnockdown(const FVector& SourceLocation)
+void ASorceress::ApplyKnockdown(const FVector& SourceLocation, float HopScale)
 {
 	if (Identity && Identity->IsSuperArmor()) return;
-	Super::ApplyKnockdown(SourceLocation);
+	Super::ApplyKnockdown(SourceLocation, HopScale);
 }
 
 void ASorceress::ApplyStagger()

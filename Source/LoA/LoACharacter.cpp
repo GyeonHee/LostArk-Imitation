@@ -2,6 +2,7 @@
 
 #include "LoACharacter.h"
 #include "Raid/EchidnaBoss.h"
+#include "LoAPlayerController.h"
 #include "Engine/DamageEvents.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Camera/CameraComponent.h"
@@ -284,8 +285,12 @@ void ALoACharacter::ReceiveDamage(float DamageAmount, ELoADamageKind Kind)
 		DamageAmount *= AEchidnaBoss::GetIncomingDamageScale(this) * (1.f - Reduction) * S.IncomingDamageMultiplier;  // 원한 받는 피해 +20%
 	}
 
-	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다
-	DamageAmount *= AEchidnaBoss::GetEnrageDamageMultiplier(this);
+	// 플레이어를 때리는 건 전부 보스 쪽(패턴·똥장판)이라 여기 한 곳에서 광폭화 배율을 건다.
+	// "최대 HP × N" 기믹(Fixed)은 비율 그대로 — 거울잇기 실패 70%가 광폭화 중 즉사로 바뀌지 않게
+	if (Kind != ELoADamageKind::Fixed)
+	{
+		DamageAmount *= AEchidnaBoss::GetEnrageDamageMultiplier(this);
+	}
 
 	// ── 각인 피격 효과 ──
 	const FCombatStats* EngStats = StatComponent ? &StatComponent->GetStats() : nullptr;
@@ -481,7 +486,7 @@ void ALoACharacter::EndCharm()
 	}
 }
 
-void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
+void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation, float HopScale)
 {
 	if (IsImmune()) return;
 
@@ -502,6 +507,14 @@ void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
 
 	GetWorldTimerManager().ClearTimer(KnockdownTimerHandle);
 
+	// 클릭 이동(RequestDirectMove)으로 걷던 중이면 CMC에 남은 요청 속도가 낙하 중 CalcVelocity에서 다시 적용돼
+	// 튕겨나가는 속도를 상쇄한다(보스 쪽으로 걸어오다 맞으면 제자리에 멈추던 문제) — 요청 이동을 먼저 지운다
+	GetCharacterMovement()->StopActiveMovement();
+	if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(GetController()))
+	{
+		PC->CancelAutoMove();
+	}
+
 	// 평상시엔 top-down 클릭이동 때문에 Z를 평면에 고정해두는데(생성자의 bConstrainToPlane=true),
 	// 넉다운 중엔 잠깐 풀어줘서 LaunchCharacter의 수직 임펄스가 실제로 뒤로 튕겨나가는 아크로 보이게 함
 	GetCharacterMovement()->bConstrainToPlane = false;
@@ -514,14 +527,16 @@ void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation)
 	}
 	AwayFromSource = AwayFromSource.GetSafeNormal();
 
-	const FVector LaunchVelocity = AwayFromSource * KnockdownHopStrength + FVector(0.f, 0.f, KnockdownHopUpwardStrength);
+	HopScale = FMath::Max(HopScale, 0.f);
+	const float ArcScale = FMath::Sqrt(HopScale);
+	const FVector LaunchVelocity = AwayFromSource * KnockdownHopStrength * HopScale + FVector(0.f, 0.f, KnockdownHopUpwardStrength * ArcScale);
 	LaunchCharacter(LaunchVelocity, true, true);
 
 	// 착지 여부(MovementMode)를 폴링하지 않고 고정 시간 타이머로 정착 시점을 직접 보장 —
 	// bForceNextFloorCheck 등 엔진 내부 사정으로 Falling→Walking 전환이 같은 프레임에 즉시 일어나버려도
 	// (특히 여러 거울이 같은 프레임에 겹쳐 때릴 때) 최소 이 시간만큼은 "튕겨나가는 중"으로 유지된다.
 	// 맞을 때마다 이 타이머를 새로 시작하므로, 연속 타격 동안은 계속 갱신되어 눕지 않는다
-	GetWorldTimerManager().SetTimer(KnockdownSettleTimerHandle, this, &ALoACharacter::SettleKnockdown, KnockdownHopSettleTime, false);
+	GetWorldTimerManager().SetTimer(KnockdownSettleTimerHandle, this, &ALoACharacter::SettleKnockdown, KnockdownHopSettleTime * FMath::Max(ArcScale, 1.f), false);
 
 	if (bFirstHit)
 	{

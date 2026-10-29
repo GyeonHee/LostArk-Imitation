@@ -2,7 +2,7 @@
 
 ## ALoACharacter
 - 스탯은 `UCharacterDataAsset`(`DA_Sorceress`)이 `PostInitializeComponents`에서 덮어씀 → 실제 캐릭터는 **`BP_Sorceress`**(`BP_LostArkCharacter`는 미사용)
-- `ReceiveDamage(Amount, Kind)` 한 곳에서 광폭화 배율·방어력·각인 피격 효과 처리. `TakeDamage`는 인자 `DamageAmount` 사용
+- `ReceiveDamage(Amount, Kind)` 한 곳에서 광폭화 배율·방어력·각인 피격 효과 처리. `Fixed`(최대 HP × N 기믹)는 셋 다 안 받음 — 비율 그대로 들어감. `TakeDamage`는 인자 `DamageAmount` 사용
 - `IsActionLocked()` = 넉다운 · 경직 · 기절 · 끌려감 · 붙잡힘 · 사망 → 컨트롤러의 이동·스킬·대시 차단 지점이 전부 이걸 봄. 매혹은 일부러 **제외**(무작위 이동이 Tick 이동 경로를 써야 해서 — 대신 실제 입력 지점마다 `IsCharmed()` 체크)
 - `IsImmune()` = 사망 또는 무적(`SetInvulnerable`, 클리어·중단 시) → 데미지·CC·매혹 무시
 - `TryConsumeTickDamage(Source, Interval)`: 같은 종류 장판이 여러 개 겹쳐도 Interval당 1회(90%만 요구)
@@ -11,7 +11,7 @@
 ### CC 등급
 | CC | 함수 | 동작 |
 |---|---|---|
-| 넉다운 | `ApplyKnockdown(Source)` | 반대 방향 Launch → `KnockdownHopSettleTime`(0.4초) 뒤 정착(맞을 때마다 타이머 재시작 — 착지 폴링은 여러 Launch가 겹치면 실패해서 폐기) → 3초 누움. 스페이스 = 즉시 기상(슬롯 19, 15초 쿨, 완전히 누운 뒤만). 넉다운 중 `bConstrainToPlane` 임시 해제 |
+| 넉다운 | `ApplyKnockdown(Source, HopScale=1)` | 반대 방향 Launch(`HopScale`로 수평 힘 배율, 위로 뜨는 힘·정착 시간은 √배 — 장풍) → `KnockdownHopSettleTime`(0.4초) 뒤 정착(맞을 때마다 타이머 재시작 — 착지 폴링은 여러 Launch가 겹치면 실패해서 폐기) → 3초 누움. 스페이스 = 즉시 기상(슬롯 19, 15초 쿨, 완전히 누운 뒤만). 넉다운 중 `bConstrainToPlane` 임시 해제. 발사 전 `StopActiveMovement` + `CancelAutoMove` — 클릭 이동 요청 속도가 남아 있으면 낙하 중 다시 적용돼 튕김이 상쇄됨 |
 | 기절 | `ApplyStun(Duration)` | 제자리 정지, 지속시간은 호출마다 |
 | 경직 | `ApplyStagger()` | 기절과 같은 방식, `StaggerDuration` 0.3초 고정 |
 | 끌려감 | `ApplyPull` | 정지 `PullHoldDuration` → Tick에서 `AddActorWorldOffset(sweep)`로 목표까지(속도 = StateTree `PullStrength` cm/s) → **패턴이 `ReleasePull()` 할 때까지 묶임**, 안전장치 `PullMaxHoldTime` 8초 |

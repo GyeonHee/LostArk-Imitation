@@ -319,6 +319,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Camera")
 	void ClearCameraRotationOverride();
 
+	// 오버라이드 없는 평소 카메라 각도(BeginPlay 값) — 미니맵 방향 고정용
+	FRotator GetDefaultCameraRotation() const { return DefaultCameraRotation; }
+
 	// 줌 보간 속도 (FInterpTo 속도 — 클수록 빨리 따라감)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
 	float CameraZoomInterpSpeed = 2.5f;
@@ -370,9 +373,10 @@ public:
 
 	/** 넉다운 상태로 전환 — SourceLocation 반대 방향으로 뒤로 튕겨나가 넘어지고, KnockdownHopSettleTime 뒤 실제로 눕는 단계로 전환됨.
 	 * 이미 튕겨나가는 중일 때 다시 호출하면(연속 틱 데미지 등) 정착 타이머가 갱신되어 계속 공중에 떠 있는 것처럼 보임 —
-	 * 완전히 누운 뒤에는 재호출해도 무시됨 */
+	 * 완전히 누운 뒤에는 재호출해도 무시됨.
+	 * HopScale — 튕겨나가는 수평 힘 배율(장풍처럼 멀리 날리는 패턴용). 위로 뜨는 힘·정착 시간은 √배로 같이 늘어 포물선이 자연스럽게 길어짐 */
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
-	virtual void ApplyKnockdown(const FVector& SourceLocation);
+	virtual void ApplyKnockdown(const FVector& SourceLocation, float HopScale = 1.f);
 
 	/** 끌어당기기 (에키드나 "끌고간후 장판터지는"의 줄기 촉수) — 맞는 즉시 PullHoldDuration만큼 제자리에
 	 * 멈췄다가(발이 묶인 연출) TargetLocation 쪽으로 PullSpeed(cm/s)로 강제로 끌려간다.

@@ -27,7 +27,7 @@ public:
 	virtual void ExecuteDash_Implementation(const FVector& TargetLocation) override;
 
 	/** 마력 해방 슈퍼아머 — 넉다운·경직 무시 */
-	virtual void ApplyKnockdown(const FVector& SourceLocation) override;
+	virtual void ApplyKnockdown(const FVector& SourceLocation, float HopScale = 1.f) override;
 	virtual void ApplyStagger() override;
 
 	/** 마력 방출 (MageCharacter 공통 진입점) */

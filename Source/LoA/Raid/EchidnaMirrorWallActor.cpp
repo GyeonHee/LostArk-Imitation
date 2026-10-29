@@ -130,10 +130,10 @@ void AEchidnaMirrorWallActor::Activate(AEchidnaBoss* InBoss, float InTravelDista
 	TravelDistance = FMath::Max(0.f, InTravelDistance);
 	FireStartDistance = FMath::Clamp(InFireStartDistance, 0.f, TravelDistance);
 
-	// 양 끝 거울의 바깥 가장자리가 RowWidth 안에 오도록 간격 재계산 (거울 폭보다 좁아지진 않게)
-	if (RowWidth > 0.f && MirrorCount > 1)
+	// 거울 MirrorCount개가 RowWidth를 빈틈없이 채움
+	if (RowWidth > 0.f)
 	{
-		MirrorSpacing = FMath::Max(MirrorWidth, (RowWidth - MirrorWidth) / (MirrorCount - 1));
+		FitMirrorSize(RowWidth / FMath::Max(1, MirrorCount));
 	}
 
 	RowOffset = 0.f;
@@ -141,10 +141,40 @@ void AEchidnaMirrorWallActor::Activate(AEchidnaBoss* InBoss, float InTravelDista
 	FireTickElapsed = 0.f;
 	bCountered = false;
 	MirrorHitActors.Reset();
-	CounterMirrorIndex = FMath::RandRange(0, FMath::Max(1, MirrorCount) - 1);
+	bFireLingering = false;
+	// 앞 줄을 놓쳤으면 카운터 거울(청백) 자체가 없음 — 전부 일반 거울
+	CounterMirrorIndex = bCounterDisabled ? -1 : FMath::RandRange(0, FMath::Max(1, MirrorCount) - 1);
 
 	BuildMirrors();
 	Phase = EEchidnaMirrorWallPhase::Advancing;
+}
+
+void AEchidnaMirrorWallActor::RemoveCounterMirror()
+{
+	bCounterDisabled = true;
+	const int32 Index = CounterMirrorIndex;
+	CounterMirrorIndex = -1;
+	if (!MirrorMeshes.IsValidIndex(Index) || bCountered) return;
+
+	if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(MirrorMeshes[Index]->GetMaterial(0)))
+	{
+		MID->SetVectorParameterValue(ColorParameterName, NormalMirrorColor);
+	}
+	// 좌우 반전 초상화 → 일반 초상화
+	if (PortraitMeshes.IsValidIndex(Index) && MirrorPivots.IsValidIndex(Index))
+	{
+		if (PortraitMeshes[Index]) PortraitMeshes[Index]->DestroyComponent();
+		PortraitMeshes[Index] = CreatePortrait(MirrorPivots[Index], false);
+	}
+}
+
+void AEchidnaMirrorWallActor::FitMirrorSize(float Width)
+{
+	if (Width <= 0.f) return;
+	const float Aspect = MirrorWidth > 0.f ? MirrorHeight / MirrorWidth : 1.385f;
+	MirrorWidth = Width;
+	MirrorHeight = Width * Aspect;
+	MirrorSpacing = Width;
 }
 
 void AEchidnaMirrorWallActor::BuildMirrors()
@@ -291,8 +321,8 @@ void AEchidnaMirrorWallActor::Tick(float DeltaTime)
 		break;
 	}
 
-	// 불길은 줄이 전진하는 동안만 — 카운터로 쓰러지기 시작하면 꺼진다
-	if (Phase == EEchidnaMirrorWallPhase::Advancing)
+	// 불길은 줄이 전진하는 동안 + 끝까지 간 뒤 남은 동안 — 카운터로 쓰러지기 시작하면 꺼진다
+	if (Phase == EEchidnaMirrorWallPhase::Advancing || bFireLingering)
 	{
 		TickFire(DeltaTime);
 	}
@@ -304,34 +334,33 @@ void AEchidnaMirrorWallActor::TickAdvancing(float DeltaTime)
 	RowRoot->SetRelativeLocation(FVector(RowOffset, 0.f, 0.f));
 	UpdateFireMesh();
 
-	// 전진하는 거울 줄에 닿으면 1회 데미지 + 진행 방향으로 넉다운
+	// 전진하는 거울 줄에 닿으면 줄 앞(+X)으로 밀려난다 — 줄을 뚫고 지나가지 않게 매 틱 거울 앞면 바로 앞으로 옮김.
+	// sweep이라 뒤 선 투명 벽에 막히면 거기서 멈추고, 줄은 곧 뒤 선에 도착해 사라진다
 	const FTransform& Xform = GetActorTransform();
 	const float HalfWidth = GetRowHalfWidth();
 	for (TActorIterator<ALoACharacter> It(GetWorld()); It; ++It)
 	{
 		ALoACharacter* Character = *It;
-		if (MirrorHitActors.Contains(Character)) continue;
-
 		const FVector Local = Xform.InverseTransformPosition(Character->GetActorLocation());
 		const float Margin = GetMirrorWallCapsuleRadius(Character);
-		if (FMath::Abs(Local.X - RowOffset) <= MirrorHitThickness + Margin && FMath::Abs(Local.Y) <= HalfWidth + Margin)
+		const float PushedX = RowOffset + MirrorHitThickness + Margin;
+		if (Local.X >= RowOffset - MirrorHitThickness - Margin && Local.X < PushedX && FMath::Abs(Local.Y) <= HalfWidth + Margin)
 		{
-			MirrorHitActors.Add(Character);
-			UGameplayStatics::ApplyDamage(Character, MirrorHitDamage, InstigatorController.Get(), this, UDamageType::StaticClass());
-			if (bKnockdownOnMirrorHit)
+			Character->SetActorLocation(Xform.TransformPosition(FVector(PushedX, Local.Y, Local.Z)), true);
+			if (MirrorHitDamage > 0.f && !MirrorHitActors.Contains(Character))
 			{
-				// 넉다운은 SourceLocation 반대쪽으로 튕기므로, 캐릭터 바로 뒤(-X) 지점을 넘겨 진행 방향으로 밀려나게
-				Character->ApplyKnockdown(Xform.TransformPosition(FVector(Local.X - 300.f, Local.Y, Local.Z)));
+				MirrorHitActors.Add(Character);
+				UGameplayStatics::ApplyDamage(Character, MirrorHitDamage, InstigatorController.Get(), this, UDamageType::StaticClass());
 			}
 		}
 	}
 
 	if (RowOffset >= TravelDistance)
 	{
-		// 카운터 못 치고 반대편 끝(맵 밖)까지 감 — 거울은 벽 너머라 불길과 함께 바로 사라진다
-		UE_LOG(LogLoA, Log, TEXT("[MirrorWall] 반대편 도착 — 카운터 실패"));
+		// 카운터 못 치고 뒤 선까지 감 — 거울만 사라지고 불길은 패턴 끝까지 남는다
+		UE_LOG(LogLoA, Log, TEXT("[MirrorWall] 뒤 선 도착 — 카운터 실패, 불길 유지"));
 		StopRow();
-		VanishRow();
+		VanishRow(true);
 	}
 }
 
@@ -345,12 +374,16 @@ void AEchidnaMirrorWallActor::StopRow()
 	}
 }
 
-void AEchidnaMirrorWallActor::VanishRow()
+void AEchidnaMirrorWallActor::VanishRow(bool bKeepFire)
 {
-	// 불길은 거울과 수명이 같다 — 거울이 사라지는 순간 같이 꺼진다.
-	// 스스로 소멸하지 않는다 — 패턴 Task가 끝날 때 카운터 결과를 센 뒤 파괴한다
+	// 카운터로 쓰러진 줄은 거울과 함께 불길도 꺼지고, 끝까지 간 줄은 불길만 남는다.
+	// 스스로 소멸하지 않는다 — 패턴 Task가 끝날 때 카운터 결과를 센 뒤 파괴한다(남은 불길도 그때 꺼짐)
 	RowRoot->SetVisibility(false, true);
-	FireMesh->ClearAllMeshSections();
+	bFireLingering = bKeepFire;
+	if (!bKeepFire)
+	{
+		FireMesh->ClearAllMeshSections();
+	}
 	Phase = EEchidnaMirrorWallPhase::Done;
 }
 
@@ -432,6 +465,10 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 	}
 
 	bCountered = true;
+	if (MirrorPivots.IsValidIndex(CounterMirrorIndex) && MirrorPivots[CounterMirrorIndex])
+	{
+		CounteredMirrorLocation = MirrorPivots[CounterMirrorIndex]->GetComponentLocation();
+	}
 	StopRow();
 	Phase = EEchidnaMirrorWallPhase::Falling;
 	// 거울이 쓰러지면 불길도 꺼진다 (이미 깔린 이펙트는 약 1초 뒤 스스로 사라짐)
@@ -468,9 +505,9 @@ void AEchidnaMirrorWallActor::SetupDisplayRow(float RowWidth, int32 Count, float
 	{
 		MirrorSpacing = Spacing;
 	}
-	else if (RowWidth > 0.f && MirrorCount > 1)
+	else if (RowWidth > 0.f)
 	{
-		MirrorSpacing = FMath::Max(MirrorWidth, (RowWidth - MirrorWidth) / (MirrorCount - 1));
+		FitMirrorSize(RowWidth / FMath::Max(1, MirrorCount));
 	}
 
 	// 판정 없는 장식 — 카운터 거울 없음, 전진·불길 없음

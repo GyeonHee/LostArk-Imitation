@@ -103,12 +103,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Hit")
 	bool bApplyKnockdownOnHit = true;
 
-	// ── 색 (M_MirrorLaser "Base Color", 1보다 크면 발광) ──
+	// ── 색 (M_MirrorLaser "Base Color", A = 불투명도) — 다른 패턴 예고 장판과 같은 빨강(배경 0.35, 채움은 더 진하게) ──
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Visual")
-	FLinearColor BackgroundColor = FLinearColor(0.8f, 0.1f, 0.3f, 0.25f);
+	FLinearColor BackgroundColor = FLinearColor(1.f, 0.f, 0.f, 0.35f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Visual")
-	FLinearColor FillColor = FLinearColor(3.f, 0.4f, 1.2f, 0.55f);
+	FLinearColor FillColor = FLinearColor(1.f, 0.f, 0.f, 0.7f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PoopBeam|Visual")
 	FLinearColor ExplodeColor = FLinearColor(8.f, 1.2f, 2.5f, 0.9f);

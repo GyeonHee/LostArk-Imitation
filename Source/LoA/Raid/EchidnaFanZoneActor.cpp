@@ -91,7 +91,7 @@ void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
 	CurrentRing = 0;
 
 	// 예고 단계 — 전체 부채꼴을 미리 보여주기만 함, 데미지 없음
-	BuildFanMesh(FanRange);
+	BuildFanMesh(FanRange + GetApexBackOffset());
 	ApplyMeshColor(TelegraphColor, TelegraphOpacity);
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaFanZone] Activate — Loc=%s Dir=%s FanAngle=%.0f FanRange=%.0f RingCount=%d"),
@@ -140,9 +140,11 @@ void AEchidnaFanZoneActor::RevealNextRing()
 		return;
 	}
 
-	const float PrevOuterRadius = FMath::Lerp(FanInnerRadius, FanRange, (float)CurrentRing / (float)RingCount);
+	// 반지름은 꼭짓점 기준 (일반 부채꼴이면 꼭짓점 = 액터 위치)
+	const float ApexOffset = GetApexBackOffset();
+	const float PrevOuterRadius = ApexOffset + FMath::Lerp(FanInnerRadius, FanRange, (float)CurrentRing / (float)RingCount);
 	CurrentRing++;
-	const float NewOuterRadius = FMath::Lerp(FanInnerRadius, FanRange, (float)CurrentRing / (float)RingCount);
+	const float NewOuterRadius = ApexOffset + FMath::Lerp(FanInnerRadius, FanRange, (float)CurrentRing / (float)RingCount);
 
 	if (bHitMeshVisible)
 	{
@@ -164,6 +166,13 @@ void AEchidnaFanZoneActor::RevealNextRing()
 	}
 }
 
+float AEchidnaFanZoneActor::GetApexBackOffset() const
+{
+	const float HalfAngleDeg = FanAngle * 0.5f;
+	if (NearHalfWidth <= 0.f || HalfAngleDeg < 1.f || HalfAngleDeg > 85.f) return 0.f;
+	return NearHalfWidth / FMath::Tan(FMath::DegreesToRadians(HalfAngleDeg));
+}
+
 void AEchidnaFanZoneActor::BuildFanMesh(float OuterRadius)
 {
 	if (!FanMeshComp) return;
@@ -177,8 +186,17 @@ void AEchidnaFanZoneActor::BuildFanMesh(float OuterRadius)
 
 	const float HalfAngleRad = FMath::DegreesToRadians(FanAngle * 0.5f);
 	const int32 Segments = FMath::Max(ArcSegments, 2);
+	const float ApexOffset = GetApexBackOffset();
 	const float InnerRadius = FMath::Clamp(FanInnerRadius, 0.f, FMath::Max(OuterRadius - 1.f, 0.f));
-	const FVector ZOffset(0.f, 0.f, 5.f);
+	// 꼭짓점이 액터 뒤에 있으면 메시도 꼭짓점 기준으로 만들고 뒤로 민다
+	const FVector ZOffset(-ApexOffset, 0.f, 5.f);
+
+	// 앞이 잘린 부채꼴: 안쪽 경계 = 액터 앞 FanInnerRadius의 직선 (꼭짓점 기준 x = ApexOffset + FanInnerRadius)
+	auto GetInnerAt = [&](float AngleRad)
+	{
+		if (ApexOffset <= 0.f) return InnerRadius;
+		return FMath::Min((ApexOffset + FanInnerRadius) / FMath::Cos(AngleRad), OuterRadius);
+	};
 
 	// 로컬 +X(액터 정면) 기준 좌우로 부채꼴을 펼침 — 스폰 시점 Rotation이 이미 플레이어 방향을 보고 있으므로
 	// 여기서는 컴포넌트 상대공간에 순수하게 부채꼴만 만들면 됨 (별도 회전 보정 불필요)
@@ -192,8 +210,8 @@ void AEchidnaFanZoneActor::BuildFanMesh(float OuterRadius)
 		const FVector DirA(FMath::Cos(AngleA), FMath::Sin(AngleA), 0.f);
 		const FVector DirB(FMath::Cos(AngleB), FMath::Sin(AngleB), 0.f);
 
-		const FVector InnerA = DirA * InnerRadius + ZOffset;
-		const FVector InnerB = DirB * InnerRadius + ZOffset;
+		const FVector InnerA = DirA * GetInnerAt(AngleA) + ZOffset;
+		const FVector InnerB = DirB * GetInnerAt(AngleB) + ZOffset;
 		const FVector OuterA = DirA * OuterRadius + ZOffset;
 		const FVector OuterB = DirB * OuterRadius + ZOffset;
 
@@ -207,7 +225,15 @@ bool AEchidnaFanZoneActor::IsActorInRing(const AActor* Actor, float InnerRadius,
 {
 	if (!Actor) return false;
 
-	FVector ToActor = Actor->GetActorLocation() - GetActorLocation();
+	// 반지름은 꼭짓점 기준 — 앞이 잘린 부채꼴이면 액터 앞(로컬 X >= FanInnerRadius)만 판정
+	const float ApexOffset = GetApexBackOffset();
+	if (ApexOffset > 0.f)
+	{
+		const float LocalX = FVector::DotProduct(Actor->GetActorLocation() - GetActorLocation(), GetActorForwardVector());
+		if (LocalX < FanInnerRadius) return false;
+	}
+
+	FVector ToActor = Actor->GetActorLocation() - GetApexLocation();
 	ToActor.Z = 0.f;
 	const float Distance = ToActor.Size();
 	if (Distance < InnerRadius || Distance > OuterRadius) return false;
@@ -233,7 +259,7 @@ void AEchidnaFanZoneActor::ApplyRingDamage(float InnerRadius, float OuterRadius)
 
 	TArray<FOverlapResult> Overlaps;
 	World->OverlapMultiByObjectType(
-		Overlaps, GetActorLocation(), FQuat::Identity,
+		Overlaps, GetApexLocation(), FQuat::Identity,
 		FCollisionObjectQueryParams(FCollisionObjectQueryParams::AllDynamicObjects),
 		FCollisionShape::MakeSphere(OuterRadius), QueryParams);
 
@@ -294,9 +320,12 @@ void AEchidnaFanZoneActor::SpawnRingVFX(float InnerRadius, float OuterRadius)
 {
 	if (!RingVFX) return;
 
-	// 첫 고리는 FanInnerRadius부터 시작 (판정과 동일한 안쪽 한계선) — 격자 배치는 PatternVFX 공용 함수
-	const int32 Count = PatternVFX::SpawnFanArea(this, RingVFX, GetActorTransform(),
-		FMath::Max(InnerRadius, FanInnerRadius), OuterRadius, FanAngle * 0.5f, RingVFXSpacing, RingVFXScale, RingVFXMaxPerRing);
+	// 첫 고리는 FanInnerRadius부터 시작 (판정과 동일한 안쪽 한계선) — 격자 배치는 PatternVFX 공용 함수.
+	// 앞이 잘린 부채꼴은 꼭짓점 기준 부채꼴로 깔되 안쪽 한계를 잘린 선까지 (양 끝 모서리만 살짝 다름)
+	FTransform Origin = GetActorTransform();
+	Origin.SetLocation(GetApexLocation());
+	const int32 Count = PatternVFX::SpawnFanArea(this, RingVFX, Origin,
+		FMath::Max(InnerRadius, GetApexBackOffset() + FanInnerRadius), OuterRadius, FanAngle * 0.5f, RingVFXSpacing, RingVFXScale, RingVFXMaxPerRing);
 
 	UE_LOG(LogLoA, Verbose, TEXT("[EchidnaFanZone] RingVFX %d개 스폰 — R=%.0f~%.0f"), Count, InnerRadius, OuterRadius);
 }

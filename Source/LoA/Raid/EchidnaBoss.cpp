@@ -379,6 +379,25 @@ void AEchidnaBoss::MarkPatternTriggered(FName PatternName)
 	TriggeredPatterns.Add(PatternName);
 }
 
+void AEchidnaBoss::RecordSmallPattern(FName StateName)
+{
+	if (StateName.IsNone()) return;
+	RecentSmallPatterns.Add(StateName);
+	if (RecentSmallPatterns.Num() > 8)
+	{
+		RecentSmallPatterns.RemoveAt(0);
+	}
+}
+
+bool AEchidnaBoss::WasRecentSmallPattern(FName StateName, int32 Count) const
+{
+	for (int32 i = RecentSmallPatterns.Num() - 1, Seen = 0; i >= 0 && Seen < Count; --i, ++Seen)
+	{
+		if (RecentSmallPatterns[i] == StateName) return true;
+	}
+	return false;
+}
+
 void AEchidnaBoss::UnmarkPatternTriggered(FName PatternName)
 {
 	TriggeredPatterns.Remove(PatternName);

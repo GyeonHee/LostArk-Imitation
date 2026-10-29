@@ -73,11 +73,11 @@
 - 시작 시 "GameFeatureData" Asset Manager 에러는 MCP `AllToolsets` 플러그인 때문 — `DefaultGame.ini`에 스캔 항목을 넣어 해결함
 
 ## 남은 할 일
-- [ ] `ST_Echidna`: `Echidna Counter Pattern`(보스 본체 카운터) `SmallPatternRotation`에 배치 / Donut Slash `FanZoneClass` → `BP_EhidnaFanZone`(지금 경직 BP) / 그네 `ButterflyClass` → `BP_EchidnaButterfly`
 - [ ] `BP_EchidnaHeart` 다시 열어 컴파일 확인(HeartMeshComp가 PMC로 바뀌어 옛 오버라이드가 남았을 수 있음)
 - [ ] 애니메이션 BP 연결: 사망 `OnDeathVisualChanged`, 보스 처치 `OnDefeatedVisual`, 각종 CC `On*VisualChanged`
 - [ ] PIE 육안 확인: 매혹 게이지 머리 위 UI 위치·크기, `Border_GetUp` 위치/스타일
 - [ ] K(6.09) 허수아비 `LoADpsTest`로 실측 보정 — 소서리스 아이덴티티(마력 해방·점화) 추가로 DPS가 크게 오름(추정 ×1.5~1.8), 실측 후 `DA_Sorceress`에 반영
-- [ ] 미구현: 파훼 성공 보상(그네·거울잇기)·거울 카운터 실패 페널티, 그로기 중 받는 피해 증가, 스킬 레벨 → 데미지 계수 연동, 스킬 포인트 UI, 잡화상점, 로아 각인 영웅·전설 단계
+- [ ] 미구현: 그로기 중 받는 피해 증가, 잡화상점, 로아 각인 영웅·전설 단계 / 나중에: 스킬 레벨 → 데미지 계수 연동, 스킬 포인트 UI
+- 하지 않기로 함: 파훼 성공 보상(그네·거울잇기), 거울 카운터 실패 디버프(뒤따르는 불길 피해로 충분)
 - [ ] 밸런스 미결: 신속 몰빵 시 이동속도·쿨감이 커서 회피 패턴이 쉬워질 수 있음, 보석 Lv5→10 성장 속도
 - [ ] VFX 다듬기: `NS_Inferno_Impact` AddVelocity Z, `PER_Lava_Brutal` 스케일, 거울 레이저 `LaserVFXWidth`

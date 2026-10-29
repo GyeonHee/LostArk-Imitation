@@ -6,6 +6,7 @@
 
 class UStaticMeshComponent;
 class UMaterialInterface;
+class UNiagaraSystem;
 
 /**
  * 에키드나 "끌고간후 장판터지는" 짤패턴의 전조(1단계)에 쓰이는 줄기(촉수) 1개.
@@ -65,6 +66,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Tether|Hit")
 	int32 CharmGaugeAmount = 0;
 
+	// 0보다 크면 피격 시 데미지(10만 기준) — 육각 리본처럼 직접 때리는 리본용. 끌기·정면 리본은 0
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Hit")
+	float HitDamage = 0.f;
+
+	// 피격 시 넉다운(리본 중심선에서 바깥쪽으로 튕김) — 경직보다 우선
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Hit")
+	bool bApplyKnockdownOnHit = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Hit")
+	bool bApplyStaggerOnHit = false;
+
 	// 판정 발동 후 액터 정리까지 대기 시간 (초) — 끌려가는 게 끝난(FinishSnap) 뒤부터 센다
 	UPROPERTY(EditDefaultsOnly, Category = "Tether")
 	float LifeAfterSnap = 0.5f;
@@ -120,6 +132,17 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float StrikeOpacity = 0.9f;
+
+	// 지정하면 판정 순간 분홍 줄기(StrikeMeshComp) 대신 이 Niagara를 리본 범위에 격자로 깖(PatternVFX::SpawnRectArea —
+	// 부채꼴 장판과 같은 연출). 비우면 줄기 연출
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike")
+	TObjectPtr<UNiagaraSystem> StrikeVFX;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike")
+	float StrikeVFXSpacing = 200.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike")
+	float StrikeVFXScale = 0.6f;
 
 	// StateTree Task가 "당기기 판정까지 끝났는지" 폴링할 때 사용
 	bool IsFinished() const { return bSnapped; }

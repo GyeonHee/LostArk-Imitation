@@ -16,12 +16,12 @@ namespace
 		return Spacing;
 	}
 
-	void PatternVFXSpawnOne(UObject* WorldContext, UNiagaraSystem* System, const FTransform& Origin,
+	UNiagaraComponent* PatternVFXSpawnOne(UObject* WorldContext, UNiagaraSystem* System, const FTransform& Origin,
 		const FVector& LocalPos, float LocalYawDeg, float Scale)
 	{
 		const FVector WorldPos = Origin.TransformPosition(LocalPos);
 		const FRotator WorldRot = Origin.TransformRotation(FRotator(0.f, LocalYawDeg, 0.f).Quaternion()).Rotator();
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(WorldContext, System, WorldPos, WorldRot, FVector(Scale), true);
+		return UNiagaraFunctionLibrary::SpawnSystemAtLocation(WorldContext, System, WorldPos, WorldRot, FVector(Scale), true);
 	}
 }
 
@@ -59,7 +59,8 @@ namespace PatternVFX
 	}
 
 	int32 SpawnRectArea(UObject* WorldContext, UNiagaraSystem* System, const FTransform& Origin,
-		float XStart, float XEnd, float HalfWidth, float Spacing, float Scale, int32 MaxCount)
+		float XStart, float XEnd, float HalfWidth, float Spacing, float Scale, int32 MaxCount,
+		TArray<UNiagaraComponent*>* OutComponents)
 	{
 		if (!WorldContext || !System) return 0;
 
@@ -78,7 +79,11 @@ namespace PatternVFX
 			for (int32 Row = 0; Row < Rows; Row++)
 			{
 				const float Y = -HalfWidth + Width * ((Row + 0.5f) / Rows);
-				PatternVFXSpawnOne(WorldContext, System, Origin, FVector(X, Y, 5.f), 0.f, Scale);
+				UNiagaraComponent* Comp = PatternVFXSpawnOne(WorldContext, System, Origin, FVector(X, Y, 5.f), 0.f, Scale);
+				if (OutComponents && Comp)
+				{
+					OutComponents->Add(Comp);
+				}
 				Count++;
 			}
 		}

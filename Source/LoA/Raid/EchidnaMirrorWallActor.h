@@ -20,7 +20,7 @@ enum class EEchidnaMirrorWallPhase : uint8
 	Idle,
 	Advancing,  // 줄이 반대편으로 전진, 지나간 자리에 불길
 	Falling,    // 카운터 성공 — 거울들이 쓰러지는 중 (불길은 남아 있음)
-	Done        // 거울이 사라짐 — 불길도 같이 꺼짐
+	Done        // 거울이 사라짐 — 카운터로 쓰러졌으면 불길도 꺼짐, 못 치고 끝까지 갔으면 불길은 남음(패턴 끝까지)
 };
 
 /**
@@ -49,13 +49,22 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 	/** 스폰 직후 1회. TravelDistance = 시작선에서 반대편 끝까지, FireStartDistance = 불길이 시작되는 거리(맵 밖 구간 제외).
-	 *  RowWidth > 0이면 양 끝 거울의 바깥 가장자리가 이 폭 안에 들어오도록 MirrorSpacing을 다시 계산한다 */
+	 *  RowWidth > 0이면 거울 MirrorCount개가 이 폭을 빈틈없이 채우도록 크기를 맞춘다(FitMirrorSize, 키:폭 비율 유지) */
 	void Activate(AEchidnaBoss* InBoss, float InTravelDistance, float InFireStartDistance, AController* InInstigator, float RowWidth = -1.f);
 
 	// ICounterable — 카운터 거울을 정면에서 맞았을 때만 성공
 	virtual bool TryCounterHit(AActor* Attacker, UPrimitiveComponent* HitComponent) override;
 
 	bool IsCountered() const { return bCountered; }
+
+	// 카운터 거울 없는 줄로 만든다(앞 줄 카운터 실패 → 이후 줄은 칠 수 없음). Activate 전에 불러야 반영
+	void DisableCounter() { bCounterDisabled = true; }
+
+	// 이미 나와 있는 줄의 카운터 거울을 일반 거울로 바꾼다(색·초상화) — 앞 줄 카운터 실패 시
+	void RemoveCounterMirror();
+
+	// 카운터 맞은 거울이 서 있던 지면 위치 (카운터 순간 기록 — 쓰러지거나 줄이 사라져도 유지). 보스가 여기서 나와 그로기
+	FVector GetCounteredMirrorLocation() const { return CounteredMirrorLocation; }
 
 	// 줄이 멈춤(카운터 성공 또는 반대편 도착) — 다음 웨이브 판단용
 	bool HasStopped() const { return Phase == EEchidnaMirrorWallPhase::Falling || Phase == EEchidnaMirrorWallPhase::Done; }
@@ -68,6 +77,9 @@ public:
 	/** 판정 없는 장식 줄을 만든다. Count/Spacing이 0 이하면 기본값(MirrorCount, RowWidth에 맞춘 간격).
 	 *  bHiddenUntilAppear면 PlayAppear 전까지 땅속에 숨겨둔다 */
 	void SetupDisplayRow(float RowWidth, int32 Count = -1, float Spacing = -1.f, bool bHiddenUntilAppear = true, bool bGlass = false);
+
+	/** 거울 폭을 Width로, 키는 지금 키:폭 비율 그대로 맞춘다. 간격도 Width(맞닿음). BuildMirrors 전에 불러야 반영 */
+	void FitMirrorSize(float Width);
 
 	/** 거울이 하나씩(인덱스 순서, Stagger 간격) 땅에서 돌면서 솟아오른다 */
 	void PlayAppear(float Stagger, float RiseDuration, float SpinTurns);
@@ -92,13 +104,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorSpacing = 300.f;
 
-	// 레퍼런스(로아 거울 카운터)처럼 거울끼리 거의 맞닿는 크기 — 변 길이 약 1920cm에 7개면 간격 약 277이라 폭 260이면 틈 약 17cm.
-	// 키는 폭의 약 1.5배(세로로 긴 타원)
+	// 키:폭 비율(약 1.385)이 실제로 쓰이는 값 — 거울 카운터 줄은 정사각형 폭에 7개가 맞닿도록 폭을 덮어쓰고(FitMirrorSize)
+	// 키는 이 비율로 따라간다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
-	float MirrorHeight = 380.f;
+	float MirrorHeight = 270.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
-	float MirrorWidth = 260.f;
+	float MirrorWidth = 195.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorThickness = 20.f;
@@ -107,8 +119,9 @@ public:
 	TObjectPtr<UStaticMesh> MirrorMesh;
 
 	// ── 이동 ──
+	// 줄이 다가오는 속도 (cm/s) — BP_EchidnaMirrorWall에서 조절
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Timing")
-	float MoveSpeed = 350.f;
+	float MoveSpeed = 450.f;
 
 	// 카운터 성공 후 거울이 완전히 눕기까지 (초)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Timing")
@@ -118,16 +131,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Timing")
 	float FallenLingerDuration = 1.5f;
 
-	// ── 거울 몸통 판정 ──
+	// ── 거울 몸통 판정: 닿은 캐릭터는 줄 앞으로 밀려난다(넉다운 없음). 뒤 선 투명 벽에 막히면 거기서 멈춤 ──
+	// 0보다 크면 처음 닿을 때 1회 데미지
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Hit")
-	float MirrorHitDamage = 10000.f;
+	float MirrorHitDamage = 0.f;
 
 	// 줄 앞뒤로 이 두께 안에 들어오면 거울에 닿은 것 (cm, 캡슐 반지름 별도)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Hit")
 	float MirrorHitThickness = 40.f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Hit")
-	bool bKnockdownOnMirrorHit = true;
 
 	/** 카운터 정면 판정 반각(도) — 카운터 거울 정면(+X)과 "거울→시전자" 사이 각도. 보스 HeadAttackHalfAngle과 같은 의미 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Hit", meta = (ClampMin = "0.0", ClampMax = "180.0"))
@@ -248,7 +259,11 @@ private:
 	float FireTickElapsed = 0.f;
 
 	bool bCountered = false;
+	bool bCounterDisabled = false;
+	// 끝까지 가서 거울만 사라진 뒤에도 불길(장판·틱 데미지·VFX)이 계속 남아 있음
+	bool bFireLingering = false;
 	int32 CounterMirrorIndex = 0;
+	FVector CounteredMirrorLocation = FVector::ZeroVector;
 
 	// 거울마다: 쓰러질 때 도는 받침(지면 높이) + 실제 메시
 	UPROPERTY(Transient)
@@ -275,6 +290,6 @@ private:
 	void UpdateFireMesh();
 	void StopRow();
 
-	// 거울 숨김 + 불길 끔 → Done
-	void VanishRow();
+	// 거울 숨김 → Done. bKeepFire면 불길은 남긴다(카운터 실패로 끝까지 간 줄)
+	void VanishRow(bool bKeepFire = false);
 };

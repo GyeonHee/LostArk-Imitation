@@ -381,8 +381,10 @@ void AEchidnaMirrorActor::ApplyLaserDamageTick()
 			this, UDamageType::StaticClass());
 
 		// 맞을 때마다 넉다운(뒤로 튕겨나감) — 착지하기 전에 다음 틱이 오면 계속 다시 띄워지므로
-		// 4틱(1초)을 맞는 동안은 쭉 공중에 떠 있다가, 마지막 틱 이후 착지하면서 실제로 넘어짐
-		if (ALoACharacter* HitCharacter = Cast<ALoACharacter>(HitActor))
+		// 4틱(1초)을 맞는 동안은 쭉 공중에 떠 있다가, 마지막 틱 이후 착지하면서 실제로 넘어짐.
+		// 유도 거울(bSkyGuidedMode)은 데미지만 — 따라다니며 계속 쏘는데 넉다운까지 있으면 8거울 레이저를 피할 수 없음
+		ALoACharacter* HitCharacter = bSkyGuidedMode ? nullptr : Cast<ALoACharacter>(HitActor);
+		if (HitCharacter)
 		{
 			HitCharacter->ApplyKnockdown(GetActorLocation());
 		}
@@ -447,6 +449,25 @@ void AEchidnaMirrorActor::ApplyPhaseVisuals(UMaterialInterface* BaseMaterial, co
 	}
 }
 
+void AEchidnaMirrorActor::ScaleBeamWidth(float Scale)
+{
+	const float BaseHalfWidth = BeamHalfWidth;
+	BeamHalfWidth *= Scale;
+
+	// 원래 줄기 하나가 BaseHalfWidth만큼을 덮는다고 보고, 늘어난 만큼을 그 간격 이하로 양옆에 줄기를 채움
+	LaserPieceOffsets = { 0.f };
+	const float Extra = BeamHalfWidth - BaseHalfWidth;
+	if (Extra <= KINDA_SMALL_NUMBER || BaseHalfWidth <= KINDA_SMALL_NUMBER) return;
+
+	const int32 PerSide = FMath::CeilToInt(Extra / BaseHalfWidth);
+	for (int32 i = 1; i <= PerSide; ++i)
+	{
+		const float Offset = Extra * i / PerSide;
+		LaserPieceOffsets.Add(Offset);
+		LaserPieceOffsets.Add(-Offset);
+	}
+}
+
 void AEchidnaMirrorActor::StartLaserBeam()
 {
 	if (!LaserVFX) return;
@@ -458,7 +479,14 @@ void AEchidnaMirrorActor::StartLaserBeam()
 void AEchidnaMirrorActor::TickLaserBeam(float DeltaTime)
 {
 	// 끝난 줄기 정리 (bAutoDestroy라 재생이 끝나면 스스로 파괴됨)
-	LaserBeamComps.RemoveAll([](const TObjectPtr<UNiagaraComponent>& Comp) { return !IsValid(Comp) || Comp->IsComplete(); });
+	for (int32 i = LaserBeamComps.Num() - 1; i >= 0; --i)
+	{
+		if (!IsValid(LaserBeamComps[i]) || LaserBeamComps[i]->IsComplete())
+		{
+			LaserBeamComps.RemoveAt(i);
+			LaserBeamSideOffsets.RemoveAt(i);
+		}
+	}
 
 	if (bLaserBeamOn)
 	{
@@ -478,9 +506,10 @@ void AEchidnaMirrorActor::TickLaserBeam(float DeltaTime)
 	float Length;
 	if (LaserBeamComps.Num() > 0 && ComputeLaserBeam(Start, Rotation, Length))
 	{
-		for (UNiagaraComponent* Comp : LaserBeamComps)
+		const FVector Right = FRotationMatrix(Rotation).GetUnitAxis(EAxis::Y);
+		for (int32 i = 0; i < LaserBeamComps.Num(); ++i)
 		{
-			Comp->SetWorldLocationAndRotation(Start, Rotation);
+			LaserBeamComps[i]->SetWorldLocationAndRotation(Start + Right * LaserBeamSideOffsets[i], Rotation);
 		}
 	}
 }
@@ -514,20 +543,27 @@ void AEchidnaMirrorActor::SpawnLaserBeamPiece()
 	float Length;
 	if (!ComputeLaserBeam(Start, Rotation, Length)) return;
 
-	// 거울에 붙여서(이미터도 로컬 공간) 거울이 움직이면 줄기가 같이 따라감. 1회 재생 후 스스로 파괴
-	UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAttached(
-		LaserVFX, RootComponent, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
-		EAttachLocation::KeepRelativeOffset, true, false);
-	if (!Comp) return;
-
 	// 광폭화 중이면 줄기 수명도 같이 짧아지게 (Niagara는 액터 CustomTimeDilation을 안 따름)
 	const float Life = FMath::Max(LaserVFXRefreshInterval, 0.02f) * LaserVFXLifeScale / FMath::Max(CustomTimeDilation, 0.01f);
-	Comp->SetWorldLocationAndRotation(Start, Rotation);
-	Comp->SetVariableVec2(TEXT("User.BeamSize"), FVector2D(LaserVFXWidth, Length));
-	Comp->SetVariableFloat(TEXT("User.BeamLife"), Life);
-	Comp->SetVariableFloat(TEXT("User.Loop Duration"), Life);
-	Comp->Activate(true);
-	LaserBeamComps.Add(Comp);
+	const FVector Right = FRotationMatrix(Rotation).GetUnitAxis(EAxis::Y);
+
+	// 폭이 늘어난 거울은 줄기 여러 개를 옆으로 나란히 (LaserPieceOffsets)
+	for (const float SideOffset : LaserPieceOffsets)
+	{
+		// 거울에 붙여서(이미터도 로컬 공간) 거울이 움직이면 줄기가 같이 따라감. 1회 재생 후 스스로 파괴
+		UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			LaserVFX, RootComponent, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
+			EAttachLocation::KeepRelativeOffset, true, false);
+		if (!Comp) continue;
+
+		Comp->SetWorldLocationAndRotation(Start + Right * SideOffset, Rotation);
+		Comp->SetVariableVec2(TEXT("User.BeamSize"), FVector2D(LaserVFXWidth, Length));
+		Comp->SetVariableFloat(TEXT("User.BeamLife"), Life);
+		Comp->SetVariableFloat(TEXT("User.Loop Duration"), Life);
+		Comp->Activate(true);
+		LaserBeamComps.Add(Comp);
+		LaserBeamSideOffsets.Add(SideOffset);
+	}
 }
 
 void AEchidnaMirrorActor::StopLaserBeam()

@@ -38,6 +38,10 @@ public:
 
 	void Activate(float InTickDamage, AController* InInstigator);
 
+	// 판정 폭(BeamHalfWidth)을 배율만큼 키우고, 늘어난 폭은 번개 줄기를 옆으로 나란히 더 띄워 채운다 — BP 값 기준이라 Activate 전에 호출.
+	// 줄기 하나의 폭(LaserVFXWidth)을 키우는 방식은 번개 텍스처가 스프라이트 안에서 가늘게 그려져 눈에 띄게 안 넓어졌음
+	void ScaleBeamWidth(float Scale);
+
 	// true면 플레이어를 조준하지 않고 스폰 시점 Rotation(고정 방향)을 그대로 유지한 채 TrackingDuration 뒤 발사.
 	// "8거울 레이저"의 고정 스포크(+/X 대형)처럼 플레이어를 안 쫓는 거울에 사용 — Activate() 호출 전에 설정할 것
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
@@ -240,6 +244,12 @@ private:
 	// 지금 살아 있는 줄기들 — 매 틱 위치·방향을 맞추고, 끝난 것은 정리
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<class UNiagaraComponent>> LaserBeamComps;
+
+	// LaserBeamComps와 같은 순서 — 각 줄기의 옆(오른쪽 벡터) 오프셋 (cm)
+	TArray<float> LaserBeamSideOffsets;
+
+	// 한 번에 띄우는 줄기들의 옆 오프셋 — 기본 {0}, ScaleBeamWidth로 폭이 늘면 양옆에 추가
+	TArray<float> LaserPieceOffsets = { 0.f };
 
 	bool bLaserBeamOn = false;
 	float LaserRefreshElapsed = 0.f;

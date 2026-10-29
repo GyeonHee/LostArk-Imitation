@@ -64,7 +64,9 @@ void AEchidnaLinkMirrorActor::BeginPlay()
 	// 광폭화 규칙 — Tick 기반이라 이 값만으로 추적·발사가 같이 빨라진다
 	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
 
-	MirrorMeshComp->SetRelativeLocation(FVector(0.f, 0.f, MirrorHeight));
+	// 세운 원반이라 로컬 X·Y = 지름, Z = 두께 (Cylinder 지름·높이 100)
+	MirrorMeshComp->SetRelativeScale3D(FVector(MirrorDiameter / 100.f, MirrorDiameter / 100.f, 0.15f));
+	MirrorMeshComp->SetRelativeLocation(FVector(0.f, 0.f, MirrorFloatHeight + MirrorDiameter * 0.5f));
 	OrbMeshComp->SetWorldScale3D(FVector(OrbRadius / 50.f));	// 엔진 Sphere = 반지름 50
 
 	if (UMaterialInterface* GlowMat = BeamMeshComp->GetMaterial(0))

@@ -88,9 +88,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
 	float OrbHitRadius = 70.f;
 
-	// 거울 원반·빛 덩어리 높이 (타일 윗면 기준)
+	// 거울 원반 지름 (cm) — 엔진 Cylinder 지름 100 기준으로 스케일
 	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
-	float MirrorHeight = 120.f;
+	float MirrorDiameter = 240.f;
+
+	// 타일 윗면에서 거울 원반 아래 끝까지 띄우는 높이 (cm) — 원반 중심 = 이 값 + 반지름
+	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
+	float MirrorFloatHeight = 60.f;
+
+	// 빛 덩어리·빛줄기 높이 (타일 윗면 기준)
 
 	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
 	float OrbHeight = 100.f;

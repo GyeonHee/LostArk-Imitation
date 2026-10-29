@@ -66,12 +66,12 @@ void AEchidnaSwingChainActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void AEchidnaSwingChainActor::Activate(AActor* InBoss, ALoACharacter* InPlayer, AHexArena* InArena, const FIntPoint& InBreakCoord)
+void AEchidnaSwingChainActor::Activate(AActor* InBoss, ALoACharacter* InPlayer, AHexArena* InArena, const TArray<FIntPoint>& InBreakCoords)
 {
 	Boss = InBoss;
 	Player = InPlayer;
 	Arena = InArena;
-	BreakCoord = InBreakCoord;
+	BreakCoords = InBreakCoords;
 
 	Result = EEchidnaSwingChainResult::Pending;
 	Elapsed = 0.f;
@@ -81,7 +81,7 @@ void AEchidnaSwingChainActor::Activate(AActor* InBoss, ALoACharacter* InPlayer, 
 	ChainMesh->SetVisibility(true);
 	UpdateChainTransform();
 
-	UE_LOG(LogLoA, Log, TEXT("[SwingChain] 사슬 연결 — 끊는 타일 (%d,%d), 제한 %.1f초"), BreakCoord.X, BreakCoord.Y, ChainDuration);
+	UE_LOG(LogLoA, Log, TEXT("[SwingChain] 사슬 연결 — 끊는 타일 %d개, 제한 %.1f초"), BreakCoords.Num(), ChainDuration);
 }
 
 void AEchidnaSwingChainActor::Tick(float DeltaTime)
@@ -107,9 +107,9 @@ void AEchidnaSwingChainActor::Tick(float DeltaTime)
 		ChainMID->SetVectorParameterValue(ColorParameterName, FMath::Lerp(StartColor, EndColor, Alpha));
 	}
 
-	// 보스 반대편 타일 위면 끊김
+	// 보스 반대편 변 타일 중 하나 위면 끊김
 	FIntPoint Coord;
-	if (AHexArena* A = Arena.Get(); A && A->WorldToTileCoord(Target->GetActorLocation(), Coord) && Coord == BreakCoord)
+	if (AHexArena* A = Arena.Get(); A && A->WorldToTileCoord(Target->GetActorLocation(), Coord) && BreakCoords.Contains(Coord))
 	{
 		Resolve(EEchidnaSwingChainResult::Broken);
 		return;
@@ -160,9 +160,12 @@ void AEchidnaSwingChainActor::SetBreakTileHighlighted(bool bHighlighted)
 {
 	if (AHexArena* A = Arena.Get())
 	{
-		if (AHexTile* Tile = A->GetTile(BreakCoord))
+		for (const FIntPoint& Coord : BreakCoords)
 		{
-			Tile->SetLinkHighlighted(bHighlighted);
+			if (AHexTile* Tile = A->GetTile(Coord))
+			{
+				Tile->SetLinkHighlighted(bHighlighted);
+			}
 		}
 	}
 }

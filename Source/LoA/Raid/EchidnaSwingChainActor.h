@@ -13,14 +13,14 @@ UENUM()
 enum class EEchidnaSwingChainResult : uint8
 {
 	Pending,
-	Broken,		// 제한 시간 안에 보스 반대편 타일에 도착 — 파훼
+	Broken,		// 제한 시간 안에 보스 반대편 변 타일 중 하나에 도착 — 파훼
 	Failed		// 못 끊음 — 매혹 3스택과 같은 매혹 상태
 };
 
 /**
  * 그네 패턴의 보스↔플레이어 사슬.
- * 보스 기준 정반대 타일(아레나 중심 대칭, (q,r) → (-q,-r))에 노란 테두리를 켜고, 플레이어가 그 타일을 밟으면 끊어진다.
- * ChainDuration(5초) 안에 못 끊으면 플레이어에게 최대 매혹 스택을 줘서 매혹 상태로 만든다.
+ * 보스가 선 외곽 변과 마주보는 반대 변의 타일들(Task가 계산해 넘김)에 노란 테두리를 켜고, 플레이어가 그중 아무 타일이나 밟으면 끊어진다.
+ * ChainDuration(7초) 안에 못 끊으면 플레이어에게 최대 매혹 스택을 줘서 매혹 상태로 만든다.
  * 사슬 모양은 엔진 기본 Cylinder를 두 끝점 사이로 매 틱 늘려 그린다 — 남은 시간이 줄수록 색이 빨개진다.
  * 광폭화 규칙: BeginPlay에서 CustomTimeDilation, 진행은 전부 Tick 기반
  */
@@ -36,7 +36,7 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	void Activate(AActor* InBoss, ALoACharacter* InPlayer, AHexArena* InArena, const FIntPoint& InBreakCoord);
+	void Activate(AActor* InBoss, ALoACharacter* InPlayer, AHexArena* InArena, const TArray<FIntPoint>& InBreakCoords);
 
 	EEchidnaSwingChainResult GetResult() const { return Result; }
 
@@ -48,7 +48,7 @@ public:
 
 	// 이 시간(초) 안에 못 끊으면 매혹
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SwingChain")
-	float ChainDuration = 5.f;
+	float ChainDuration = 7.f;
 
 	// 사슬 굵기 (cm)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SwingChain|Visual")
@@ -76,7 +76,7 @@ private:
 	TWeakObjectPtr<AActor> Boss;
 	TWeakObjectPtr<ALoACharacter> Player;
 	TWeakObjectPtr<AHexArena> Arena;
-	FIntPoint BreakCoord = FIntPoint::ZeroValue;
+	TArray<FIntPoint> BreakCoords;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> ChainMID;
