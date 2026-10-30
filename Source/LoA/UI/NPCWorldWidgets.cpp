@@ -99,3 +99,25 @@ void UInteractPromptWidget::SetPrompt(const FText& Key, const FText& Action)
 	if (KeyText) KeyText->SetText(Key);
 	if (ActionText) ActionText->SetText(Action);
 }
+
+// ─── 월드 카운트다운 ────────────────────────────────────────────────────────
+
+TSharedRef<SWidget> UWorldCountdownWidget::RebuildWidget()
+{
+	if (WidgetTree && !WidgetTree->RootWidget)
+	{
+		CountText = MakeNPCWorldText(WidgetTree, TEXT("CountText"), 30, FLinearColor(0.75f, 0.9f, 1.f, 1.f));
+		FSlateFontInfo Font = CountText->GetFont();
+		Font.OutlineSettings.OutlineSize = 2;
+		CountText->SetFont(Font);
+		WidgetTree->RootWidget = CountText;
+	}
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	return Super::RebuildWidget();
+}
+
+void UWorldCountdownWidget::SetSeconds(int32 Seconds)
+{
+	if (!CountText) TakeWidget();
+	if (CountText) CountText->SetText(FText::FromString(FString::Printf(TEXT("%ds"), FMath::Max(0, Seconds))));
+}

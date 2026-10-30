@@ -13,3 +13,6 @@ Saved/
 # OS
 Thumbs.db
 Desktop.ini
+
+# 로컬 전용 애셋 (LFS 용량 때문에 푸시 안 함 — 쓰게 되면 LostArk/ 아래로 옮겨서 푸시)
+Content/LocalOnly/

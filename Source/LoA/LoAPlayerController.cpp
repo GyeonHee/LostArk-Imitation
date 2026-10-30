@@ -53,6 +53,11 @@
 #include "LoA.h"
 #include "Skill/SkillManagerComponent.h"
 #include "Raid/EchidnaBoss.h"
+#include "Raid/EchidnaFinalPhaseActor.h"
+#include "Raid/EchidnaClashPlatformActor.h"
+#include "Raid/EchidnaJustGuardZoneActor.h"
+#include "Raid/EchidnaClashQTEActor.h"
+#include "InputKeyEventArgs.h"
 #include "Kismet/GameplayStatics.h"
 #include "UI/BossHPWidget.h"
 #include "UI/CastBarWidget.h"
@@ -362,6 +367,7 @@ void ALoAPlayerController::BeginPlay()
 		if (AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass())))
 		{
 			Boss->OnDefeated.AddUObject(this, &ALoAPlayerController::OnBossDefeated);
+			Boss->OnRaidFailed.AddUObject(this, &ALoAPlayerController::OnRaidFailedByPattern);
 
 			// 좌상단 "중단하기" — 인트로보다 먼저 만들어야 인트로가 같이 숨긴다
 			AbandonWidget = CreateWidget<UAbandonRaidWidget>(this, UAbandonRaidWidget::StaticClass());
@@ -439,8 +445,28 @@ void ALoAPlayerController::LoAKillBoss()
 	{
 		UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAKillBoss — 이번 판은 기록하지 않음"));
 		bCheatUsedThisRaid = true;
+		// 발악 페이즈가 있으면 첫 번째는 발악 진입, 발악 중에 한 번 더 치면 격돌 성공으로 바로 클리어
+		if (AEchidnaFinalPhaseActor* FinalPhase = Boss->GetFinalPhaseActor())
+		{
+			FinalPhase->ForceClashResult(true);
+			return;
+		}
 		Boss->ReceiveDamage(static_cast<float>(Boss->GetHP()) + 1.f);
 	}
+}
+
+void ALoAPlayerController::LoAClashResult(int32 Result)
+{
+	AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
+	AEchidnaFinalPhaseActor* FinalPhase = Boss ? Boss->GetFinalPhaseActor() : nullptr;
+	if (!FinalPhase)
+	{
+		ClientMessage(TEXT("[Cheat] LoAClashResult — 발악 페이즈 중이 아님 (LoAKillBoss로 진입)"));
+		return;
+	}
+	UE_LOG(LogTemp, Log, TEXT("[Cheat] LoAClashResult %d"), Result);
+	bCheatUsedThisRaid = true;
+	FinalPhase->ForceClashResult(Result != 0);
 }
 
 void ALoAPlayerController::LoAKillSelf()
@@ -454,6 +480,22 @@ void ALoAPlayerController::LoAKillSelf()
 }
 
 void ALoAPlayerController::OnPlayerDied()
+{
+	BeginDefeat(DeathCauseText);
+}
+
+void ALoAPlayerController::OnRaidFailedByPattern(const FText& Reason)
+{
+	// 살아 있는 채로 실패 — 패배 화면 동안 맞거나 움직이지 않게
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		Char->SetInvulnerable(true);
+		Char->SetHeldByPattern(true);
+	}
+	BeginDefeat(Reason.IsEmpty() ? DeathCauseText : Reason);
+}
+
+void ALoAPlayerController::BeginDefeat(const FText& CauseText)
 {
 	// 클리어 화면이 이미 떴으면(무적이라 보통은 안 오지만) 패배로 덮지 않는다
 	if (bDefeatActive || bClearActive || !IsLocalController()) return;
@@ -492,7 +534,7 @@ void ALoAPlayerController::OnPlayerDied()
 	{
 		// 보스 HP·HUD(0~10)·스킬창보다 위
 		DefeatWidget->AddToViewport(30);
-		DefeatWidget->SetTexts(DeathCauseText);
+		DefeatWidget->SetTexts(CauseText);
 		DefeatWidget->SetRenderOpacity(0.f);
 	}
 
@@ -1453,6 +1495,18 @@ void ALoAPlayerController::SetupInputComponent()
 			UE_LOG(LogLoA, Error, TEXT("'%s' Failed to find an Enhanced Input Component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
 		}
 	}
+}
+
+bool ALoAPlayerController::InputKey(const FInputKeyEventArgs& Params)
+{
+	if (Params.Event == IE_Pressed && !bDefeatActive && !bClearActive)
+	{
+		for (TActorIterator<AEchidnaClashQTEActor> It(GetWorld()); It; ++It)
+		{
+			if (It->IsAcceptingInput() && It->HandleKey(Params.Key)) return true;
+		}
+	}
+	return Super::InputKey(Params);
 }
 
 void ALoAPlayerController::Tick(float DeltaSeconds)
@@ -2786,6 +2840,29 @@ void ALoAPlayerController::UpdateNPCInteraction()
 void ALoAPlayerController::OnInteractKey()
 {
 	if (bNPCMenuOpen) return;
+
+	// 보스 맵 발악 페이즈 — 저스트 가드 장판·격돌 발판이 NPC보다 먼저
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && !Char->IsActionLocked() && !bDefeatActive && !bClearActive)
+	{
+		// 저스트 가드 — 누른 순간의 커서 조준점으로 방향 판정. 한 번 누르면 그 장판은 끝(연타 방지)
+		for (TActorIterator<AEchidnaJustGuardZoneActor> It(GetWorld()); It; ++It)
+		{
+			if (!It->IsAwaitingInput()) continue;
+			FVector Aim = Char->GetActorLocation() + Char->GetActorForwardVector() * 100.f;
+			GetCursorAimLocation(Aim);
+			if (It->TryJustGuard(Char, Aim)) return;
+		}
+
+		for (TActorIterator<AEchidnaClashPlatformActor> It(GetWorld()); It; ++It)
+		{
+			if (It->IsInteractable() && It->TryInteract(Char))
+			{
+				CancelAutoMove();
+				return;
+			}
+		}
+	}
+
 	if (AInteractableNPCActor* NPC = InRangeNPC.Get())
 	{
 		OpenNPCMenu(NPC);

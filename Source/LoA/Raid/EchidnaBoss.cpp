@@ -2,6 +2,7 @@
 #include "Stat/EngravingComponent.h"
 #include "BossDirectionIndicatorComponent.h"
 #include "EchidnaBossAIController.h"
+#include "EchidnaFinalPhaseActor.h"
 #include "UI/DamageNumberActor.h"
 #include "Stat/LoADamageLibrary.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -31,6 +32,8 @@ AEchidnaBoss::AEchidnaBoss()
 	// 285줄 기준 217줄에서 거울 카운터.
 	// TotalLines와 같은 값을 넣으면 풀피에서 곧바로 발동해버리므로 반드시 그보다 작아야 한다
 	BigPatternThresholds.Add(FBossPatternThreshold{ 217, TEXT("MirrorCounter") });
+
+	FinalPhaseClass = AEchidnaFinalPhaseActor::StaticClass();
 
 	// 카운터 발광 — 다른 패턴 액터들과 같은 M_MirrorLaser("Base Color") 컨벤션
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GlowMat(
@@ -271,7 +274,7 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 	// 치명·제압은 여기서 타수마다 굴린다 (시전 시점에 굴리면 범위 안 모든 타격이 같은 결과가 됨)
 	bool bCritical = false;
 	const float FinalDamage = ULoADamageLibrary::ResolveIncomingHit(DamageAmount, EventInstigator, IsGroggy(), bCritical, MaxHP > 0.0 ? static_cast<float>(HP / MaxHP) : 1.f);  // 대상 HP 비율 = 약자 무시
-	if (!bDefeated)
+	if (!bDefeated && !bFinalPhaseActive)
 	{
 		ULoADamageLibrary::ReportDamageDealt(EventInstigator, this, DamageCauser, FinalDamage, bCritical, false);
 		ULoADamageLibrary::NotifyIdentityHit(EventInstigator, DamageCauser, DamageAmount);
@@ -282,20 +285,18 @@ float AEchidnaBoss::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 
 void AEchidnaBoss::ReceiveDamage(float DamageAmount, bool bCritical)
 {
-	// 처치 후엔 남은 장판·틱 데미지가 들어와도 무시 (데미지 숫자도 안 띄움)
-	if (bDefeated) return;
+	// 처치 후엔 남은 장판·틱 데미지가 들어와도 무시 (데미지 숫자도 안 띄움). 발악 중엔 HP가 멈춰 있다 — 격돌 결과로만 끝난다
+	if (bDefeated || bFinalPhaseActive || bFinalPhaseFailed) return;
 
 	HP = FMath::Clamp(HP - static_cast<double>(DamageAmount), 0.0, MaxHP);
 
-	// 광폭화 전에 잡았으면 타이머를 그 시점 값으로 멈춘다 (클리어 타이밍이 UI에 남도록)
-	if (HP <= 0.0 && !bEnraged && FrozenEnrageRemaining < 0.f)
-	{
-		FrozenEnrageRemaining = GetEnrageRemainingTime();
-		GetWorldTimerManager().ClearTimer(EnrageTimerHandle);
-	}
+	// HP 0 = 발악 (bUseFinalPhase). HP는 0인 채로 격돌 결과를 기다린다
+	const bool bEnterFinalPhase = bUseFinalPhase && HP <= 0.0;
 
+	// 광폭화 전에 잡았으면 타이머를 그 시점 값으로 멈춘다 (클리어 타이밍이 UI에 남도록)
 	if (HP <= 0.0)
 	{
+		FreezeEnrageTimer();
 		GetWorldTimerManager().ClearTimer(SettlementTimerHandle);
 	}
 
@@ -310,9 +311,75 @@ void AEchidnaBoss::ReceiveDamage(float DamageAmount, bool bCritical)
 		OnLineChanged.Broadcast(NewLine);
 	}
 
-	if (HP <= 0.0)
+	if (bEnterFinalPhase)
+	{
+		BeginFinalPhase();
+	}
+	else if (HP <= 0.0)
 	{
 		HandleDefeated();
+	}
+}
+
+void AEchidnaBoss::FreezeEnrageTimer()
+{
+	if (bEnraged || FrozenEnrageRemaining >= 0.f) return;
+	FrozenEnrageRemaining = GetEnrageRemainingTime();
+	GetWorldTimerManager().ClearTimer(EnrageTimerHandle);
+}
+
+void AEchidnaBoss::BeginFinalPhase()
+{
+	if (bFinalPhaseActive || bDefeated) return;
+	bFinalPhaseActive = true;
+
+	// 처치와 같은 정리 — 진행 중이던 패턴 Task는 StopBossLogic의 ExitState가 치운다
+	if (AEchidnaBossAIController* AIC = Cast<AEchidnaBossAIController>(GetController()))
+	{
+		AIC->StopMovement();
+		AIC->StopBossLogic();
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+	GetWorldTimerManager().ClearTimer(IntroFallbackTimerHandle);
+	GetWorldTimerManager().ClearTimer(SettlementTimerHandle);
+	CloseCounterWindow();
+	OnSettlementGaugeChanged.Broadcast(SettlementGauge);  // 정산 UI 흑백(IsSettlementPaused)
+
+	UE_LOG(LogLoA, Warning, TEXT("[Echidna] 0줄 발악 진입 — HP 고정, AI 정지"));
+	OnFinalPhaseVisual();
+
+	UWorld* World = GetWorld();
+	UClass* Class = FinalPhaseClass ? FinalPhaseClass.Get() : AEchidnaFinalPhaseActor::StaticClass();
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	FinalPhaseActor = World ? World->SpawnActor<AEchidnaFinalPhaseActor>(Class, GetActorTransform(), Params) : nullptr;
+	if (FinalPhaseActor)
+	{
+		FinalPhaseActor->StartPhase(this);
+	}
+	else
+	{
+		// 진행자를 못 만들면 영원히 멈추지 않게 그냥 처치로
+		UE_LOG(LogLoA, Error, TEXT("[Echidna] 발악 진행자 스폰 실패 — 바로 처치 처리"));
+		CompleteFinalPhase(true, FText::GetEmpty());
+	}
+}
+
+void AEchidnaBoss::CompleteFinalPhase(bool bSuccess, const FText& FailReason)
+{
+	if (!bFinalPhaseActive) return;
+	bFinalPhaseActive = false;
+	FinalPhaseActor = nullptr;
+
+	if (bSuccess)
+	{
+		HandleDefeated();
+	}
+	else
+	{
+		// 실패 후엔 데미지를 계속 무시 — 정비소로 돌아갈 때까지 보스는 그대로 서 있다
+		bFinalPhaseFailed = true;
+		OnRaidFailed.Broadcast(FailReason);
 	}
 }
 
@@ -518,9 +585,14 @@ void AEchidnaBoss::EndGroggy()
 
 void AEchidnaBoss::SpawnCounterText(const FVector& Location)
 {
+	SpawnLabelText(Location, CounterText, CounterTextColor, CounterTextScale);
+}
+
+void AEchidnaBoss::SpawnLabelText(const FVector& Location, const FText& Text, const FLinearColor& Color, float Scale)
+{
 	if (!DamageNumberClass)
 	{
-		UE_LOG(LogLoA, Warning, TEXT("[Counter] DamageNumberClass 미설정 — Counter! 글자 생략"));
+		UE_LOG(LogLoA, Warning, TEXT("[Echidna] DamageNumberClass 미설정 — 글자 생략: %s"), *Text.ToString());
 		return;
 	}
 
@@ -535,6 +607,6 @@ void AEchidnaBoss::SpawnCounterText(const FVector& Location)
 		DamageNumberClass, Location, FRotator::ZeroRotator, SpawnParams))
 	{
 		// 같은 타격의 데미지 숫자가 바로 뒤에 스폰되며 카운터를 올리므로, 큰 값을 더해 항상 숫자들보다 앞에 그린다
-		Label->ActivateLabel(CounterText, CounterTextColor, CounterTextScale, ++DamageNumberCounter + 1000000);
+		Label->ActivateLabel(Text, Color, Scale, ++DamageNumberCounter + 1000000);
 	}
 }

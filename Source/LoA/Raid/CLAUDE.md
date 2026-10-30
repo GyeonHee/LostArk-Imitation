@@ -33,6 +33,9 @@
 - **카운터**: `OpenCounterWindow` = 오버레이 머티리얼 청백 발광. 성공 = 창 열림 + 헤드어택(시전자 위치가 정면 ±60도) + `bCanCounter` 스킬. 판정 대상은 `ICounterable::TryCounterHit(Attacker, HitComponent)`(보스 본체·거울 줄). 성공 시 파란 `Counter!`(`ActivateLabel`) + 그로기
 - **그로기**(`StartGroggy`)는 플래그 + 정지 + BP 훅뿐, AI를 안 멈춘다 — 부른 Task가 `IsGroggy()` 동안 Running으로 버텨야 보스가 가만히 있음. UI 무력화 게이지가 남은 시간 표시
 - `IncomingDamageScale`(11.356): 플레이어 방어력 도입 후에도 패턴 체감이 같도록 곱하는 배율 — 자세한 건 `Source/LoA/Stat/CLAUDE.md`
+- **애니메이션**: `LocalOnly/Echidna/Animations/Battle`(281 — 대기·이동·회전·`att_battle_*`·그로기 `dmg_critical_*`·사망) / `Event`(47 — 공중 등장 `sky_*`·변신 `sden_change`·추락 `fall*`·캐스팅·흡수). 전부 `Echidna_mo_Skeleton`, 원본 이름 그대로. 아직 BP·몽타주 연결 없음 — **안 쓰는 동안 LocalOnly(깃 제외)**, 보스에 연결할 때 `EchidnaModling/Echidna/Animations`로 옮겨서 푸시
+  - 원본은 PSA(다운로드 폴더 `Echidna (1)`) → `Tools/Blender/psa_to_fbx.py`(Blender 5.2 + PSK/PSA 애드온)로 FBX → 기존 스켈레톤에 임포트. 함정: **PSA 위치는 cm라 `translation_scale=0.01`**(안 하면 메시가 100배로 터짐), Blender 5 FBX 내보내기는 `animation_data` 없는 아마추어의 액션을 통째로 빠뜨림, 메시 없는 FBX는 MCP 스켈레탈 임포트가 실패 → 메시를 같이 넣고 생긴 중복 메시는 삭제
+  - 안 넣은 것: `for_Echidna_BIG.psa`(왕키드나 50개), 뱀·거울·스킬·그네 메시와 애니메이션(PSK/PSA 그대로 다운로드 폴더에)
 
 ## StateTree `ST_Echidna` 규칙
 - **MCP로는 읽기만 가능**(`StateTreeTools.get_root_states/get_children/get_tasks`) — 배치·값 변경은 에디터에서 유저가 직접. Task 인스턴스에 한 번 입력한 값은 C++ 기본값을 바꿔도 안 바뀜(노란 화살표 → Reset to Default)
@@ -78,6 +81,18 @@
   - 웨이브(`AEchidnaMirrorWallActor`) 12초마다 4개: 거울 7개(정사각형 폭에 맞닿게 `FitMirrorSize` — 폭 = 줄 폭/7, 키는 `MirrorHeight:MirrorWidth` 비율 유지. 속도 `MoveSpeed` 450 — `BP_EchidnaMirrorWall`에서 조절), 랜덤 1개가 카운터 거울(좌우 반전 초상화 + 청백 발광). 거울 콜리전 QueryOnly·WorldDynamic·채널 전부 Ignore(토네이도 오브젝트 오버랩에만). 몸통에 닿으면 줄 앞으로 밀려남(매 틱 sweep으로 거울 앞면 앞에 둠, 넉다운·데미지 없음 — `MirrorHitDamage` > 0이면 1회 데미지), 지나간 자리 불길(0.5초마다, 여러 줄 겹쳐도 `TryConsumeTickDamage("MirrorWallFire")`로 1회). 카운터 성공 → 쓰러짐 + 불길 꺼짐 + 시전자 카운터 스킬 쿨 초기화. 뒤 선 도착 = 실패: 거울만 사라지고 불길은 패턴 끝까지 남음(`VanishRow(true)`), 이미 나와 있는 줄은 `RemoveCounterMirror`(일반 거울로), 다음 줄은 안 나오고 남은 줄이 끝나면 패턴 종료(그로기 없음)
   - 패턴 동안 카운터 스킬 쿨타임 5초(`SetCounterSkillCooldownOverride`). **같은 프레임 `StartCooldown` 덮어쓰기 함정**: 돌풍은 Execute 안에서 판정 → 그 뒤 쿨타임 시작이라 `CounterResetFrame = GFrameCounter`로 같은 프레임은 건너뜀
   - 끝: `CleanupPattern()` → `bGroggyOnlyOnSuccess`(true)면 모든 줄을 카운터쳤을 때만(마지막 줄만 성공은 실패 — 놓친 줄 뒤엔 카운터 거울이 없음) 그 줄의 카운터 거울 자리(`GetCounteredMirrorLocation`, 카운터 순간 기록)에 보스가 줄 진행 방향을 보고 나타나 5초 그로기(Running 유지), 잠금 해제는 ExitState. 실패 페널티·갈급 디버프 미구현
+
+## 0줄 발악 페이즈 (`AEchidnaFinalPhaseActor` 진행자)
+- **StateTree 밖에서 돈다**: HP가 0 이하로 깎이는 데미지에서 처치 대신 `BeginFinalPhase`(`bUseFinalPhase`, 끄면 즉시 처치) — HP 0 고정(이후 데미지·미터·아이덴티티 무시), 처치와 같은 정리(`StopBossLogic` → 진행 Task ExitState), 광폭화·정산 정지, 진행자 스폰. 결과는 `CompleteFinalPhase(성공, 사유)` — 성공 = `HandleDefeated`(클리어), 실패 = `OnRaidFailed(사유)` → 컨트롤러 `BeginDefeat`(사망과 같은 패배 화면, 문구만 다름)
+- 단계: Cutscene(자리표시 — 무적+붙잡힘+줌인+대사) → MirrorShuffle → Platform → Clash. 진행자는 실시간(CustomTimeDilation 1)
+- **거울 섞기**: 보스 숨김(충돌 끔 + Flying) → 가운데 타일에 큰 거울 + 외곽 원형 8개(`AEchidnaShuffleMirrorActor`, 12시부터 시계 방향, 초상화 없이 똑바로 서서 가운데 거울을 마주 봄 — 가운데 거울만 카메라 쪽). 카메라는 패턴 동안 3/4 시점(`ShuffleCameraPitch` -40, 암 2000 — 로아 거울 무력화 화면). 라운드: 랜덤 외곽 1개 빨간 발광 1.5초 → **가운데 거울을 초상화가 5번 가로지름**(화면 왼→오 = +1, 오→왼 = -1, 인물이 치우친 쪽에서 들어옴 — 01(오른쪽 치우침)은 오→왼, 02(반전)는 왼→오 — 합계만큼 빨간 거울이 시계 방향(+)으로 이동, 8칸 순환. 거울 타원 밖은 매 틱 다각형 클리핑으로 잘라 그림) → 1.5초 → 두 거울 가라앉았다 올라옴(거울은 제자리, **빨간 여부만** `RedIndex`가 옮겨 감, 직전과 같은 쌍 금지) × 3 → 카운터 대기 8초(외곽 8개 전부 파란 발광 `SetCounterReady` + 가운데 거울 위 `8s` 카운트다운 `UWorldCountdownWidget`). 정답 = 성공 누적(2번이면 보스 등장), 오답·시간 초과 = 그 거울(시간 초과면 정답 거울)에서 저스트 가드 → 새 라운드(성공 수 유지 — 2번 성공할 때까지 무한 반복, 체력이 버티는 한)
+  - 카운터는 돌풍 토네이도 오버랩 → `ICounterable`(방향 무관). 거울은 진행자가 `SetAcceptCounter`로 켤 때만, 가라앉는 중엔 무시. 패턴 동안 카운터 스킬 쿨 5초 오버라이드, 정답이면 쿨 초기화
+- **저스트 가드**(`AEchidnaJustGuardZoneActor`): 노란 원(`JustGuardRadius` 1300 — 거울 섞기 카메라에 다 담기는 크기, 판정은 위치 무관)이 중심에서 차오르는 게이지 `FillDuration` 2.5초 → 다 차는 순간 ±0.15초 안에 G + 커서가 "플레이어→거울" ±30도(거울 200cm 안이면 방향 무시). 한 장판에 한 번만 — 일찍·방향 틀림은 그 자리에서 실패 확정(피해는 게이지가 다 찰 때), 안 누르면 늦은 창 끝에 실패. 실패 = 최대 HP × 80% Fixed. 판정 창 진입 시 게이지 색이 밝아짐. 로그 `[JustGuard] G 입력 — 타이밍 ±ms, 방향 도`로 오차 튜닝
+- 2번 성공 → 1초 뒤 거울 전부 가라앉고 보스가 마지막 정답 거울 자리에서 맵 가운데를 보고 등장 → 정면 `PlatformFrontDistance` 350에 격돌 발판(`AEchidnaClashPlatformActor`, `[G] 격돌`, 충돌 없음) → `PlatformTimeLimit` 20초 안에 G 안 누르면 실패
+- **격돌 QTE**(`AEchidnaClashQTEActor` + `UClashQTEWidget` C++ 트리, ZOrder 25): 타이밍 1개 → 2개 → 3개 → 연타 = 총 7번. 키는 Q W E R A S D F 랜덤(한 단계 안 연속 같은 키 금지). 노트 링이 `NoteApproachTime` 1.1초 동안 줄어 키 원에 겹치는 순간 ±0.15초(±0.06 PERFECT), 노트 간격 0.55초, 판정 시각보다 0.35초 넘게 이른 입력은 무시. **하나라도 놓치면 격돌 실패**(`MaxMisses` 0). 연타 = 서로 다른 키 2개 번갈아, 맞는 키 +0.06·초당 -0.18·틀린 키 -0.03, 5초 안에 가득. 게이지가 찰수록 카메라 900 → 600. 결과 글자 1.2초 뒤 진행자가 `Finish`
+  - 키는 컨트롤러 `InputKey` 오버라이드가 Enhanced Input보다 먼저 QTE에 넘김 — 후보 키는 먹어서 스킬로 안 샘
+- G 입력 순서(컨트롤러 `OnInteractKey`): 저스트 가드 장판 → 격돌 발판 → NPC. 라벨("Just Guard!"·"Counter!")은 `AEchidnaBoss::SpawnLabelText`
+- 발악 중 플레이어가 죽으면 진행자는 멈추고 일반 사망 흐름
 
 ## 보스 맵 흐름 (컨트롤러 쪽은 `Source/LoA/CLAUDE.md`)
 - 인트로: 페이드 인 → `ACameraActor`가 보스 정면 높은 곳 → 얼굴 앞 ease-in-out → 레터박스·타이틀 → 플레이어 카메라 블렌드 → `StartCombat()`. 연출 중 붙잡힘(폰이 늦게 빙의될 수 있어 매 틱), HUD 숨김, 뷰 타깃 매 틱 재설정, 카메라는 `SetLifeSpan(0.5)`로 정리

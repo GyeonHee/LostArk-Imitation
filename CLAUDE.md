@@ -51,6 +51,8 @@
 - MCP 요령: `ObjectTools.set_properties`가 위 CDO 문제의 원인 / `TextureTools.import_file`은 덮어쓰기가 안 됨(`AssetTools.delete` 후 재임포트) / Niagara `AddModule`은 지정 모듈 **뒤**에 넣음 / World Partition 레벨 저장은 `save_assets([])`
 - `EditDefaultsOnly` 값을 컴포넌트에 적용하는 건 생성자가 아니라 `BeginPlay`에서(BP 오버라이드 반영)
 - 저장 파일에 들어가는 enum(`EEquipSlot` 등)은 **뒤에만 추가**. 기존 저장 파일에 새 지급이 필요하면 별도 1회 플래그
+- **`Content/LocalOnly/`는 `.gitignore`**(GitHub LFS 무료 한도 약 10GB, 이미 8GB대) — 원본에서 통째로 가져온 안 쓰는 애셋(소서리스 의상·헤어·무기·공용 애니메이션·음성)을 둔다. 쓰게 되면 에디터에서 `LostArk/` 아래로 **옮긴 뒤** 참조·푸시(LocalOnly 애셋을 참조하면 다른 PC 클론에서 빠짐)
+- 원본 게임 추출물(PSK/PSA)은 `Tools/Blender/`의 스크립트로 FBX 변환 → MCP 임포트. 함정·절차는 `Source/LoA/Raid/CLAUDE.md`(에키드나 애니메이션) 참고. Blender를 `--factory-startup`으로 돌리면 꺼진 확장으로 보고 PSK/PSA 애드온 의존 패키지를 지워 버림 — 쓰지 말 것
 
 ### 코드
 - `TakeDamage` 오버라이드에서는 **`Super` 반환값이 아니라 인자 `DamageAmount`** 를 적용(반경 감쇠를 안 씀 — `ApplyRadialDamage`는 전부 `bDoFullDamage=true`인데도 Super가 0을 돌려준 버그). "최대 HP × N" 기믹은 `ULoATrueDamageType`(Fixed)
@@ -77,6 +79,7 @@
 - [ ] 애니메이션 BP 연결: 사망 `OnDeathVisualChanged`, 보스 처치 `OnDefeatedVisual`, 각종 CC `On*VisualChanged`
 - [ ] PIE 육안 확인: 매혹 게이지 머리 위 UI 위치·크기, `Border_GetUp` 위치/스타일
 - [ ] K(6.09) 허수아비 `LoADpsTest`로 실측 보정 — 소서리스 아이덴티티(마력 해방·점화) 추가로 DPS가 크게 오름(추정 ×1.5~1.8), 실측 후 `DA_Sorceress`에 반영
+- [ ] 0줄 발악 페이즈(`Raid/CLAUDE.md`): 진입 연출은 자리표시. 거울 섞기·저스트 가드·격돌 QTE PIE 확인(카메라·장판 반지름·판정 오차·연타 난이도)
 - [ ] 미구현: 그로기 중 받는 피해 증가, 잡화상점, 로아 각인 영웅·전설 단계 / 나중에: 스킬 레벨 → 데미지 계수 연동, 스킬 포인트 UI
 - 하지 않기로 함: 파훼 성공 보상(그네·거울잇기), 거울 카운터 실패 디버프(뒤따르는 불길 피해로 충분)
 - [ ] 밸런스 미결: 신속 몰빵 시 이동속도·쿨감이 커서 회피 패턴이 쉬워질 수 있음, 보석 Lv5→10 성장 속도

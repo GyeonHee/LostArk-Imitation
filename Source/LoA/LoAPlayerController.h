@@ -300,6 +300,10 @@ protected:
 
 private:
 	void OnPlayerDied();
+	// 격돌 실패 등 살아 있는 채로 레이드 실패 (AEchidnaBoss::OnRaidFailed)
+	void OnRaidFailedByPattern(const FText& Reason);
+	// 사망·패턴 실패 공통 — 흑백 + 패배 화면(사유 문구) + 정비소 복귀
+	void BeginDefeat(const FText& CauseText);
 	void UpdateDefeat(float DeltaSeconds);
 
 	// 대기 지역에 막 도착했고 사망 복귀 중이면 폰을 정비소 위치로 옮긴다 (BeginPlay·OnPossess 둘 다에서 — 빙의 순서가 달라서)
@@ -368,6 +372,10 @@ public:
 	/** 테스트용 콘솔 명령 — 보스 즉사(클리어 확인용) */
 	UFUNCTION(Exec)
 	void LoAKillBoss();
+
+	/** 테스트용 콘솔 명령 — 0줄 발악 페이즈 중 격돌 결과 강제(1 성공 = 클리어, 0 실패 = 레이드 실패). 예) LoAClashResult 0 */
+	UFUNCTION(Exec)
+	void LoAClashResult(int32 Result);
 
 	/** 테스트용 콘솔 명령 — 플레이어 즉사(사망 확인용) */
 	UFUNCTION(Exec)
@@ -639,6 +647,9 @@ public:
 	virtual void OnPossess(APawn* InPawn) override;
 
 	virtual void StopMovement() override;
+
+	/** 0줄 발악 격돌 QTE가 진행 중이면 키를 먼저 넘긴다 — QTE 후보 키(Q~F)는 스킬로 새지 않게 여기서 먹음 */
+	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 
 protected:
 

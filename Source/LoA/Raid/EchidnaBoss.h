@@ -180,6 +180,32 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Defeat")
 	void OnDefeatedVisual();
 
+	// ── 0줄 발악 페이즈 ─────────────────────────────────────
+	// HP가 0 이하로 깎이는 순간 바로 처치하지 않고 HP 0에서 멈춘 채(이후 데미지 무시) AI 정지 →
+	// AEchidnaFinalPhaseActor가 연출 → 저스트 가드 → 격돌 발판 → QTE 격돌을 진행. 격돌 성공 = 처치(클리어), 실패 = 레이드 실패.
+	// false면 예전처럼 HP 0 = 즉시 처치
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FinalPhase")
+	bool bUseFinalPhase = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FinalPhase")
+	TSubclassOf<class AEchidnaFinalPhaseActor> FinalPhaseClass;
+
+	UFUNCTION(BlueprintPure, Category = "FinalPhase")
+	bool IsFinalPhaseActive() const { return bFinalPhaseActive; }
+
+	class AEchidnaFinalPhaseActor* GetFinalPhaseActor() const { return FinalPhaseActor.Get(); }
+
+	/** 발악 진행자가 결과를 돌려줄 때 — 성공이면 HP 0 + 처치, 실패면 OnRaidFailed(FailReason) */
+	void CompleteFinalPhase(bool bSuccess, const FText& FailReason);
+
+	// 격돌 실패 등 패턴에 의한 레이드 실패 — ALoAPlayerController가 패배 화면(사유 문구)을 띄운다
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnBossRaidFailed, const FText& /*Reason*/);
+	FOnBossRaidFailed OnRaidFailed;
+
+	// 연출 훅 — 발악 시작 (울부짖는 연출·VFX 등)
+	UFUNCTION(BlueprintImplementableEvent, Category = "FinalPhase")
+	void OnFinalPhaseVisual();
+
 	// ── 광폭화 ──────────────────────────────────────────────
 	// 전투 시작(StartCombat)부터 이 시간이 지나면 광폭화 (초, 기본 9분)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enrage")
@@ -254,7 +280,7 @@ public:
 
 	/** 큰 패턴(시간·정산) 진행 중엔 게이지가 멈춘다 — 자연 상승도 매혹 보너스도 안 쌓임. UI는 이 동안 흑백 */
 	UFUNCTION(BlueprintPure, Category = "Settlement")
-	bool IsSettlementPaused() const { return IsTimedPatternActive(); }
+	bool IsSettlementPaused() const { return IsTimedPatternActive() || bFinalPhaseActive; }
 
 	/** 정산 패턴 발동 지점(%) — 25/75 = 똥장판, 50/100 = 거울잇기. 한 바퀴(100% 패턴) 동안 각각 한 번씩만 쓰인다.
 	 *  이름이 아니라 이 숫자로 추적하므로 StateTree 조건에는 %만 적으면 된다 */
@@ -344,6 +370,9 @@ public:
 	/** 파란 "Counter!" 글자를 Location에 띄운다 — 보스 본체 카운터와 거울 카운터(거울 위치)가 같이 쓴다 */
 	void SpawnCounterText(const FVector& Location);
 
+	/** 데미지 폰트로 글자 하나를 Location에 띄운다 — "Counter!"·"Just Guard!" 등 공용. 숫자들보다 항상 앞에 그린다 */
+	void SpawnLabelText(const FVector& Location, const FText& Text, const FLinearColor& Color, float Scale);
+
 	UFUNCTION(BlueprintPure, Category = "Counter")
 	bool IsGroggy() const { return bGroggy; }
 
@@ -395,6 +424,17 @@ private:
 	float ClearTime = 0.f;
 
 	void HandleDefeated();
+
+	bool bFinalPhaseActive = false;
+	bool bFinalPhaseFailed = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class AEchidnaFinalPhaseActor> FinalPhaseActor;
+
+	void BeginFinalPhase();
+
+	// 광폭화 타이머를 지금 남은 시간에서 멈춘다 (처치·발악 진입)
+	void FreezeEnrageTimer();
 
 	FTimerHandle IntroFallbackTimerHandle;
 

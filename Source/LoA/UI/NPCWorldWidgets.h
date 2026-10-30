@@ -50,3 +50,22 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> ActionText;
 };
+
+/**
+ * 월드 카운트다운 — "8s". 0줄 발악 거울 섞기에서 카운터 제한 시간을 가운데 거울 위에 띄운다(AEchidnaShuffleMirrorActor의 WidgetComponent)
+ */
+UCLASS()
+class LOA_API UWorldCountdownWidget : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void SetSeconds(int32 Seconds);
+
+protected:
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> CountText;
+};

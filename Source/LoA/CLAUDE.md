@@ -2,6 +2,7 @@
 
 ## ALoACharacter
 - 스탯은 `UCharacterDataAsset`(`DA_Sorceress`)이 `PostInitializeComponents`에서 덮어씀 → 실제 캐릭터는 **`BP_Sorceress`**(`BP_LostArkCharacter`는 미사용)
+- 외형은 아직 마네킹(`SKM_Quinn_Simple` + `ABP_Unarmed`). 소서리스 모델은 임포트만 됨: `Magician/Sorceress/Model/` — `Mesh/SK_Sorceress`(본 233, 키 약 1.32m라 교체 시 스케일 조정 필요), `Weapon/SK_Sorceress_Staff`, `Animations/`(전용 117 — `sk_*` 스킬은 원본 내부 이름이라 프로젝트 스킬과 짝은 재생해 보며 맞출 것). 머티리얼은 FBX 기본(색·노멀만)이라 마스크·발광은 다시 만들어야 함. 의상·헤어·무기 변형, 공용 애니메이션, 음성은 `LocalOnly/Sorceress/`
 - `ReceiveDamage(Amount, Kind)` 한 곳에서 광폭화 배율·방어력·각인 피격 효과 처리. `Fixed`(최대 HP × N 기믹)는 셋 다 안 받음 — 비율 그대로 들어감. `TakeDamage`는 인자 `DamageAmount` 사용
 - `IsActionLocked()` = 넉다운 · 경직 · 기절 · 끌려감 · 붙잡힘 · 사망 → 컨트롤러의 이동·스킬·대시 차단 지점이 전부 이걸 봄. 매혹은 일부러 **제외**(무작위 이동이 Tick 이동 경로를 써야 해서 — 대신 실제 입력 지점마다 `IsCharmed()` 체크)
 - `IsImmune()` = 사망 또는 무적(`SetInvulnerable`, 클리어·중단 시) → 데미지·CC·매혹 무시
