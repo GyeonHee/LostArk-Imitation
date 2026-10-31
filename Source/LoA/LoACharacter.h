@@ -15,6 +15,10 @@ class UWidgetComponent;
 class UBattleItemComponent;
 class UInventoryComponent;
 class UStatComponent;
+class UAnimSequence;
+class USkeletalMesh;
+class USkeletalMeshComponent;
+class ULoACharacterAnimInstance;
 struct FCombatStats;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHPChanged, float /*NewHP*/);
@@ -70,6 +74,26 @@ private:
 
 	// 경직 지속시간이 끝나면 자동 해제하는 타이머 — ApplyStagger에서 재히트마다 갱신됨
 	FTimerHandle StaggerTimerHandle;
+
+	/** BodyMeshOverride가 있으면 BP의 마네킹 메시·AnimBP를 원본 모델 + ULoACharacterAnimInstance로 바꾼다 */
+	void ApplyBodyMeshOverride();
+
+	// 저스트 가드 자세 — BeginJustGuardStance가 켜고 타이머가 끈다
+	bool bInJustGuardStance = false;
+
+protected:
+	// 애니메이션에 맞춰 코드가 캐릭터를 미는 동안(소서리스 대시) — 입력 잠금(IsActionLocked)
+	bool bScriptedMoveLock = false;
+
+	// SetVisualLift — 메시 기준 높이(BeginPlay 때 상대 Z) 위로 Current를 Target까지 보간
+	float VisualLiftTarget = 0.f;
+	float VisualLiftCurrent = 0.f;
+	float BodyMeshBaseZ = 0.f;
+	bool bBodyMeshBaseZValid = false;
+
+private:
+	FTimerHandle JustGuardStanceTimerHandle;
+	void EndJustGuardStance();
 
 	// BeginPlay 시점의 SpringArm 길이 (BP에서 바꿔둔 값 포함) — 줌 오버라이드 해제 시 여기로 돌아간다
 	float DefaultCameraArmLength = 0.f;
@@ -204,6 +228,15 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Death")
 	bool bInvulnerable = false;
+	// 대시·점멸 이동 중 — 모든 피해·CC·매혹 면역(IsImmune)
+	bool bMoveImmune = false;
+	// 다음 기상이 스페이스 즉시 기상인지 — GetUpFromKnockdown이 애니메이션을 고른다
+	bool bInstantGetUpPending = false;
+	// 기상 동작 중 — 이동·스킬 입력 잠금(마우스를 누르고 있으면 바로 걸어가 애니메이션이 끊겼다). 루트 이동(구르기)은 허용
+	bool bGetUpLock = false;
+	bool bSkillAnimMoveLock = false;
+	FTimerHandle SkillAnimMoveLockTimerHandle;
+	FTimerHandle GetUpLockTimerHandle;
 
 	// ── 각인 피격 효과 (7단계) ──
 	double DivineReadyTime = 0.0;          // 여신의 가호 다음 발동 가능 시각
@@ -298,6 +331,113 @@ public:
 
 	virtual void PostInitializeComponents() override;
 
+	/** 원본 모델 애니메이션(액션 레이어) — 몸 메시가 ULoACharacterAnimInstance가 아니면(마네킹) nullptr·무시. 스킬·상태가 쓴다 */
+	ULoACharacterAnimInstance* GetLoAAnim() const;
+	void PlayStateAnim(UAnimSequence* Sequence, bool bLoop, float BlendTime = 0.15f, bool bStopOnMove = false);
+	/** Only = 지금 재생 중인 액션이 그것일 때만 끊는다(다른 상태가 덮어쓴 뒤 늦게 오는 해제 무시) */
+	void StopStateAnim(const UAnimSequence* Only, float BlendTime = 0.2f);
+
+	// ── 원본 모델 (ULoACharacterAnimInstance — AnimBP 없이 C++가 포즈 계산) ──
+	// 비어 있으면 BP에 설정된 메시·AnimBP(마네킹) 그대로. 값은 캐릭터 클래스 생성자(ASorceress 등)가 채운다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim|Mesh")
+	TObjectPtr<USkeletalMesh> BodyMeshOverride;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim|Mesh")
+	float BodyMeshScale = 1.f;
+
+	// 메시 정면이 +X면 0 (마네킹은 +Y라 -90)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim|Mesh")
+	float BodyMeshYaw = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim|Mesh")
+	TObjectPtr<USkeletalMesh> WeaponMesh;
+
+	// 무기를 붙일 본/소켓
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim|Mesh")
+	FName WeaponSocket;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Anim|Mesh")
+	TObjectPtr<USkeletalMeshComponent> WeaponMeshComp;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> IdleAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> RunAnim;
+
+	// 이 속도(cm/s) 이상이면 달리기 100%
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	float RunAnimFullSpeed = 250.f;
+
+	// 넉다운 — 첫 타에 동작 전체를 체인으로 틀고 마지막 프레임(누운 자세)을 기상까지 유지. 정착(SettleKnockdown)은 애니메이션을 안 건드림
+	//  보통: KnockdownLoopAnim(down — 선 자세에서 뒤로 넘어져 눕기까지 한 번에)
+	//  멀리 날아감(장풍, bBlown): Air → Land 또는 TwistAir → TwistLand 랜덤
+	//  공중에서 또 맞음(에어본): Bound → BoundLand / 누운 채 또 맞음: BoundHitLand(맞아서 한 번 들썩)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> KnockdownAirAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> KnockdownLandAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> TwistKnockdownAirAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> TwistKnockdownLandAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> KnockdownLoopAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> BoundAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> BoundLandAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> BoundHitLandAnim;
+
+	// 누워 있다가 저절로 일어남
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> StandUpAnim;
+
+	// 스페이스 즉시 기상(기상기) — 앞으로 구르며 일어남, 루트 이동 적용
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> InstantGetUpAnim;
+
+	// 기상 동작 동안 조작 잠금(초) — resurrect_1은 0.55초에 다 일어서고, sk_standup_1은 1.07초에 구르기가 끝난다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	float StandUpLockTime = 0.55f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	float InstantGetUpLockTime = 1.07f;
+
+	// 매혹 중 (반복)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> CharmAnim;
+
+	// 기절·붙잡힘 (반복)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> StunAnim;
+
+	// 경직 — 둘 중 랜덤
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> StaggerAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> StaggerAltAnim;
+
+	// 사망 → 사망 반복
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> DeathAnim;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> DeathLoopAnim;
+
+	// 저스트 가드 자세 (반복)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Anim")
+	TObjectPtr<UAnimSequence> JustGuardAnim;
+
 	/** Initialization */
 	virtual void BeginPlay() override;
 
@@ -374,9 +514,10 @@ public:
 	/** 넉다운 상태로 전환 — SourceLocation 반대 방향으로 뒤로 튕겨나가 넘어지고, KnockdownHopSettleTime 뒤 실제로 눕는 단계로 전환됨.
 	 * 이미 튕겨나가는 중일 때 다시 호출하면(연속 틱 데미지 등) 정착 타이머가 갱신되어 계속 공중에 떠 있는 것처럼 보임 —
 	 * 완전히 누운 뒤에는 재호출해도 무시됨.
-	 * HopScale — 튕겨나가는 수평 힘 배율(장풍처럼 멀리 날리는 패턴용). 위로 뜨는 힘·정착 시간은 √배로 같이 늘어 포물선이 자연스럽게 길어짐 */
+	 * HopScale — 튕겨나가는 수평 힘 배율(장풍처럼 멀리 날리는 패턴용). 위로 뜨는 힘·정착 시간은 √배로 같이 늘어 포물선이 자연스럽게 길어짐
+	 * bBlown — 멀리 날아가는 동작(장풍): knockdown·twistknockdown 중 랜덤. 아니면 down */
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
-	virtual void ApplyKnockdown(const FVector& SourceLocation, float HopScale = 1.f);
+	virtual void ApplyKnockdown(const FVector& SourceLocation, float HopScale = 1.f, bool bBlown = false);
 
 	/** 끌어당기기 (에키드나 "끌고간후 장판터지는"의 줄기 촉수) — 맞는 즉시 PullHoldDuration만큼 제자리에
 	 * 멈췄다가(발이 묶인 연출) TargetLocation 쪽으로 PullSpeed(cm/s)로 강제로 끌려간다.
@@ -388,6 +529,9 @@ public:
 	/** 넉다운 즉시 해제 (자동 기상/즉시 기상 공통 진입점) */
 	UFUNCTION(BlueprintCallable, Category="Knockdown")
 	virtual void GetUpFromKnockdown();
+
+	/** 넉다운 동작 — 첫 타(보통 down / 날아감 랜덤) 또는 공중 재히트(bound) */
+	void PlayKnockdownAnim(bool bFirstHit, bool bBlown);
 
 	/** 스페이스바 즉시 기상 시도 — 넉다운 상태이고 SkillManager의 GetUpSlotIndex(19) 쿨타임이 다 찼을 때만 성공.
 	 * 쿨타임/아이콘은 대시(슬롯18)와 완전히 같은 방식으로 SkillManagerComponent가 관리 —
@@ -416,9 +560,10 @@ public:
 	bool IsStunned() const { return bIsStunned; }
 
 	/** 패턴에 붙잡힘/풀림 — 붙잡히면 캐스팅·사거리 이동을 끊고 제자리에 멈춘 채 풀릴 때까지 조작 불가.
-	 *  시간 제한이 없으므로 건 쪽(패턴 Task의 ExitState)이 반드시 false로 풀어줘야 한다 */
+	 *  시간 제한이 없으므로 건 쪽(패턴 Task의 ExitState)이 반드시 false로 풀어줘야 한다.
+	 *  bShowStunAnim — 기절 모션. 입장 이동·인트로·NPC 메뉴·연출처럼 "조작만 막는" 용도는 false(로비 → 보스맵에서 기절 모션이 나왔던 원인) */
 	UFUNCTION(BlueprintCallable, Category="Held")
-	void SetHeldByPattern(bool bHeld);
+	void SetHeldByPattern(bool bHeld, bool bShowStunAnim = true);
 
 	UFUNCTION(BlueprintPure, Category="Held")
 	bool IsHeldByPattern() const { return bIsHeld; }
@@ -438,9 +583,28 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category="Pull")
 	void OnPullVisualChanged(bool bPulled);
 
-	/** 넉다운·경직·기절·끌려가는 중 하나라도 걸려 있으면 이동/스킬 입력이 막혀야 하는 상태인지 — 컨트롤러의 입력 차단 체크에서 사용 */
+	/** 넉다운·경직·기절·끌려가는 중·저스트 가드 자세 중 하나라도 걸려 있으면 이동/스킬 입력이 막혀야 하는 상태인지 — 컨트롤러의 입력 차단 체크에서 사용 */
 	UFUNCTION(BlueprintPure, Category="Stagger")
-	bool IsActionLocked() const { return bIsDead || bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled || bIsHeld; }
+	bool IsActionLocked() const { return bIsDead || bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled || bIsHeld || bInJustGuardStance || bScriptedMoveLock || bGetUpLock; }
+
+	/** 몸(메시)만 이만큼 띄운다 — 캡슐·판정은 그대로, Tick에서 부드럽게 오르내림. 혹한의 부름처럼 공중에 떠서 시전하는 동작용. 0 = 내림 */
+	void SetVisualLift(float Height) { VisualLiftTarget = Height; }
+
+	/** 스킬 발동 애니메이션 동안 클릭 이동만 막는다(스킬·대시는 됨) — 즉발 스킬을 쓰고 바로 다른 쪽을 클릭하면 캐릭터가 돌아서
+	 *  미뤄진 효과가 그쪽으로 나가던 문제. 다시 부르면 더 긴 쪽으로 연장, CC(ForceCancel)면 SkillBase가 풀어 준다 */
+	void LockMoveForSkillAnim(float Duration);
+	void ClearSkillAnimMoveLock();
+	bool IsSkillAnimMoveLocked() const { return bSkillAnimMoveLock; }
+
+	/** 저스트 가드 자세 — Duration 동안 제자리(이동·스킬 잠금, 피격·CC 판정은 그대로). 진행 중인 저스트 가드 장판이 G를 받았을 때만 */
+	void BeginJustGuardStance(float Duration);
+
+	UFUNCTION(BlueprintPure, Category="JustGuard")
+	bool IsInJustGuardStance() const { return bInJustGuardStance; }
+
+	/** 저스트 가드 자세 시작/끝 — 막는 자세 애니메이션은 BP에서 */
+	UFUNCTION(BlueprintImplementableEvent, Category="JustGuard")
+	void OnJustGuardStanceChanged(bool bInStance);
 
 	// ── 사망 ─────────────────────────────────────────────────
 	// HP가 0 이하가 되면 ReceiveDamage가 Die()를 부른다. 이후 데미지·CC·매혹을 전부 무시하고 조작 불가(IsActionLocked).
@@ -456,7 +620,7 @@ public:
 
 	// 사망했거나 무적이면 데미지·CC를 받지 않는다
 	UFUNCTION(BlueprintPure, Category="Death")
-	bool IsImmune() const { return bIsDead || bInvulnerable; }
+	bool IsImmune() const { return bIsDead || bInvulnerable || bMoveImmune; }
 
 	/** 긴급구조 보호막 남은 양 (0 = 없음) */
 	float GetShieldHP() const { return ShieldHP; }

@@ -108,6 +108,10 @@ public:
 	UPROPERTY(Transient)
 	TArray<FName> EquippedEngravings;
 
+	// 아바타 칸별 착용 Id — UAvatarComponent
+	UPROPERTY(Transient)
+	TArray<FName> EquippedAvatars;
+
 	// 보석 합성 창에 올려 둔 재료 — 소지품에서 빠져 있으므로 저장해 두고 다음 실행 때 돌려준다
 	UPROPERTY(Transient)
 	TArray<FName> GemFuseInputs;

@@ -1,4 +1,5 @@
 #include "Raid/EchidnaMirrorWallActor.h"
+#include "Raid/EchidnaMirrorModel.h"
 #include "Stat/EngravingComponent.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoACharacter.h"
@@ -55,10 +56,10 @@ AEchidnaMirrorWallActor::AEchidnaMirrorWallActor()
 	FireMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	FireMesh->SetCastShadow(false);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-	if (CylinderFinder.Succeeded())
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> MirrorModelFinder(EchidnaMirrorModel::MeshPath);
+	if (MirrorModelFinder.Succeeded())
 	{
-		MirrorMesh = CylinderFinder.Object;
+		MirrorMesh = MirrorModelFinder.Object;
 	}
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(
@@ -156,7 +157,7 @@ void AEchidnaMirrorWallActor::RemoveCounterMirror()
 	CounterMirrorIndex = -1;
 	if (!MirrorMeshes.IsValidIndex(Index) || bCountered) return;
 
-	if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(MirrorMeshes[Index]->GetMaterial(0)))
+	if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(EchidnaMirrorModel::GetGlassMaterial(MirrorMeshes[Index])))
 	{
 		MID->SetVectorParameterValue(ColorParameterName, NormalMirrorColor);
 	}
@@ -195,15 +196,11 @@ void AEchidnaMirrorWallActor::BuildMirrors()
 		Pivot->SetRelativeLocation(FVector(0.f, GetMirrorLocalY(i), 0.f));
 		Pivot->RegisterComponent();
 
-		// 엔진 Cylinder(지름·높이 100, 중심 피벗)를 Pitch 90으로 세우면 원기둥 축이 진행 방향(+X)을 향해
-		// "정면을 보는 얇은 타원판"이 된다. Pitch 90 회전에서 로컬 X → 위, 로컬 Z → 진행 방향이므로
-		// 스케일은 (높이, 폭, 두께) 순서
+		// SM_EchidnaMirror를 받침(바닥)에 세워 진행 방향(+X)을 보게 — 프레임이 폭 MirrorWidth에 맞아 옆 거울과 맞닿는다
 		UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(this);
 		Mesh->SetupAttachment(Pivot);
 		Mesh->SetStaticMesh(MirrorMesh);
-		Mesh->SetRelativeLocation(FVector(0.f, 0.f, MirrorHeight * 0.5f));
-		Mesh->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
-		Mesh->SetRelativeScale3D(FVector(MirrorHeight / 100.f, MirrorWidth / 100.f, MirrorThickness / 100.f));
+		EchidnaMirrorModel::Place(Mesh, MirrorWidth, MirrorHeight);
 
 		// 돌풍 토네이도의 오브젝트 타입 오버랩(AllDynamicObjects)에만 잡히면 된다 — 채널 응답은 전부 무시해서
 		// 플레이어를 밀어내거나 마우스 클릭 트레이스(Visibility)를 가로채지 않게 한다
@@ -218,7 +215,7 @@ void AEchidnaMirrorWallActor::BuildMirrors()
 			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 			MID->SetVectorParameterValue(ColorParameterName,
 				bGlassMirrors ? GlassMirrorColor : (i == CounterMirrorIndex ? CounterMirrorColor : NormalMirrorColor));
-			Mesh->SetMaterial(0, MID);
+			EchidnaMirrorModel::SetGlassMaterial(Mesh, MID);
 		}
 
 		Mesh->RegisterComponent();
@@ -240,11 +237,12 @@ UProceduralMeshComponent* AEchidnaMirrorWallActor::CreatePortrait(USceneComponen
 	Portrait->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Portrait->SetCastShadow(false);
 
-	// 거울(세운 Cylinder)은 받침 기준 X 방향 두께가 가운데 정렬이라 앞면 = +두께/2. 1cm 띄워 Z-파이팅 방지
-	const float FrontX = MirrorThickness * 0.5f + 1.f;
-	const float CenterZ = MirrorHeight * 0.5f;
-	const float RadiusY = MirrorWidth * 0.5f * PortraitInset;
-	const float RadiusZ = MirrorHeight * 0.5f * PortraitInset;
+	// 유리 타원 안 — 유리면(x≈0)에서 1cm 띄워 Z-파이팅 방지
+	const float ModelScale = EchidnaMirrorModel::FitScale(MirrorWidth, MirrorHeight);
+	const float FrontX = 1.f;
+	const float CenterZ = EchidnaMirrorModel::GlassCenterZ * ModelScale;
+	const float RadiusY = EchidnaMirrorModel::GlassWidth * 0.5f * ModelScale * PortraitInset;
+	const float RadiusZ = EchidnaMirrorModel::GlassHeight * 0.5f * ModelScale * PortraitInset;
 
 	// 타원 팬 — 거울 테두리를 따라 잘려 사각형 모서리가 삐져나오지 않는다.
 	// UV는 세로 반지름 하나로 양축을 나눠 텍스처 비율(정사각)을 유지하고 가로는 가운데만 잘라 쓴다.
@@ -488,7 +486,8 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 
 	if (AEchidnaBoss* BossPtr = Boss.Get())
 	{
-		const FVector MirrorTop = MirrorMeshes[CounterMirrorIndex]->GetComponentLocation() + FVector(0.f, 0.f, MirrorHeight * 0.5f + 40.f);
+		const FBox MirrorBox = MirrorMeshes[CounterMirrorIndex]->Bounds.GetBox();
+		const FVector MirrorTop = FVector(MirrorBox.GetCenter().X, MirrorBox.GetCenter().Y, MirrorBox.Max.Z + 40.f);
 		BossPtr->SpawnCounterText(MirrorTop);
 	}
 	return true;

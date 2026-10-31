@@ -7,6 +7,7 @@
 #include "UI/CharacterPreviewActor.h"
 #include "UI/GemPageWidget.h"
 #include "UI/EngravingPageWidget.h"
+#include "UI/AvatarPageWidget.h"
 #include "Stat/ArkPassiveComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "LoAPlayerController.h"
@@ -606,6 +607,7 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 			NSLOCTEXT("CharInfo", "TabEquip", "장비"),
 			NSLOCTEXT("CharInfo", "TabEngraving", "각인"),
 			NSLOCTEXT("CharInfo", "TabGem", "보석"),
+			NSLOCTEXT("CharInfo", "TabAvatar", "아바타"),
 		};
 		for (int32 i = 0; i < UE_ARRAY_COUNT(TabNames); ++i)
 		{
@@ -641,7 +643,8 @@ TSharedRef<SWidget> UCharacterInfoWidget::RebuildWidget()
 		}
 		EngravingPage = CreateWidget<UEngravingPageWidget>(this, UEngravingPageWidget::StaticClass());
 		GemPage = CreateWidget<UGemPageWidget>(this, UGemPageWidget::StaticClass());
-		for (UWidget* Page : { static_cast<UWidget*>(EngravingPage.Get()), static_cast<UWidget*>(GemPage.Get()) })
+		AvatarPage = CreateWidget<UAvatarPageWidget>(this, UAvatarPageWidget::StaticClass());
+		for (UWidget* Page : { static_cast<UWidget*>(EngravingPage.Get()), static_cast<UWidget*>(GemPage.Get()), static_cast<UWidget*>(AvatarPage.Get()) })
 		{
 			if (!Page) continue;
 			Page->SetVisibility(ESlateVisibility::Collapsed);
@@ -703,9 +706,18 @@ void UCharacterInfoWidget::SetStatComponent(UStatComponent* InStats)
 	Refresh();
 }
 
+void UCharacterInfoWidget::SetAvatar(UAvatarComponent* InAvatar)
+{
+	if (!AvatarPage) TakeWidget();
+	if (AvatarPage) AvatarPage->SetAvatar(InAvatar);
+}
+
 void UCharacterInfoWidget::SetPreviewActor(ACharacterPreviewActor* InPreview)
 {
 	PreviewActor = InPreview;
+	if (!AvatarPage) TakeWidget();
+	// [아바타] 탭도 같은 미리보기(렌더 타깃) — 탭마다 하나씩 보인다
+	if (AvatarPage) AvatarPage->SetPreviewActor(InPreview);
 	if (!PreviewImage) TakeWidget();
 	if (!PreviewImage) return;
 
@@ -997,7 +1009,7 @@ void UCharacterInfoWidget::RefreshGearSlots()
 
 void UCharacterInfoWidget::SetTab(int32 Tab)
 {
-	CurrentTab = FMath::Clamp(Tab, 0, 2);
+	CurrentTab = FMath::Clamp(Tab, 0, 3);
 	for (int32 i = 0; i < TabBorders.Num(); ++i)
 	{
 		const bool bActive = i == CurrentTab;
@@ -1007,6 +1019,7 @@ void UCharacterInfoWidget::SetTab(int32 Tab)
 	if (EquipBody) EquipBody->SetVisibility(CurrentTab == 0 ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	if (EngravingPage) EngravingPage->SetVisibility(CurrentTab == 1 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (GemPage) GemPage->SetVisibility(CurrentTab == 2 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (AvatarPage) AvatarPage->SetVisibility(CurrentTab == 3 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	// [상세정보] 칸은 장비 탭 것 — 다른 탭에선 닫는다
 	if (CurrentTab != 0 && bDetailOpen) HandleDetailClicked();
 }

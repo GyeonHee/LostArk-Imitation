@@ -35,7 +35,7 @@ enum class EEchidnaLinkResult : uint8
  *     닿으면 그 타일에 노란 테두리. 2칸째: 플레이어 타일 바로 옆의 보스(다음 거울) 타일 — 이어지면 성공.
  *     1칸째 타일에 플레이어가 없거나(2칸 이상 떨어짐 / 다른 방향), 플레이어 옆 칸에 보스가 없으면 빛은 그 칸에서 멈추고 실패
  * 결과는 GetResult()로 — 실패 페널티(전 타일 빨강 + 즉사급)와 정리는 패턴 Task가 한다.
- * 비주얼은 기존 거울(AEchidnaMirrorActor)과 같은 컨벤션: 엔진 Cylinder 원반 + M_EchidnaMirrorSurface, 빛줄기는 Plane, 빛 덩어리는 Sphere
+ * 비주얼: 거울은 기존 거울(AEchidnaMirrorActor)과 같은 SM_EchidnaMirror, 빛줄기는 Plane, 빛 덩어리는 Sphere
  */
 UCLASS(Blueprintable)
 class LOA_API AEchidnaLinkMirrorActor : public AActor
@@ -88,11 +88,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
 	float OrbHitRadius = 70.f;
 
-	// 거울 원반 지름 (cm) — 엔진 Cylinder 지름 100 기준으로 스케일
+	// 거울 크기 (cm) — SM_EchidnaMirror 프레임을 이 정사각형에 맞춤(키 기준이라 프레임 키 = 이 값)
 	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
 	float MirrorDiameter = 240.f;
 
-	// 타일 윗면에서 거울 원반 아래 끝까지 띄우는 높이 (cm) — 원반 중심 = 이 값 + 반지름
+	// 타일 윗면에서 거울 프레임 아래 끝까지 띄우는 높이 (cm)
 	UPROPERTY(EditDefaultsOnly, Category = "LinkMirror")
 	float MirrorFloatHeight = 60.f;
 

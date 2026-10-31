@@ -53,6 +53,7 @@ void ULoAGameInstance::LoadFromDisk()
 	GemSlots = Save->GemSlots;
 	EngravingBooks = Save->EngravingBooks;
 	EquippedEngravings = Save->EquippedEngravings;
+	EquippedAvatars = Save->EquippedAvatars;
 	GemFuseInputs = Save->GemFuseInputs;
 	bGemsUpgradedToLv7 = Save->bGemsUpgradedToLv7;
 	bEngravingBooksV2 = Save->bEngravingBooksV2;
@@ -111,6 +112,7 @@ void ULoAGameInstance::SaveToDisk()
 	Save->GemSlots = GemSlots;
 	Save->EngravingBooks = EngravingBooks;
 	Save->EquippedEngravings = EquippedEngravings;
+	Save->EquippedAvatars = EquippedAvatars;
 	Save->GemFuseInputs = GemFuseInputs;
 	Save->bGemsUpgradedToLv7 = bGemsUpgradedToLv7;
 	Save->bEngravingBooksV2 = bEngravingBooksV2;

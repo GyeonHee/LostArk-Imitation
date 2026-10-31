@@ -194,16 +194,35 @@ bool USkillManagerComponent::IsSkillLocked() const
     return false;
 }
 
+bool USkillManagerComponent::IsExecutePending() const
+{
+    return GetMaxPendingExecuteRemaining() > 0.f;
+}
+
+float USkillManagerComponent::GetMaxPendingExecuteRemaining() const
+{
+    float Max = 0.f;
+    for (const TObjectPtr<USkillBase>& Skill : SlotInstances)
+    {
+        if (Skill) Max = FMath::Max(Max, Skill->GetPendingExecuteRemaining());
+    }
+    return Max;
+}
+
 void USkillManagerComponent::ReleaseSkillLock(bool bWithPostDelay)
 {
     GetWorld()->GetTimerManager().ClearTimer(PostDelayTimer);
 
-    if (bWithPostDelay && SkillPostDelay > 0.f)
+    // 즉발 스킬은 효과가 화면에 나올 때(선딜 끝)까지 잠금 — 그사이 누른 스킬은 대기했다가 효과 직후 나간다(로아 선입력).
+    // 스킬마다 선딜이 달라서(SkillAnim_Table ExecuteDelay) 잠금 길이도 스킬별
+    const float Pending = GetMaxPendingExecuteRemaining();
+    const float Delay = FMath::Max(bWithPostDelay ? SkillPostDelay : 0.f, Pending > 0.f ? Pending + 0.02f : 0.f);
+    if (Delay > 0.f)
     {
         bPostDelaying = true;
         GetWorld()->GetTimerManager().SetTimer(
             PostDelayTimer, this, &USkillManagerComponent::OnSkillLockReleased,
-            SkillPostDelay, false);
+            Delay, false);
     }
     else
     {
@@ -215,6 +234,11 @@ void USkillManagerComponent::OnSkillLockReleased()
 {
     bPostDelaying = false;
 
+    // 기다리는 사이 CC·사망이면 대기 입력은 버린다
+    if (const ALoACharacter* Char = Cast<ALoACharacter>(GetOwner()); Char && Char->IsActionLocked())
+    {
+        QueuedSkillSlot = -1;
+    }
     if (QueuedSkillSlot != -1)
     {
         const int32 Queued = QueuedSkillSlot;
@@ -268,8 +292,6 @@ void USkillManagerComponent::TryActivateSkill(int32 SlotIndex)
                 ManaCost = ManaCost * (1.f - Stats->GetStats().ManaCostReduction) + Char->GetMaxMP() * Stats->GetStats().ManaCostMaxMPPercent;
             }
         }
-        UE_LOG(LogTemp, Warning, TEXT("[Skill] 슬롯%d 마나소모 시도: %.0f / 현재MP: %.0f"),
-            SlotIndex, ManaCost, Char->GetMP());
         if (!Char->ConsumeMP(ManaCost))
         {
             UE_LOG(LogTemp, Warning, TEXT("[Skill] 마나 부족으로 스킬 취소"));

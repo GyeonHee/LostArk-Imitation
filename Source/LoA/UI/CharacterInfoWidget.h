@@ -40,7 +40,10 @@ public:
 	/** [각인]·[보석] 탭 데이터 (7단계) — 열 때·Tick마다 넘긴다(같으면 아무것도 안 함) */
 	void SetBuildSources(class UGemComponent* InGems, class UEngravingComponent* InEngravings, class UInventoryComponent* InInventory, class USkillManagerComponent* InSkills);
 
-	/** 탭 — 0 장비 / 1 각인 / 2 보석 */
+	/** [아바타] 탭 데이터 — 열 때·Tick마다 넘긴다(같으면 아무것도 안 함). 아바타가 없는 캐릭터면 nullptr */
+	void SetAvatar(class UAvatarComponent* InAvatar);
+
+	/** 탭 — 0 장비 / 1 각인 / 2 보석 / 3 아바타 */
 	void SetTab(int32 Tab);
 	int32 GetTab() const { return CurrentTab; }
 
@@ -153,6 +156,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UWidget> EquipBody;
 	UPROPERTY(Transient) TObjectPtr<class UGemPageWidget> GemPage;
 	UPROPERTY(Transient) TObjectPtr<class UEngravingPageWidget> EngravingPage;
+	UPROPERTY(Transient) TObjectPtr<class UAvatarPageWidget> AvatarPage;
 
 	// ── 아크 패시브 칸 (왼쪽 아래) ──
 	UPROPERTY(Transient) TObjectPtr<UBorder> ArkPassiveBox;

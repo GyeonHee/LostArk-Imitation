@@ -140,7 +140,7 @@ void ARaidEntranceActor::BeginTravel()
 	{
 		if (ALoACharacter* Character = Cast<ALoACharacter>(Pawn))
 		{
-			Character->SetHeldByPattern(true);
+			Character->SetHeldByPattern(true, false);	// 조작만 막음 — 기절 모션 없이
 		}
 		else if (UPawnMovementComponent* Movement = Pawn->GetMovementComponent())
 		{

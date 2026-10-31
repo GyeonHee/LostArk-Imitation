@@ -1,5 +1,8 @@
 #include "UI/CharacterPreviewActor.h"
 #include "Animation/AnimationAsset.h"
+#include "Animation/AnimSequence.h"
+#include "LoACharacter.h"
+#include "Item/AvatarComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -160,16 +163,59 @@ void ACharacterPreviewActor::SetupFromCharacter(const ACharacter* Source)
 
 	MeshComp->SetSkeletalMesh(Mesh);
 	MeshComp->SetRelativeScale3D(SourceMesh->GetRelativeScale3D());
+	// 마네킹은 정면 +Y(-90), 원본 모델은 +X(0) — 캐릭터 메시의 회전을 그대로
+	MeshComp->SetRelativeRotation(FRotator(0.f, SourceMesh->GetRelativeRotation().Yaw, 0.f));
 	// 캐릭터 BP에서 바꾼 머티리얼까지 그대로
 	for (int32 i = 0; i < SourceMesh->GetNumMaterials(); ++i)
 	{
 		MeshComp->SetMaterial(i, SourceMesh->GetMaterial(i));
 	}
 
-	// 캐릭터의 AnimBP는 폰(속도 등)을 읽어서 쓰지 않는다 — 단일 Idle 애니메이션만
-	if (IdleAnimation && IdleAnimation->GetSkeleton() == Mesh->GetSkeleton())
+	// 아바타 — 몸은 리더, 칸별 파츠가 포즈를 따른다(캐릭터와 같은 구성). 아바타가 없으면 파츠를 숨긴다
+	const UAvatarComponent* Avatar = Source->FindComponentByClass<UAvatarComponent>();
+	const ALoACharacter* SourceChar = Cast<ALoACharacter>(Source);
+	AvatarParts.SetNum(LoAAvatars::SlotCount);
+	CaptureComp->ShowOnlyComponents.Reset();
+	CaptureComp->ShowOnlyComponents.Add(MeshComp);
+	// 아바타가 있으면 몸은 얼굴·눈·머리카락만(캐릭터와 같은 구성), 없으면 전부
+	if (Avatar) LoAAvatars::ShowOnlyBaseBodySections(MeshComp);
+	else for (int32 Lod = 0; Lod < FMath::Max(1, MeshComp->GetNumLODs()); ++Lod) MeshComp->ShowAllMaterialSections(Lod);
+	for (int32 i = 0; i < LoAAvatars::SlotCount; ++i)
 	{
-		MeshComp->PlayAnimation(IdleAnimation, true);
+		const EAvatarSlot Slot = static_cast<EAvatarSlot>(i);
+		USkeletalMeshComponent* Part = AvatarParts[i];
+		if (!Part)
+		{
+			Part = NewObject<USkeletalMeshComponent>(this, *FString::Printf(TEXT("PreviewAvatar_%d"), i));
+			Part->SetupAttachment(MeshComp);
+			Part->SetLightingChannels(false, true, false);
+			Part->bReceivesDecals = false;
+			Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Part->RegisterComponent();
+			AvatarParts[i] = Part;
+		}
+		USkeletalMesh* PartMesh = Avatar ? Avatar->ResolveMesh(Slot) : nullptr;
+		Part->SetSkeletalMesh(PartMesh);
+		if (Slot == EAvatarSlot::Weapon)
+		{
+			// 무기는 자체 스켈레톤 — 손 소켓에 붙이기만
+			const FName Socket = SourceChar ? SourceChar->WeaponSocket : NAME_None;
+			Part->AttachToComponent(MeshComp, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
+		}
+		else
+		{
+			Part->SetLeaderPoseComponent(MeshComp);
+		}
+		Part->SetVisibility(PartMesh != nullptr);
+		CaptureComp->ShowOnlyComponents.Add(Part);
+	}
+
+	// 캐릭터의 AnimBP는 폰(속도 등)을 읽어서 쓰지 않는다 — 단일 Idle 애니메이션만. 원본 모델이면 캐릭터의 IdleAnim
+	const ALoACharacter* LoAChar = Cast<ALoACharacter>(Source);
+	UAnimationAsset* Idle = (LoAChar && LoAChar->IdleAnim) ? static_cast<UAnimationAsset*>(LoAChar->IdleAnim.Get()) : IdleAnimation.Get();
+	if (Idle && Idle->GetSkeleton() == Mesh->GetSkeleton())
+	{
+		MeshComp->PlayAnimation(Idle, true);
 	}
 	else
 	{

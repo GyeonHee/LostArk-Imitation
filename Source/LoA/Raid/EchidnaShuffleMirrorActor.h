@@ -86,13 +86,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Visual")
 	float CountdownHeightOffset = 80.f;
 
-	// Scale 1 기준 크기 (cm) — 거울 카운터 줄 거울과 같은 비율
+	// Scale 1 기준 크기 (cm) — SM_EchidnaMirror 프레임이 이 상자 안에 균일 스케일로 들어간다(거울 카운터 줄 거울과 같은 값)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Shape")
 	float MirrorHeight = 270.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Shape")
 	float MirrorWidth = 195.f;
 
+	// 원기둥 판 시절 값 — SM_EchidnaMirror로 바뀐 뒤엔 안 씀
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Shape")
 	float MirrorThickness = 20.f;
 
@@ -121,6 +122,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Visual")
 	FLinearColor RedColor = FLinearColor(9.f, 0.6f, 0.4f, 1.f);
 
+	// 빨간 거울은 프레임까지 — 메시 전체에 오버레이 머티리얼(BaseMaterial, 보스 카운터 창 발광과 같은 방식)을 한 겹.
+	// 유리만 빨가면 비스듬히 보이는 6시 쪽 거울은 잘 안 보였음. Alpha = 오버레이 불투명도
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Visual")
+	FLinearColor RedFrameGlowColor = FLinearColor(10.f, 0.5f, 0.3f, 0.6f);
+
 	// 카운터 대기 — 거울 카운터 줄의 카운터 거울과 같은 청백
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Visual")
 	FLinearColor CounterReadyColor = FLinearColor(1.5f, 3.5f, 9.f, 1.f);
@@ -129,7 +135,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Visual")
 	FLinearColor CounterColor = FLinearColor(5.f, 10.f, 20.f, 1.f);
 
-	/** 초상화 머티리얼 — M_EchidnaMirrorPortrait(Texture "Portrait" × Vector "Tint") */
+	/** 초상화 머티리얼 — M_EchidnaMirrorPortraitPass(Texture "Portrait" × Vector "Tint", 반투명 + Responsive AA,
+	 *  불투명도 = 텍스처 알파 × 유리 타원 마스크 "ClipCenter"/"ClipAxisY"/"ClipAxisZ") */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Portrait")
 	TObjectPtr<UMaterialInterface> PortraitMaterial;
 
@@ -148,14 +155,19 @@ public:
 	FLinearColor RedPortraitTint = FLinearColor(3.f, 0.5f, 0.4f, 1.f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShuffleMirror|Portrait", meta = (ClampMin = "0.1", ClampMax = "1.0"))
-	float PortraitInset = 0.88f;
+	float PortraitInset = 0.96f;
 
 private:
 	enum class EAnim : uint8 { None, Appear, Dip, Vanish };
 
 	void EnsurePortraitMID();
-	/** 거울 타원을 "초상화 한 장 폭" 세로 띠(가운데 OffsetY)로 잘라 그린다. 띠 밖이면 비움. 정지 초상화는 OffsetY 0 */
-	void BuildPortraitSection(float OffsetY);
+	/** 받침 로컬 기준 유리 타원(초상화 영역) — 중심 높이, 가로·세로 반지름 */
+	void GetPortraitEllipse(float& OutCenterZ, float& OutRadiusY, float& OutRadiusZ) const;
+	/** 정사각 초상화 한 장을 만든다(한 번만). 지나가기는 컴포넌트 이동, 타원 밖은 머티리얼 마스크 */
+	void BuildPortraitQuad();
+	/** 머티리얼 마스크용 유리 타원(월드)을 갱신 — 받침이 움직일 때마다 */
+	void UpdatePortraitClip();
+	float GetPortraitPassTravel() const;
 	void ApplyColors();
 	float GetSinkDepth() const;
 
@@ -164,6 +176,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> PortraitMID;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> FrameGlowMID;
 
 	EAnim AnimMode = EAnim::None;
 	float AnimElapsed = 0.f;

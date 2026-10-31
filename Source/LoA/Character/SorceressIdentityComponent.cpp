@@ -89,15 +89,57 @@ float USorceressIdentityComponent::GetBlinkCost() const
 	return LoASorceressIdentity::BlinkCost * (1.f - ArkValue(TEXT("Enl_RefluxEnergy"), 0) / 100.f);
 }
 
-void USorceressIdentityComponent::AddGaugeFromHit(float HitCoefficient)
+namespace
+{
+	/** 스킬별 신비한 마력 수급량 — 풀히트 1회(풀 게이지 10000 기준 값 ÷ 100 = 게이지 %), 특화 0·룬 없음.
+	 *  출처: 유저가 준 표(혹한 1150 · 아이스 에로우 620 · 인페르노 310/스택 · 블레이즈 틱당 약 30(합 약 220) · 돌풍 50 ·
+	 *  종말의 날 250 · 익스플로전 230 · 천벌 200). Key = 데미지 액터에 붙는 SkillRowName, DtRow = 스킬 계수를 읽을 DT 행
+	 *  (종말의 날 BP는 행 이름이 "Meteor"라 따로) */
+	struct FSorceressSkillGauge
+	{
+		const TCHAR* Key;
+		const TCHAR* DtRow;
+		float Gauge;
+	};
+	const FSorceressSkillGauge SorceressIdentity_SkillGauge[] = {
+		{ TEXT("혹한의부름"), TEXT("혹한의부름"), 11.5f },
+		{ TEXT("아이스에로우"), TEXT("아이스에로우"), 6.2f },
+		{ TEXT("인페르노"),   TEXT("인페르노"),   3.1f },
+		{ TEXT("블레이즈"),   TEXT("블레이즈"),   2.2f },
+		{ TEXT("돌풍"),       TEXT("돌풍"),       0.5f },
+		{ TEXT("종말의날"),   TEXT("종말의날"),   2.5f },
+		{ TEXT("Meteor"),     TEXT("종말의날"),   2.5f },
+		{ TEXT("익스플로전"), TEXT("익스플로전"), 2.3f },
+		{ TEXT("천벌"),       TEXT("천벌"),       2.0f },
+	};
+}
+
+void USorceressIdentityComponent::AddGaugeFromHit(float HitCoefficient, FName SkillRowName)
 {
 	if (State != ESorceressMagickState::None || HitCoefficient <= 0.f || Gauge >= LoASorceressIdentity::MaxGauge) return;
 	// 정열의 춤사위 +, 안정된 관리자 -
 	const float GainScale = FMath::Max(0.f, 1.f + ArkValue(TEXT("Evo_PassionateDance"), 0) / 100.f - ArkValue(TEXT("Evo_StableManager"), 1) / 100.f);
-	Gauge = FMath::Min(LoASorceressIdentity::MaxGauge, Gauge + HitCoefficient * LoASorceressIdentity::GaugePerCoefficient * GainScale);
+
+	float Gain = HitCoefficient * LoASorceressIdentity::GaugePerCoefficient;
+	const FString Key = SkillRowName.ToString();
+	for (const FSorceressSkillGauge& Entry : SorceressIdentity_SkillGauge)
+	{
+		if (Key != Entry.Key) continue;
+		// 다단히트는 타격마다 스킬 계수를 나눠 가지므로, 이 타격의 몫 = 타격 계수 ÷ 스킬 계수(전부 맞으면 합이 1)
+		const USkillManagerComponent* SkillManager = GetOwner() ? GetOwner()->FindComponentByClass<USkillManagerComponent>() : nullptr;
+		const FSkillData* Row = SkillManager && SkillManager->SkillDataTable
+			? SkillManager->SkillDataTable->FindRow<FSkillData>(Entry.DtRow, TEXT("IdentityGauge"), false) : nullptr;
+		const float Share = Row && Row->DamageCoefficient > 0.f ? FMath::Min(1.f, HitCoefficient / Row->DamageCoefficient) : 1.f;
+		// 특화 — StatComponent는 배율(1 + 포인트 × 0.0005)만 들고 있어 포인트로 되돌린다
+		const UStatComponent* Stats = UStatComponent::Find(GetOwner());
+		const float SpecPoints = Stats ? (Stats->GetStats().SpecializationMultiplier - 1.f) / LoAStatRules::SpecializationPerPoint : 0.f;
+		Gain = Entry.Gauge * Share * (1.f + FMath::Max(0.f, SpecPoints) * LoASorceressIdentity::GaugeGainPerSpecialization);
+		break;
+	}
+	Gauge = FMath::Min(LoASorceressIdentity::MaxGauge, Gauge + Gain * GainScale);
 }
 
-bool USorceressIdentityComponent::TryRelease(FText& OutFailReason)
+bool USorceressIdentityComponent::CanRelease(FText& OutFailReason) const
 {
 	OutFailReason = FText::GetEmpty();
 	if (IsReleaseBlocked())
@@ -111,6 +153,12 @@ bool USorceressIdentityComponent::TryRelease(FText& OutFailReason)
 		OutFailReason = NSLOCTEXT("Identity", "NotEnough", "신비한 마력이 부족합니다.");
 		return false;
 	}
+	return true;
+}
+
+bool USorceressIdentityComponent::TryRelease(FText& OutFailReason)
+{
+	if (!CanRelease(OutFailReason)) return false;
 	UWorld* World = GetWorld();
 	if (!World) return false;
 
@@ -225,12 +273,10 @@ void USorceressIdentityComponent::ApplyModifiers()
 	if (State == ESorceressMagickState::Amplify)
 	{
 		Add(T::SkillDamage, LoASorceressIdentity::AmplifySkillDamage);
-		Add(T::CastSpeed, LoASorceressIdentity::AmplifyCastSpeed);
 	}
 	else if (State == ESorceressMagickState::Release)
 	{
 		Add(T::SkillDamage, LoASorceressIdentity::ReleaseSkillDamage);
-		Add(T::CastSpeed, LoASorceressIdentity::ReleaseCastSpeed);
 		Add(T::CooldownReduction, LoASorceressIdentity::ReleaseCooldownReduction);
 		Add(T::CritRate, ArkValue(TEXT("Enl_IgniterEmber"), 0) / 100.0);        // 점화의 불씨
 		Add(T::CritDamage, ArkValue(TEXT("Enl_Ignite"), 0) / 100.0);            // 발화 (무력화 피해는 없음)

@@ -1,4 +1,5 @@
 #include "Raid/EchidnaMirrorActor.h"
+#include "Raid/EchidnaMirrorModel.h"
 #include "Raid/EchidnaBoss.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
@@ -32,24 +33,17 @@ AEchidnaMirrorActor::AEchidnaMirrorActor()
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMeshFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> MirrorModelFinder(EchidnaMirrorModel::MeshPath);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMeshFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DefaultMatFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 
-	// 거울 프롭 메시가 따로 임포트돼 있지 않아서(EchidnaModling/other/Mirror엔 텍스처만 있음),
-	// 엔진 기본 Cylinder를 납작하게 눌러 원반(거울) 모양으로 흉내내고 M_EchidnaMirrorSurface(거울 텍스처로 만든
-	// 실제 머티리얼)를 입힘 — 구(Sphere) + 단색 대신 "동그랗고 거울처럼 보이는" 형태
+	// 거울 몸체 = SM_EchidnaMirror(원본 PSK 변환, 피벗 바닥·정면 +X). 머티리얼은 메시 기본값(프레임 원본 텍스처 +
+	// 유리 M_EchidnaMirrorSurface). 크기·높이는 BeginPlay에서(BP 컴포넌트 트리 값을 덮어씀)
 	MirrorMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MirrorMeshComp"));
 	MirrorMeshComp->SetupAttachment(Root);
-	MirrorMeshComp->SetRelativeLocation(FVector(0.f, 0.f, 120.f));
-	MirrorMeshComp->SetRelativeRotation(FRotator(90.f, 0.f, 0.f)); // 원판의 납작한 면이 정면(로컬 +X)을 보도록 눕힘
-	MirrorMeshComp->SetRelativeScale3D(FVector(1.2f, 1.2f, 0.15f));
 	MirrorMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MirrorMeshComp->SetCastShadow(false);
-	if (CylinderMeshFinder.Succeeded()) MirrorMeshComp->SetStaticMesh(CylinderMeshFinder.Object);
-
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MirrorSurfaceMatFinder(TEXT("/Game/LostArk/Raid/Echidna/Pattern/M_EchidnaMirrorSurface.M_EchidnaMirrorSurface"));
-	if (MirrorSurfaceMatFinder.Succeeded()) MirrorMeshComp->SetMaterial(0, MirrorSurfaceMatFinder.Object);
+	if (MirrorModelFinder.Succeeded()) MirrorMeshComp->SetStaticMesh(MirrorModelFinder.Object);
 
 	ZoneMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ZoneMeshComp"));
 	ZoneMeshComp->SetupAttachment(Root);
@@ -71,6 +65,11 @@ void AEchidnaMirrorActor::BeginPlay()
 	// 광폭화 중에 스폰된 패턴은 Tick 기반 진행(이동·추적·연출)이 보스와 같은 배율로 빨라진다.
 	// 월드 타이머는 이 값을 따르지 않으므로 SetTimer 쪽은 시간을 CustomTimeDilation으로 나눠서 건다
 	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
+
+	// 유리 중심이 MirrorGlassCenterHeight에 오도록 바닥에서 띄운다 — 레이저가 유리 중심에서 나감(ComputeLaserBeam)
+	const float MirrorScale = EchidnaMirrorModel::FitScale(MirrorFrameHeight, MirrorFrameHeight);
+	EchidnaMirrorModel::Place(MirrorMeshComp, MirrorFrameHeight, MirrorFrameHeight,
+		MirrorGlassCenterHeight - EchidnaMirrorModel::GlassCenterZ * MirrorScale);
 
 	// 8거울은 나중 차례 거울을 미리 스폰만 해두고 Activate()를 늦게 부른다 — 그 전엔 장판(엔진 Plane 기본 흰색)이 보이면 안 됨
 	if (!bActivated && ZoneMeshComp)
@@ -273,13 +272,13 @@ void AEchidnaMirrorActor::UpdateMirrorBodyRotation()
 		}
 
 		// 액터 자체는 플레이어를 조준하느라 거의 수직으로(Pitch≈-90도) 아래를 보게 되는데, 몸체까지 그 Pitch를
-		// 그대로 물려받으면 "서 있는" 원판이 도로 눕는 것처럼 보임 — 그래서 Pitch는 고정 90도(세워진 자세)로 둠
-		MirrorMeshComp->SetWorldRotation(FRotator(90.f, BodyYaw, 0.f));
+		// 그대로 물려받으면 서 있는 거울이 눕는 것처럼 보임 — 그래서 Pitch 0(세워진 자세)으로 둠
+		MirrorMeshComp->SetWorldRotation(FRotator(0.f, BodyYaw, 0.f));
 	}
 	else
 	{
 		// 일반 모드 — 액터가 수평으로만 회전하므로 상대 회전 고정값 그대로 두면 항상 정면을 보고 서 있음
-		MirrorMeshComp->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
+		MirrorMeshComp->SetRelativeRotation(FRotator::ZeroRotator);
 	}
 }
 
@@ -518,8 +517,8 @@ bool AEchidnaMirrorActor::ComputeLaserBeam(FVector& OutStart, FRotator& OutRotat
 {
 	const FVector ActorLoc = GetActorLocation();
 
-	// 시작점은 거울 몸체 중심(액터보다 위에 떠 있음), 끝점은 판정 박스의 끝
-	OutStart = MirrorMeshComp ? MirrorMeshComp->GetComponentLocation() : ActorLoc;
+	// 시작점은 거울 유리 중심(액터보다 위에 떠 있음), 끝점은 판정 박스의 끝
+	OutStart = MirrorMeshComp ? EchidnaMirrorModel::GetGlassCenter(MirrorMeshComp) : ActorLoc;
 	FVector End = ActorLoc + GetActorForwardVector() * GetEffectiveBeamRange();
 	if (!bSkyGuidedMode)
 	{

@@ -20,4 +20,8 @@ public:
 	virtual void OnKeyUp(AActor* Owner) override;
 
 	virtual bool GetCastProgress(float& OutElapsed, float& OutTotal) const override;
+
+private:
+	// 시작할 때 정한 이번 캐스팅 시간 — 도중에 마력 강화가 끝나도 바 길이가 바뀌지 않게
+	float CurrentCastTime = 0.f;
 };

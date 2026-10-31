@@ -3,6 +3,7 @@
 #include "Raid/EchidnaClashPlatformActor.h"
 #include "Raid/EchidnaShuffleMirrorActor.h"
 #include "Raid/EchidnaJustGuardZoneActor.h"
+#include "Raid/EchidnaBarrierActor.h"
 #include "Raid/EchidnaClashQTEActor.h"
 #include "Raid/HexArena.h"
 #include "Skill/SkillManagerComponent.h"
@@ -56,7 +57,7 @@ void AEchidnaFinalPhaseActor::EnterStep(EEchidnaFinalPhaseStep NewStep)
 		if (Char)
 		{
 			Char->SetInvulnerable(true);
-			Char->SetHeldByPattern(true);
+			Char->SetHeldByPattern(true, false);
 			bPlayerHeld = true;
 		}
 		SetCameraZoom(CutsceneCameraArmLength);
@@ -84,7 +85,7 @@ void AEchidnaFinalPhaseActor::EnterStep(EEchidnaFinalPhaseStep NewStep)
 		{
 			// 발판 가운데에서 보스를 마주 보고 붙잡힘 — QTE 동안 이동·스킬 불가
 			Char->SetInvulnerable(true);
-			Char->SetHeldByPattern(true);
+			Char->SetHeldByPattern(true, false);
 			bPlayerHeld = true;
 			if (Platform)
 			{
@@ -196,6 +197,7 @@ void AEchidnaFinalPhaseActor::BeginShuffle()
 		Mirror->OnCounterHit.AddUObject(this, &AEchidnaFinalPhaseActor::OnMirrorCountered);
 		OuterMirrors.Add(Mirror);
 	}
+	SpawnRingBarriers();
 
 	CounterSuccesses = 0;
 	ShowStepMessage(TEXT("[발악] 빨간 거울의 위치를 기억하세요"));
@@ -316,9 +318,9 @@ void AEchidnaFinalPhaseActor::TickShuffle(float DeltaTime)
 		}
 		if (CounterTimeLimit > 0.f && ShuffleElapsed >= CounterTimeLimit)
 		{
-			// 시간 초과 = 오답과 같이 — 빨간 거울에서 저스트 가드 장판
-			UE_LOG(LogLoA, Log, TEXT("[FinalPhase] 카운터 시간 초과 — 빨간 거울에서 저스트 가드"));
-			StartJustGuard(RedIndex);
+			// 시간 초과 = 오답과 같이 — 가운데에서 저스트 가드 장판
+			UE_LOG(LogLoA, Log, TEXT("[FinalPhase] 카운터 시간 초과 — 저스트 가드 (정답 %d번)"), RedIndex);
+			StartJustGuard();
 		}
 		break;
 
@@ -397,7 +399,7 @@ void AEchidnaFinalPhaseActor::OnMirrorCountered(AEchidnaShuffleMirrorActor* Mirr
 	if (Index != RedIndex)
 	{
 		UE_LOG(LogLoA, Log, TEXT("[FinalPhase] 오답 카운터 — %d번 (정답 %d번)"), Index, RedIndex);
-		StartJustGuard(Index);
+		StartJustGuard();
 		return;
 	}
 
@@ -425,12 +427,11 @@ void AEchidnaFinalPhaseActor::OnMirrorCountered(AEchidnaShuffleMirrorActor* Mirr
 	}
 }
 
-void AEchidnaFinalPhaseActor::StartJustGuard(int32 MirrorIndex)
+void AEchidnaFinalPhaseActor::StartJustGuard()
 {
 	SetAllMirrorsAcceptCounter(false);
-	AEchidnaShuffleMirrorActor* Mirror = OuterMirrors.IsValidIndex(MirrorIndex) ? OuterMirrors[MirrorIndex].Get() : nullptr;
 	UWorld* World = GetWorld();
-	if (!Mirror || !World)
+	if (!World)
 	{
 		SetShuffle(EShuffle::RoundRest);
 		return;
@@ -440,13 +441,14 @@ void AEchidnaFinalPhaseActor::StartJustGuard(int32 MirrorIndex)
 	Params.Owner = this;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	UClass* Class = JustGuardZoneClass ? JustGuardZoneClass.Get() : AEchidnaJustGuardZoneActor::StaticClass();
-	const FVector Center = Mirror->GetActorLocation();
-	JustGuardZone = World->SpawnActor<AEchidnaJustGuardZoneActor>(Class, Center, FRotator::ZeroRotator, Params);
+	// 가운데 거울에서 외곽 거울까지 꽉 차는 원 — 방향 판정도 장판 중심(가운데 거울) 쪽
+	JustGuardZone = World->SpawnActor<AEchidnaJustGuardZoneActor>(Class, ArenaCenter, FRotator::ZeroRotator, Params);
 	if (JustGuardZone)
 	{
-		JustGuardZone->Activate(Player.Get(), Boss.Get(), JustGuardRadius);
+		// 파동은 가운데 거울 유리 중심(배율 1.55 → 바닥에서 약 180)의 한 점에서 퍼진다
+		JustGuardZone->Activate(Player.Get(), Boss.Get(), OuterRingRadius, CenterMirror, 180.f);
 	}
-	ShowStepMessage(TEXT("[발악] 게이지가 다 차는 순간 거울 쪽을 가리키고 G — 저스트 가드!"));
+	ShowStepMessage(TEXT("[발악] 게이지가 다 차는 순간 가운데 거울 쪽을 가리키고 G — 저스트 가드!"));
 	SetShuffle(EShuffle::JustGuard);
 }
 
@@ -529,6 +531,57 @@ void AEchidnaFinalPhaseActor::ClearMirrors(bool bAnimate)
 		JustGuardZone->Destroy();
 		JustGuardZone = nullptr;
 	}
+	ClearRingBarriers();
+}
+
+void AEchidnaFinalPhaseActor::SpawnRingBarriers()
+{
+	ClearRingBarriers();
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// 외곽 거울 원을 정다각형 벽으로 — 안쪽 면이 OuterRingRadius에 오게 두께는 바깥쪽으로, 이음매는 조금 겹쳐 틈을 없앤다
+	const int32 Count = FMath::Max(8, RingBarrierSegments);
+	const float HalfT = RingBarrierThickness * 0.5f;
+	const float HalfH = RingBarrierHeight * 0.5f;
+	const float HalfLen = (OuterRingRadius + RingBarrierThickness) * FMath::Tan(PI / Count) + HalfT;
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const FVector Dir = FRotator(0.f, 360.f * i / Count, 0.f).Vector();
+		// 박스 로컬 X = 바깥 방향(두께), Y = 원 둘레 방향(길이)
+		if (AEchidnaBarrierActor* Barrier = World->SpawnActor<AEchidnaBarrierActor>(AEchidnaBarrierActor::StaticClass(),
+			ArenaCenter + Dir * (OuterRingRadius + HalfT) + FVector(0.f, 0.f, HalfH), Dir.Rotation(), Params))
+		{
+			Barrier->SetHalfExtent(FVector(HalfT, HalfLen, HalfH));
+			RingBarriers.Add(Barrier);
+		}
+	}
+
+	// 원 밖에 있으면 벽 바깥에 갇히므로 가운데 쪽으로 옮긴다(가운데 거울과 겹치지 않게 반지름 절반 지점)
+	if (ALoACharacter* Char = Player.Get())
+	{
+		const float Radius = Char->GetCapsuleComponent()->GetScaledCapsuleRadius();
+		const FVector Offset = (Char->GetActorLocation() - ArenaCenter) * FVector(1.f, 1.f, 0.f);
+		if (Offset.Size() > OuterRingRadius - Radius)
+		{
+			const FVector Dir = Offset.IsNearlyZero() ? FVector::ForwardVector : Offset.GetSafeNormal();
+			FVector Target = ArenaCenter + Dir * OuterRingRadius * 0.5f;
+			Target.Z = Char->GetActorLocation().Z;
+			Char->SetActorLocation(Target, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+	}
+}
+
+void AEchidnaFinalPhaseActor::ClearRingBarriers()
+{
+	for (AEchidnaBarrierActor* Barrier : RingBarriers)
+	{
+		if (IsValid(Barrier)) Barrier->Destroy();
+	}
+	RingBarriers.Reset();
 }
 
 // ── 격돌 ─────────────────────────────────────────────────────

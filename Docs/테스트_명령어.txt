@@ -89,6 +89,7 @@ LoA.Preview.Light <배율>        캐릭터 정보 창(P) 3D 미리보기 라이
 LoA.Preview.Exposure <EV>       미리보기 노출 보정 (기본 0)
 LoA.SlotShine <0|1>             소지품 칸 빛 훑기 (마우스 올림·아이템 끌고 지나갈 때) — 0 끔 / 1 켬(기본)
 LoA.SlotShine.Duration <초>     빛이 칸을 지나가는 시간 (기본 0.28)
+LoA.JustGuard.FillDuration <초> 저스트 가드 게이지가 다 차는 시간 덮어쓰기 (0 = 장판 액터 값 1.6, 다음 장판부터)
 
 
 ■ 단축키 (참고)

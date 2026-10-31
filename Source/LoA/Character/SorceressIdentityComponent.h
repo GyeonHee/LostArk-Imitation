@@ -20,14 +20,15 @@ namespace LoASorceressIdentity
 	constexpr float MaxGauge                 = 100.f;
 	constexpr float MinRelease               = 30.f;    // 마력 방출 최소 게이지
 	// 추정 — 계수 1만큼 맞히면 +1.8%. 시작 세트(Σ 계수/쿨 ≈ 3.1)로 약 18초에 가득 → 해방 8초, 점화 사이클 약 26초
-	constexpr float GaugePerCoefficient      = 1.8f;
+	constexpr float GaugePerCoefficient      = 1.8f;    // 아래 표에 없는 스킬(기본공격)만 — 타격 계수 × 1.8
+	constexpr float GaugeGainPerSpecialization = 0.00136f; // 특화 1포인트당 수급 +0.136% — 특화 1800이면 ×3.45(유저 제공 표의 "특화 1800 + 풍요 룬" 실전값 ÷ 기본값 평균)
 	// 추정 — 지속시간 = 소모한 게이지 × 0.08초 (해방 8초). 30%에 눌러도 짧게만 켜져서 모아 쓰는 게 낫다
 	constexpr float SecondsPerGauge          = 0.08f;
 	constexpr float ReleaseCooldown          = 2.f;
 	constexpr float AmplifySkillDamage       = 0.09f;   // 속성 스킬 피해 (소서리스 스킬은 전부 속성 — 기본공격 제외)
 	constexpr float ReleaseSkillDamage       = 0.18f;
-	constexpr float AmplifyCastSpeed         = 0.15f;   // 추정 — 로아는 "캐스팅 시간 단축"(수치 미공개)
-	constexpr float ReleaseCastSpeed         = 0.30f;   // 추정
+	constexpr float CastTimeReduction        = 1.f;     // 강화·해방 중 캐스팅 스킬 시전 시간 1초 감소(인벤 정리글·출시 소개 — 나무위키는 "짧아진다"만)
+	constexpr float MinCastTime              = 0.1f;    // 감소 후 하한 — 0초가 되어 바 없이 즉발이 되지 않게
 	constexpr float ReleaseCooldownReduction = 0.25f;   // 해방 중 쓴 스킬 쿨타임 (이동기·기상기 제외)
 	constexpr float BlinkCost                = 30.f;    // PVE 3000 / 10000
 	constexpr float BlinkCooldown            = 1.f;
@@ -39,7 +40,8 @@ namespace LoASorceressIdentity
 
 /**
  * 소서리스 아이덴티티 — 신비한 마력 게이지 + 마력 방출(Z) + 점멸(X). ASorceress가 만든다.
- *  - 게이지: 보스·허수아비를 맞힐 때 그 타격의 계수만큼 찬다(ULoADamageLibrary::NotifyIdentityHit). 강화·해방 중엔 안 찬다
+ *  - 게이지: 보스·허수아비를 맞힐 때 스킬별 수급량(풀히트 기준, SorceressIdentity_SkillGauge 표) × 이 타격의 몫(타격 계수 ÷ 스킬 계수)
+ *    × 특화 배율. 표에 없는 기본공격은 계수 × 1.8. 강화·해방 중엔 안 찬다(ULoADamageLibrary::NotifyIdentityHit)
  *  - 마력 방출: 게이지 전부를 써서 강화(30~99%) 또는 해방(100%). 지속시간은 게이지 비례
  *  - 해방: 속성 피해·캐스팅 속도·쿨감 + 슈퍼아머(넉다운·경직 무시 — 기절·끌려감·붙잡힘·매혹은 받는다)
  *  - 점멸: 게이지 30%로 15m 순간이동(보스는 넘고 벽은 못 넘음). 아크 패시브 환류의 기운·마력 충전·응집되는 마력은 여기서 발동
@@ -71,10 +73,12 @@ public:
 	bool IsSuperArmor() const { return State == ESorceressMagickState::Release; }
 
 	/** 보스·허수아비 피격 — 그 타격의 계수(ULoADamageLibrary::NotifyIdentityHit가 계산) */
-	void AddGaugeFromHit(float HitCoefficient);
+	void AddGaugeFromHit(float HitCoefficient, FName SkillRowName);
 
 	/** 마력 방출(Z). 실패하면 이유(조용히 무시할 땐 빈 글자) */
 	bool TryRelease(FText& OutFailReason);
+	/** TryRelease가 지금 성공할지만 본다(게이지·쿨·환류) — 애니메이션을 먼저 틀고 주먹 쥘 때 실제 방출할 때 */
+	bool CanRelease(FText& OutFailReason) const;
 
 	/** 점멸(X) — 이동은 ASorceress::BlinkTo가 한다 */
 	bool TryBlink(const FVector& TargetLocation, FText& OutFailReason);

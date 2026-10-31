@@ -104,7 +104,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorSpacing = 300.f;
 
-	// 키:폭 비율(약 1.385)이 실제로 쓰이는 값 — 거울 카운터 줄은 정사각형 폭에 7개가 맞닿도록 폭을 덮어쓰고(FitMirrorSize)
+	// SM_EchidnaMirror 프레임이 폭×키 상자에 균일 스케일로 들어간다(프레임 키:폭 1.31 < 1.385라 폭 기준 — 옆 거울과 맞닿음).
+	// 거울 카운터 줄은 정사각형 폭에 7개가 맞닿도록 폭을 덮어쓰고(FitMirrorSize)
 	// 키는 이 비율로 따라간다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorHeight = 270.f;
@@ -112,6 +113,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorWidth = 195.f;
 
+	// 원기둥 판 시절 값 — SM_EchidnaMirror로 바뀐 뒤엔 안 씀
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Shape")
 	float MirrorThickness = 20.f;
 
@@ -215,9 +217,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Portrait")
 	FLinearColor CounterPortraitTint = FLinearColor(0.8f, 1.4f, 3.f, 1.f);
 
-	// 거울 테두리 안쪽으로 얼마나 들어와서 그릴지 (1 = 거울 크기 그대로)
+	// 유리 타원 안쪽으로 얼마나 들어와서 그릴지 (1 = 유리 크기 그대로)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Portrait", meta = (ClampMin = "0.1", ClampMax = "1.0"))
-	float PortraitInset = 0.88f;
+	float PortraitInset = 0.96f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MirrorWall|Portrait")
 	FName PortraitTextureParameterName = TEXT("Portrait");

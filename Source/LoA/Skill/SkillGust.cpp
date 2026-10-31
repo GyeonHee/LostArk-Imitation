@@ -7,6 +7,7 @@
 
 void USkillGust::Execute_Implementation(AActor* Owner)
 {
+    // 방향·애니메이션·발사 순간까지 미루기는 USkillInstant::OnKeyDown — 미뤄진 발동은 누를 때 돌아선 방향(액터 정면)으로
     if (!IsValid(Owner) || !ZoneClass) return;
 
     ALoACharacter* Character = Cast<ALoACharacter>(Owner);
@@ -17,7 +18,8 @@ void USkillGust::Execute_Implementation(AActor* Owner)
     // 조준 지점 — 바닥 트레이스가 빗나가도(거울 카운터의 비스듬한 시점에서 맵 밖·하늘을 가리킬 때) 방향은 나온다.
     // 예전엔 여기서 return해서 토네이도 없이 마나·쿨타임만 빠졌다(TryActivateSkill이 Execute 결과와 무관하게 StartCooldown)
     FVector AimLocation;
-    if (!PC->GetCursorAimLocation(AimLocation)) return;
+    if (bLastExecuteDeferred) AimLocation = Owner->GetActorLocation() + Owner->GetActorForwardVector() * 1000.f;
+    else if (!PC->GetCursorAimLocation(AimLocation)) return;
 
     // 캐릭터 → 커서 수평 방향
     const FVector OwnerLoc = Owner->GetActorLocation();

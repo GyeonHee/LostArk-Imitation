@@ -1,4 +1,5 @@
 #include "Raid/EchidnaLinkMirrorActor.h"
+#include "Raid/EchidnaMirrorModel.h"
 #include "Raid/EchidnaBoss.h"
 #include "Raid/HexArena.h"
 #include "Raid/HexTile.h"
@@ -23,21 +24,18 @@ AEchidnaLinkMirrorActor::AEchidnaLinkMirrorActor()
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMeshFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> MirrorModelFinder(EchidnaMirrorModel::MeshPath);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMeshFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMeshFinder(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MirrorSurfaceMatFinder(TEXT("/Game/LostArk/Raid/Echidna/Pattern/M_EchidnaMirrorSurface.M_EchidnaMirrorSurface"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GlowMatFinder(TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser"));
 
-	// 거울 원반 — 기존 거울(AEchidnaMirrorActor)과 같은 모양. 로컬 +X(정면)를 보도록 세움 → 액터가 돌면 같이 돈다
+	// 거울 — SM_EchidnaMirror(기존 거울 AEchidnaMirrorActor와 같은 모델)가 로컬 +X(정면)를 보고 섬 → 액터가 돌면 같이 돈다.
+	// 머티리얼은 메시 기본값(프레임 원본 텍스처 + 유리 M_EchidnaMirrorSurface)
 	MirrorMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MirrorMeshComp"));
 	MirrorMeshComp->SetupAttachment(Root);
-	MirrorMeshComp->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
-	MirrorMeshComp->SetRelativeScale3D(FVector(1.2f, 1.2f, 0.15f));
 	MirrorMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MirrorMeshComp->SetCastShadow(false);
-	if (CylinderMeshFinder.Succeeded()) MirrorMeshComp->SetStaticMesh(CylinderMeshFinder.Object);
-	if (MirrorSurfaceMatFinder.Succeeded()) MirrorMeshComp->SetMaterial(0, MirrorSurfaceMatFinder.Object);
+	if (MirrorModelFinder.Succeeded()) MirrorMeshComp->SetStaticMesh(MirrorModelFinder.Object);
 
 	BeamMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BeamMeshComp"));
 	BeamMeshComp->SetupAttachment(Root);
@@ -64,9 +62,8 @@ void AEchidnaLinkMirrorActor::BeginPlay()
 	// 광폭화 규칙 — Tick 기반이라 이 값만으로 추적·발사가 같이 빨라진다
 	CustomTimeDilation = AEchidnaBoss::GetEnrageTimeScale(this);
 
-	// 세운 원반이라 로컬 X·Y = 지름, Z = 두께 (Cylinder 지름·높이 100)
-	MirrorMeshComp->SetRelativeScale3D(FVector(MirrorDiameter / 100.f, MirrorDiameter / 100.f, 0.15f));
-	MirrorMeshComp->SetRelativeLocation(FVector(0.f, 0.f, MirrorFloatHeight + MirrorDiameter * 0.5f));
+	// 예전 원반(지름 MirrorDiameter)이 차지하던 정사각형에 프레임을 맞춤 — 키 기준이라 꼭대기 높이가 같다
+	EchidnaMirrorModel::Place(MirrorMeshComp, MirrorDiameter, MirrorDiameter, MirrorFloatHeight);
 	OrbMeshComp->SetWorldScale3D(FVector(OrbRadius / 50.f));	// 엔진 Sphere = 반지름 50
 
 	if (UMaterialInterface* GlowMat = BeamMeshComp->GetMaterial(0))

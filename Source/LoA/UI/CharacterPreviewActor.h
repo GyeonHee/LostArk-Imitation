@@ -57,6 +57,10 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USkeletalMeshComponent> MeshComp;
 
+	// 아바타 파츠(EAvatarSlot 순서, 무기 칸 = 손 소켓) — 원본 캐릭터에 UAvatarComponent가 있을 때만. MeshComp가 숨은 리더
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USkeletalMeshComponent>> AvatarParts;
+
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USceneCaptureComponent2D> CaptureComp;
 

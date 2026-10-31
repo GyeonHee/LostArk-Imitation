@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LoACharacter.h"
+#include "Character/LoACharacterAnimInstance.h"
+#include "Animation/AnimSequence.h"
+#include "Engine/SkeletalMesh.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoAPlayerController.h"
 #include "Engine/DamageEvents.h"
@@ -45,6 +48,11 @@ ALoACharacter::ALoACharacter()
 	GetCharacterMovement()->bSnapToPlaneAtStart = true;
 	GetCharacterMovement()->MaxAcceleration = 99999.0f;
 
+	// 무기 — WeaponMesh가 있을 때만 ApplyBodyMeshOverride가 메시를 넣고 WeaponSocket에 붙인다
+	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp"));
+	WeaponMeshComp->SetupAttachment(GetMesh());
+	WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// Create the skill manager component
 	SkillManager = CreateDefaultSubobject<USkillManagerComponent>(TEXT("SkillManager"));
 
@@ -88,6 +96,7 @@ ALoACharacter::ALoACharacter()
 void ALoACharacter::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
+	ApplyBodyMeshOverride();
 
 	if (CharacterData)
 	{
@@ -106,6 +115,59 @@ void ALoACharacter::PostInitializeComponents()
 	{
 		StatComponent->OnStatsChanged.AddUObject(this, &ALoACharacter::HandleStatsChanged);
 		StatComponent->InitializeFromData(CharacterData);
+	}
+}
+
+void ALoACharacter::ApplyBodyMeshOverride()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	if (!BodyMeshOverride || !Body) return;
+
+	// BP에 마네킹용 머티리얼 오버라이드가 남아 있으면 새 메시 슬롯에 엉뚱하게 들어가므로 비운다
+	Body->EmptyOverrideMaterials();
+	Body->SetSkeletalMesh(BodyMeshOverride);
+	Body->SetAnimInstanceClass(ULoACharacterAnimInstance::StaticClass());
+	// 원본 모델은 피벗이 발밑 — 캡슐 바닥에 맞춘다
+	Body->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight()),
+		FRotator(0.f, BodyMeshYaw, 0.f));
+	Body->SetRelativeScale3D(FVector(BodyMeshScale));
+
+	if (ULoACharacterAnimInstance* Anim = GetLoAAnim())
+	{
+		Anim->SetLocomotion(IdleAnim, RunAnim, RunAnimFullSpeed);
+	}
+
+	if (WeaponMeshComp)
+	{
+		WeaponMeshComp->SetSkeletalMesh(WeaponMesh);
+		WeaponMeshComp->SetVisibility(WeaponMesh != nullptr);
+		if (WeaponMesh)
+		{
+			WeaponMeshComp->AttachToComponent(Body, FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket);
+		}
+	}
+}
+
+ULoACharacterAnimInstance* ALoACharacter::GetLoAAnim() const
+{
+	return GetMesh() ? Cast<ULoACharacterAnimInstance>(GetMesh()->GetAnimInstance()) : nullptr;
+}
+
+void ALoACharacter::PlayStateAnim(UAnimSequence* Sequence, bool bLoop, float BlendTime, bool bStopOnMove)
+{
+	if (!Sequence) return;
+	if (ULoACharacterAnimInstance* Anim = GetLoAAnim())
+	{
+		Anim->PlayAction(Sequence, bLoop, BlendTime, bStopOnMove);
+	}
+}
+
+void ALoACharacter::StopStateAnim(const UAnimSequence* Only, float BlendTime)
+{
+	if (!Only) return;
+	if (ULoACharacterAnimInstance* Anim = GetLoAAnim())
+	{
+		Anim->StopAction(BlendTime, Only);
 	}
 }
 
@@ -180,6 +242,60 @@ void ALoACharacter::HandleCharmGaugeChanged(int32 NewGauge)
 void ALoACharacter::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+
+	// 매혹 중 스킬(무작위 발동) 동작이 끝나 액션이 비면 다시 매혹 동작으로
+	if (bIsCharmed && CharmAnim && !IsActionLocked())
+	{
+		if (ULoACharacterAnimInstance* Anim = GetLoAAnim(); Anim && !Anim->GetCurrentActionSequence())
+		{
+			PlayStateAnim(CharmAnim, true, 0.1f);
+		}
+	}
+
+	// 몸만 띄우기(혹한의 부름 등) — 오를 때·내릴 때 모두 보간
+	if (USkeletalMeshComponent* Body = GetMesh())
+	{
+		if (!bBodyMeshBaseZValid)
+		{
+			BodyMeshBaseZ = Body->GetRelativeLocation().Z;
+			bBodyMeshBaseZValid = true;
+		}
+		if (!FMath::IsNearlyEqual(VisualLiftCurrent, VisualLiftTarget, 0.1f))
+		{
+			VisualLiftCurrent = FMath::FInterpTo(VisualLiftCurrent, VisualLiftTarget, DeltaSeconds, 8.f);
+			FVector Rel = Body->GetRelativeLocation();
+			Rel.Z = BodyMeshBaseZ + VisualLiftCurrent;
+			Body->SetRelativeLocation(Rel);
+		}
+	}
+
+	// 스킬 애니메이션의 루트 이동(익스플로전 뒤로 점프 등) — 메시 공간 → 월드(배율·회전), 수평만, 벽에 막힘
+	if (ULoACharacterAnimInstance* Anim = GetLoAAnim())
+	{
+		const FVector RootDelta = Anim->ConsumeRootMotion();
+		// 기상 잠금(bGetUpLock)은 입력만 막는다 — 기상기 구르기는 이 루트 이동으로 나간다
+		const bool bRootMotionBlocked = bIsDead || bIsKnockedDown || bIsStaggered || bIsStunned || bIsPulled || bIsHeld
+			|| bInJustGuardStance || bScriptedMoveLock;
+		if (!RootDelta.IsNearlyZero() && !bRootMotionBlocked)
+		{
+			FVector WorldDelta = GetMesh()->GetComponentTransform().TransformVector(RootDelta);
+			WorldDelta.Z = 0.f;
+			// CMC의 SafeMove — 바닥에 딱 붙어 시작해도(넉다운 정착 직후) 겹침을 풀고 미끄러지듯 이동. AddActorWorldOffset sweep은
+			// 시작부터 막혀서 기상기가 제자리였다
+			FHitResult Hit;
+			GetCharacterMovement()->SafeMoveUpdatedComponent(WorldDelta, GetActorQuat(), true, Hit);
+			if (Hit.IsValidBlockingHit())
+			{
+				// 벽에 막히면 남은 이동을 벽면을 따라(수평) 한 번 더 — SlideAlongSurface는 protected라 직접
+				FVector Slide = FVector::VectorPlaneProject(WorldDelta * (1.f - Hit.Time), Hit.Normal);
+				Slide.Z = 0.f;
+				if (!Slide.IsNearlyZero())
+				{
+					GetCharacterMovement()->SafeMoveUpdatedComponent(Slide, GetActorQuat(), true, Hit);
+				}
+			}
+		}
+	}
 
 	MPRegenAccum += DeltaSeconds;
 	if (MPRegenAccum >= 1.f)
@@ -385,6 +501,16 @@ void ALoACharacter::Die()
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Death] 플레이어 사망"));
+	if (ULoACharacterAnimInstance* Anim = GetLoAAnim(); Anim && DeathAnim)
+	{
+		FLoAAnimStep Fall;
+		Fall.Sequence = DeathAnim;
+		Fall.bHoldLastFrame = true;
+		FLoAAnimStep Lie;
+		Lie.Sequence = DeathLoopAnim;
+		Lie.bLoop = true;
+		Anim->PlayActionChain(DeathLoopAnim ? TArray<FLoAAnimStep>{ Fall, Lie } : TArray<FLoAAnimStep>{ Fall }, 0.1f);
+	}
 	OnDeathVisualChanged(true);
 	OnDied.Broadcast();
 }
@@ -446,6 +572,7 @@ void ALoACharacter::AddCharmGauge(int32 Amount)
 		GetWorldTimerManager().SetTimer(CharmedTimerHandle, this, &ALoACharacter::EndCharm, CharmedDuration, false);
 
 		bIsCharmed = true;
+		PlayStateAnim(CharmAnim, true, 0.1f);
 		OnCharmedChanged.Broadcast(true);
 		return;
 	}
@@ -482,17 +609,29 @@ void ALoACharacter::EndCharm()
 	if (bIsCharmed)
 	{
 		bIsCharmed = false;
+		StopStateAnim(CharmAnim);
 		OnCharmedChanged.Broadcast(false);
 	}
 }
 
-void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation, float HopScale)
+void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation, float HopScale, bool bBlown)
 {
 	if (IsImmune()) return;
 
-	// 이미 완전히 누운 상태면 재입력 무시. 정착 타이머 대기 중(bKnockdownAirborne)엔 재히트를 허용해서
-	// 타이머를 계속 갱신 — 거울 레이저처럼 틱마다 맞는 패턴은 그동안 계속 공중에 떠 있는 것처럼 보임
-	if (bIsKnockedDown && !bKnockdownAirborne) return;
+	// 이미 완전히 누운 상태면 넉다운은 다시 안 걸고 "맞아서 들썩" 동작만(시간 연장 없음). 정착 타이머 대기 중(bKnockdownAirborne)엔
+	// 재히트를 허용해서 타이머를 계속 갱신 — 거울 레이저처럼 틱마다 맞는 패턴은 그동안 계속 공중에 떠 있는 것처럼 보임
+	if (bIsKnockedDown && !bKnockdownAirborne)
+	{
+		ULoACharacterAnimInstance* Anim = GetLoAAnim();
+		if (Anim && BoundHitLandAnim && Anim->GetCurrentActionSequence() != BoundHitLandAnim)
+		{
+			FLoAAnimStep Hit;
+			Hit.Sequence = BoundHitLandAnim;
+			Hit.bHoldLastFrame = true;
+			Anim->PlayActionChain({ Hit }, 0.06f);
+		}
+		return;
+	}
 
 	const bool bFirstHit = !bIsKnockedDown;
 
@@ -538,11 +677,48 @@ void ALoACharacter::ApplyKnockdown(const FVector& SourceLocation, float HopScale
 	// 맞을 때마다 이 타이머를 새로 시작하므로, 연속 타격 동안은 계속 갱신되어 눕지 않는다
 	GetWorldTimerManager().SetTimer(KnockdownSettleTimerHandle, this, &ALoACharacter::SettleKnockdown, KnockdownHopSettleTime * FMath::Max(ArcScale, 1.f), false);
 
+	PlayKnockdownAnim(bFirstHit, bBlown);
 	if (bFirstHit)
 	{
 		OnKnockdownChanged.Broadcast(true);
 		OnKnockdownVisualChanged(true);
 	}
+}
+
+void ALoACharacter::PlayKnockdownAnim(bool bFirstHit, bool bBlown)
+{
+	ULoACharacterAnimInstance* Anim = GetLoAAnim();
+	if (!Anim) return;
+
+	// 동작 전체를 체인으로 — 마지막 단계는 누운 자세로 기상까지 유지
+	auto Play = [Anim](UAnimSequence* First, UAnimSequence* Second)
+	{
+		if (!First) return;
+		FLoAAnimStep A;
+		A.Sequence = First;
+		A.bHoldLastFrame = Second == nullptr;
+		FLoAAnimStep B;
+		B.Sequence = Second;
+		B.bHoldLastFrame = true;
+		Anim->PlayActionChain(Second ? TArray<FLoAAnimStep>{ A, B } : TArray<FLoAAnimStep>{ A }, 0.08f);
+	};
+
+	if (!bFirstHit)
+	{
+		// 공중에 떠 있는 동안 또 맞음(에어본) — 다시 튀어 오르는 동작. 틱마다 맞아도 처음부터 다시 틀지 않게
+		if (BoundAnim && Anim->GetCurrentActionSequence() != BoundAnim) Play(BoundAnim, BoundLandAnim);
+		return;
+	}
+	if (bBlown)
+	{
+		// 장풍처럼 멀리 날아감 — 두 종류 중 랜덤
+		if (TwistKnockdownAirAnim && FMath::RandBool()) Play(TwistKnockdownAirAnim, TwistKnockdownLandAnim);
+		else Play(KnockdownAirAnim, KnockdownLandAnim);
+		return;
+	}
+	// 보통 넉다운 — down 하나에 뒤로 넘어져 눕기까지 들어 있다
+	if (KnockdownLoopAnim) Play(KnockdownLoopAnim, nullptr);
+	else Play(KnockdownAirAnim, KnockdownLandAnim);
 }
 
 void ALoACharacter::ApplyPull(const FVector& TargetLocation, float PullSpeed)
@@ -675,6 +851,7 @@ void ALoACharacter::SettleKnockdown()
 	GetCharacterMovement()->DisableMovement();
 
 	GetWorldTimerManager().SetTimer(KnockdownTimerHandle, this, &ALoACharacter::GetUpFromKnockdown, KnockdownDuration, false);
+	// 애니메이션은 맞을 때 튼 체인이 이어서 누운 자세까지 간다(PlayKnockdownAnim)
 
 	OnKnockdownSettled();
 }
@@ -690,8 +867,54 @@ void ALoACharacter::GetUpFromKnockdown()
 	GetCharacterMovement()->bConstrainToPlane = true;
 	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 
+	// 기상 — 스페이스 즉시 기상이면 앞으로 구르며(루트 이동), 아니면 천천히 일어남. 바로 움직이면 끊고 달리기로
+	const bool bInstant = bInstantGetUpPending;
+	bInstantGetUpPending = false;
+	UAnimSequence* GetUpAnim = bInstant && InstantGetUpAnim ? InstantGetUpAnim.Get() : StandUpAnim.Get();
+	if (ULoACharacterAnimInstance* Anim = GetLoAAnim())
+	{
+		if (GetUpAnim)
+		{
+			FLoAAnimStep Step;
+			Step.Sequence = GetUpAnim;
+			Step.bRootMotion = bInstant;
+			Anim->PlayActionChain({ Step }, 0.1f, true);
+			// 일어서는(구르는) 동안은 조작 잠금 — 그 뒤 남은 꼬리는 움직이면 끊김
+			const float LockTime = bInstant ? InstantGetUpLockTime : StandUpLockTime;
+			if (LockTime > 0.f)
+			{
+				bGetUpLock = true;
+				GetCharacterMovement()->StopMovementImmediately();
+				if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(GetController())) PC->CancelAutoMove();
+				GetWorldTimerManager().SetTimer(GetUpLockTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]() { bGetUpLock = false; }), LockTime, false);
+			}
+		}
+		else
+		{
+			Anim->StopAction(0.2f);
+		}
+	}
+
 	OnKnockdownChanged.Broadcast(false);
 	OnKnockdownVisualChanged(false);
+}
+
+void ALoACharacter::LockMoveForSkillAnim(float Duration)
+{
+	if (Duration <= 0.f) return;
+	const float Remaining = GetWorldTimerManager().IsTimerActive(SkillAnimMoveLockTimerHandle)
+		? GetWorldTimerManager().GetTimerRemaining(SkillAnimMoveLockTimerHandle) : 0.f;
+	if (Remaining >= Duration) return;
+	bSkillAnimMoveLock = true;
+	GetCharacterMovement()->StopMovementImmediately();
+	if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(GetController())) PC->CancelAutoMove();
+	GetWorldTimerManager().SetTimer(SkillAnimMoveLockTimerHandle, this, &ALoACharacter::ClearSkillAnimMoveLock, Duration, false);
+}
+
+void ALoACharacter::ClearSkillAnimMoveLock()
+{
+	bSkillAnimMoveLock = false;
+	GetWorldTimerManager().ClearTimer(SkillAnimMoveLockTimerHandle);
 }
 
 void ALoACharacter::ApplyStagger()
@@ -716,10 +939,41 @@ void ALoACharacter::ApplyStagger()
 	// 경직 중 재히트하면 타이머가 갱신되어 계속 경직 유지 (넉다운의 정착 타이머 갱신과 동일한 패턴)
 	GetWorldTimerManager().SetTimer(StaggerTimerHandle, this, &ALoACharacter::EndStagger, StaggerDuration, false);
 
+	PlayStateAnim(StaggerAltAnim && FMath::RandBool() ? StaggerAltAnim.Get() : StaggerAnim.Get(), false, 0.05f);
 	if (bFirstHit)
 	{
 		OnStaggerVisualChanged(true);
 	}
+}
+
+void ALoACharacter::BeginJustGuardStance(float Duration)
+{
+	if (bIsDead || Duration <= 0.f) return;
+
+	// 경직처럼 캐스팅·사거리 이동을 끊고 제자리에 선다
+	if (SkillManager)
+	{
+		SkillManager->CancelActiveCastSkill();
+		SkillManager->CancelPendingRangeMove();
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+
+	const bool bFirst = !bInJustGuardStance;
+	bInJustGuardStance = true;
+	GetWorldTimerManager().SetTimer(JustGuardStanceTimerHandle, this, &ALoACharacter::EndJustGuardStance, Duration, false);
+	if (bFirst)
+	{
+		PlayStateAnim(JustGuardAnim, true, 0.08f);
+		OnJustGuardStanceChanged(true);
+	}
+}
+
+void ALoACharacter::EndJustGuardStance()
+{
+	if (!bInJustGuardStance) return;
+	bInJustGuardStance = false;
+	StopStateAnim(JustGuardAnim);
+	OnJustGuardStanceChanged(false);
 }
 
 void ALoACharacter::EndStagger()
@@ -730,9 +984,10 @@ void ALoACharacter::EndStagger()
 	OnStaggerVisualChanged(false);
 }
 
-void ALoACharacter::SetHeldByPattern(bool bHeld)
+void ALoACharacter::SetHeldByPattern(bool bHeld, bool bShowStunAnim)
 {
 	if (bIsHeld == bHeld) return;
+	if (bHeld && bMoveImmune) return;	// 대시·점멸 중엔 붙잡힘도 면역
 	bIsHeld = bHeld;
 
 	if (bIsHeld)
@@ -744,6 +999,11 @@ void ALoACharacter::SetHeldByPattern(bool bHeld)
 			SkillManager->CancelPendingRangeMove();
 		}
 		GetCharacterMovement()->StopMovementImmediately();
+		if (bShowStunAnim) PlayStateAnim(StunAnim, true);
+	}
+	else
+	{
+		StopStateAnim(StunAnim);
 	}
 
 	OnHeldVisualChanged(bIsHeld);
@@ -773,6 +1033,7 @@ void ALoACharacter::ApplyStun(float Duration)
 
 	if (bFirstHit)
 	{
+		PlayStateAnim(StunAnim, true);
 		OnStunVisualChanged(true);
 	}
 }
@@ -782,6 +1043,7 @@ void ALoACharacter::EndStun()
 	if (!bIsStunned) return;
 
 	bIsStunned = false;
+	if (!bIsHeld) StopStateAnim(StunAnim);
 	OnStunVisualChanged(false);
 }
 
@@ -792,6 +1054,7 @@ bool ALoACharacter::TryInstantGetUp()
 	if (!SkillManager || SkillManager->IsSlotOnCooldown(USkillManagerComponent::GetUpSlotIndex)) return false;
 
 	SkillManager->TriggerCooldown(USkillManagerComponent::GetUpSlotIndex);
+	bInstantGetUpPending = true;
 	GetUpFromKnockdown();
 	return true;
 }

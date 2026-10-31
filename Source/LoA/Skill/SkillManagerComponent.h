@@ -85,6 +85,10 @@ public:
     UFUNCTION(BlueprintCallable, Category="Skills")
     FSkillData GetSlotSkillData(int32 SlotIndex) const;
 
+    /** 어느 스킬이든 선딜 중(효과가 아직 안 나옴)인지 — 그동안은 대시·점멸·마력 방출로도 못 끊는다 */
+    bool IsExecutePending() const;
+    float GetMaxPendingExecuteRemaining() const;
+
     // 대시 전용: 쿨타임 중인지 확인 (Blueprint에서 사용)
     UFUNCTION(BlueprintCallable, Category="Skills")
     bool IsSlotOnCooldown(int32 SlotIndex) const { return IsOnCooldown(SlotIndex); }

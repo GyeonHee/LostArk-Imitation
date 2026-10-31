@@ -8,6 +8,7 @@
 
 void USkillBlaze::Execute_Implementation(AActor* Owner)
 {
+    // 방향·애니메이션·발사 순간까지 미루기는 USkillInstant::OnKeyDown
     if (!IsValid(Owner) || !ProjectileClass) return;
 
     UWorld* World = Owner->GetWorld();
@@ -18,8 +19,10 @@ void USkillBlaze::Execute_Implementation(AActor* Owner)
     if (!PC) return;
 
     // 조준 지점 — 바닥을 못 맞혀도(맵 밖·하늘) 방향은 나온다. 예전엔 여기서 return해서 발사체 없이 쿨타임만 돌았다
+    // 미뤄진 발동은 누를 때 돌아선 방향(액터 정면)으로
     FVector AimLocation;
-    if (!PC->GetCursorAimLocation(AimLocation)) return;
+    if (bLastExecuteDeferred) AimLocation = Owner->GetActorLocation() + Owner->GetActorForwardVector() * 1000.f;
+    else if (!PC->GetCursorAimLocation(AimLocation)) return;
 
     // 캐릭터 → 커서 방향으로 존 회전
     FVector Direction = AimLocation - Owner->GetActorLocation();

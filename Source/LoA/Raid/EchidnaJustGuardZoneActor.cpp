@@ -3,6 +3,10 @@
 #include "LoACharacter.h"
 #include "LoA.h"
 #include "ProceduralMeshComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "HAL/IConsoleManager.h"
 #include "Engine/Engine.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -12,6 +16,10 @@ namespace
 {
 	// 원판은 반지름 100으로 한 번만 만들고 컴포넌트 스케일로 크기를 바꾼다 (매 틱 메시 재생성 안 함)
 	constexpr float JustGuardUnitRadius = 100.f;
+
+	TAutoConsoleVariable<float> CVarJustGuardFillDuration(
+		TEXT("LoA.JustGuard.FillDuration"), 0.f,
+		TEXT("저스트 가드 게이지가 다 차는 시간(초) 덮어쓰기 — 0 이하 = 장판 액터 값(FillDuration). 다음 장판부터 적용"));
 }
 
 AEchidnaJustGuardZoneActor::AEchidnaJustGuardZoneActor()
@@ -29,18 +37,35 @@ AEchidnaJustGuardZoneActor::AEchidnaJustGuardZoneActor()
 	FillMesh->SetCastShadow(false);
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(
-		TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser"));
+		TEXT("/Game/LostArk/Raid/Echidna/Pattern/M_EchidnaJustGuardZone.M_EchidnaJustGuardZone"));
 	if (MatFinder.Succeeded())
 	{
 		ZoneMaterial = MatFinder.Object;
 	}
+
+	// NS_TeleportZone 복제 — MagicParticles만 남기고 금색(ScaleColor 50,32,4)
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> WaveFinder(
+		TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaJustGuardWave.NS_EchidnaJustGuardWave"));
+	if (WaveFinder.Succeeded())
+	{
+		WaveVFX = WaveFinder.Object;
+	}
 }
 
-void AEchidnaJustGuardZoneActor::Activate(ALoACharacter* InPlayer, AEchidnaBoss* InBoss, float InRadius)
+float AEchidnaJustGuardZoneActor::GetFillDuration() const
+{
+	const float Override = CVarJustGuardFillDuration.GetValueOnGameThread();
+	return FMath::Max(0.05f, Override > 0.f ? Override : FillDuration);
+}
+
+void AEchidnaJustGuardZoneActor::Activate(ALoACharacter* InPlayer, AEchidnaBoss* InBoss, float InRadius, AActor* InWaveSource, float InWaveZOffset)
 {
 	Player = InPlayer;
 	Boss = InBoss;
 	Radius = FMath::Max(100.f, InRadius);
+	WaveSource = InWaveSource;
+	WaveZOffset = InWaveZOffset;
+	FillDuration = GetFillDuration();  // 콘솔 덮어쓰기를 이 장판에 고정
 
 	BuildDisc(BackMesh, JustGuardUnitRadius, FloorOffset);
 	BuildDisc(FillMesh, JustGuardUnitRadius, FloorOffset + 1.f);
@@ -60,6 +85,8 @@ void AEchidnaJustGuardZoneActor::Activate(ALoACharacter* InPlayer, AEchidnaBoss*
 
 	Elapsed = 0.f;
 	bActive = true;
+	WaveSpawnElapsed = 0.f;
+	SpawnWave();
 	UE_LOG(LogLoA, Log, TEXT("[JustGuard] 장판 시작 — 반지름 %.0f, 게이지 %.2f초, 판정 -%.2f/+%.2f초, 방향 ±%.0f도"),
 		Radius, FillDuration, EarlyWindow, LateWindow, GuardHalfAngle);
 }
@@ -88,6 +115,8 @@ void AEchidnaJustGuardZoneActor::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	if (!bActive || bFinished) return;
 	Elapsed += DeltaTime;
+
+	TickWaves(DeltaTime);
 
 	if (bResolved)
 	{
@@ -152,6 +181,7 @@ void AEchidnaJustGuardZoneActor::Resolve(bool bInSuccess)
 	bResolved = true;
 	bSuccess = bInSuccess;
 	ResolvedAt = Elapsed;
+	StopWaves();
 
 	FillMesh->SetRelativeScale3D(FVector(1.f, 1.f, 1.f));
 	if (FillMID)
@@ -168,6 +198,81 @@ void AEchidnaJustGuardZoneActor::Resolve(bool bInSuccess)
 	}
 	ShowResultLabel(bSuccess);
 	UE_LOG(LogLoA, Warning, TEXT("[JustGuard] %s"), bSuccess ? TEXT("성공") : TEXT("실패 — 최대 HP 비율 피해"));
+}
+
+void AEchidnaJustGuardZoneActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 파동은 월드에 따로 스폰돼 있고 이미터가 무한 반복이라, 장판이 먼저 지워져도 생성은 끊어 둔다
+	StopWaves();
+	Super::EndPlay(EndPlayReason);
+}
+
+void AEchidnaJustGuardZoneActor::SpawnWave()
+{
+	if (!WaveVFX) return;
+	const AActor* Source = WaveSource.Get();
+	const FVector Location = (Source ? Source->GetActorLocation() : GetActorLocation()) + FVector(0.f, 0.f, WaveZOffset);
+	UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, WaveVFX, Location, FRotator::ZeroRotator,
+		FVector::OneVector, true, true, ENCPoolMethod::None);
+	if (!Comp) return;
+	Comp->SetVariableFloat(TEXT("User.CircleRadius"), WaveBaseRadius);
+	Comp->SetVariableFloat(TEXT("User.Density"), WaveDensity);
+	ApplyWaveRadius(Comp, WaveStartRadius);
+	FWave& Wave = Waves.AddDefaulted_GetRef();
+	Wave.Comp = Comp;
+}
+
+void AEchidnaJustGuardZoneActor::TickWaves(float DeltaTime)
+{
+	// 게이지가 도는 동안 WaveInterval마다 새 파동
+	if (!bResolved)
+	{
+		WaveSpawnElapsed += DeltaTime;
+		if (WaveSpawnElapsed >= WaveInterval)
+		{
+			WaveSpawnElapsed = 0.f;
+			SpawnWave();
+		}
+	}
+
+	// 각 파동은 컴포넌트 스케일로 한 점에서 링째 퍼지고(ease-out), 다 퍼지면 생성만 멈춤(남은 입자는 링에서 소용돌이치다 사라짐)
+	const float Expand = FMath::Max(0.01f, WaveExpandDuration);
+	for (int32 i = Waves.Num() - 1; i >= 0; --i)
+	{
+		FWave& Wave = Waves[i];
+		UNiagaraComponent* Comp = Wave.Comp.Get();
+		if (!Comp)
+		{
+			Waves.RemoveAtSwap(i);
+			continue;
+		}
+		Wave.Age += DeltaTime;
+		const float T = FMath::Clamp(Wave.Age / Expand, 0.f, 1.f);
+		ApplyWaveRadius(Comp, FMath::Lerp(WaveStartRadius, WaveEndRadius, 1.f - FMath::Square(1.f - T)));
+		if (T >= 1.f && !Wave.bStopped)
+		{
+			Wave.bStopped = true;
+			Comp->Deactivate();
+		}
+	}
+}
+
+void AEchidnaJustGuardZoneActor::ApplyWaveRadius(UNiagaraComponent* Comp, float RingRadius) const
+{
+	const float Scale = FMath::Max(0.01f, RingRadius / FMath::Max(1.f, WaveBaseRadius));
+	Comp->SetWorldScale3D(FVector(Scale, Scale, FMath::Min(Scale, WaveMaxHeightScale)));
+}
+
+void AEchidnaJustGuardZoneActor::StopWaves()
+{
+	for (FWave& Wave : Waves)
+	{
+		if (UNiagaraComponent* Comp = Wave.Comp.Get(); Comp && !Wave.bStopped)
+		{
+			Wave.bStopped = true;
+			Comp->Deactivate();
+		}
+	}
 }
 
 void AEchidnaJustGuardZoneActor::ShowResultLabel(bool bInSuccess)

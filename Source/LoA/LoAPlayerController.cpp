@@ -83,6 +83,7 @@
 #include "Item/GemComponent.h"
 #include "Stat/EngravingComponent.h"
 #include "UI/CharacterPreviewActor.h"
+#include "Item/AvatarComponent.h"
 #include "UI/DamageMeterWidget.h"
 #include "Stat/DamageMeterComponent.h"
 #include "Item/EquipmentComponent.h"
@@ -428,7 +429,7 @@ void ALoAPlayerController::AbandonRaid()
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
 	{
 		Char->SetInvulnerable(true);
-		Char->SetHeldByPattern(true);
+		Char->SetHeldByPattern(true, false);
 	}
 	if (AbandonWidget)
 	{
@@ -490,7 +491,7 @@ void ALoAPlayerController::OnRaidFailedByPattern(const FText& Reason)
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
 	{
 		Char->SetInvulnerable(true);
-		Char->SetHeldByPattern(true);
+		Char->SetHeldByPattern(true, false);
 	}
 	BeginDefeat(Reason.IsEmpty() ? DeathCauseText : Reason);
 }
@@ -851,7 +852,7 @@ void ALoAPlayerController::UpdateRaidIntro(float DeltaSeconds)
 	// 폰은 BeginPlay보다 늦게 빙의될 수 있어서 매 틱 확인해 묶는다
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && !Char->IsHeldByPattern())
 	{
-		Char->SetHeldByPattern(true);
+		Char->SetHeldByPattern(true, false);
 	}
 
 	const float CameraDuration = FMath::Max(0.1f, IntroCameraDuration);
@@ -1542,6 +1543,7 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 		CharacterInfoWidget->SetStatComponent(InfoChar ? InfoChar->StatComponent.Get() : nullptr);
 		CharacterInfoWidget->SetBuildSources(InfoChar ? InfoChar->Gems.Get() : nullptr, InfoChar ? InfoChar->Engravings.Get() : nullptr,
 			InfoChar ? InfoChar->Inventory.Get() : nullptr, InfoChar ? InfoChar->SkillManager.Get() : nullptr);
+		CharacterInfoWidget->SetAvatar(InfoChar ? InfoChar->FindComponentByClass<UAvatarComponent>() : nullptr);
 	}
 	UpdateEnrageTimer();
 	UpdateScreenFog(DeltaSeconds);
@@ -1653,8 +1655,9 @@ void ALoAPlayerController::OnInputStarted()
 	}
 
 	// 매혹 중엔 IsActionLocked()에 안 걸려도(진짜 조종불능이 아니라 "무작위 대신 행동"이라 Tick의 이동 처리는
-	// 그대로 둬야 함) 실제 플레이어 클릭 입력만은 씹혀야 함 — 그래서 여기 입력 핸들러들에서만 별도 체크
-	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
+	// 그대로 둬야 함) 실제 플레이어 클릭 입력만은 씹혀야 함 — 그래서 여기 입력 핸들러들에서만 별도 체크.
+	// 스킬 발동 애니메이션 중에도 이동 클릭은 무시(애니메이션이 끝나야 움직임)
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed() || Char->IsSkillAnimMoveLocked()))
 	{
 		return;
 	}
@@ -1690,7 +1693,7 @@ void ALoAPlayerController::OnSetDestinationTriggered()
 		return;
 	}
 
-	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed()))
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && (Char->IsActionLocked() || Char->IsCharmed() || Char->IsSkillAnimMoveLocked()))
 	{
 		return;
 	}
@@ -1719,8 +1722,9 @@ void ALoAPlayerController::OnSetDestinationReleased()
 		return;
 	}
 
-	// 짧게 눌렀다 떼도 기본공격으로 멈춘 뒤라면 자동이동을 시작하지 않는다
-	if (bMoveHaltedByAttack)
+	// 짧게 눌렀다 떼도 기본공격으로 멈춘 뒤라면(또는 스킬 애니메이션 중이면) 자동이동을 시작하지 않는다
+	const ALoACharacter* ReleasedChar = GetPawn<ALoACharacter>();
+	if (bMoveHaltedByAttack || (ReleasedChar && ReleasedChar->IsSkillAnimMoveLocked()))
 	{
 		FollowTime = 0.f;
 		return;
@@ -1798,7 +1802,16 @@ void ALoAPlayerController::OnDashInput()
 	// 넉다운 중엔 스페이스바가 대시가 아니라 즉시 기상 — InstantGetUpCooldown이 다 찼을 때만 성공
 	if (Char->IsKnockedDown())
 	{
-		Char->TryInstantGetUp();
+		// 기상기는 커서 쪽으로 구르며 일어난다 — 성공할 때만 돌림(쿨타임이면 누운 채 그대로)
+		FVector Aim;
+		const bool bHasAim = GetCursorAimLocation(Aim);
+		const FRotator Before = Char->GetActorRotation();
+		if (bHasAim)
+		{
+			const FVector Dir = (Aim - Char->GetActorLocation()).GetSafeNormal2D();
+			if (!Dir.IsNearlyZero()) Char->SetActorRotation(Dir.Rotation());
+		}
+		if (!Char->TryInstantGetUp()) Char->SetActorRotation(Before);
 		return;
 	}
 
@@ -1808,6 +1821,8 @@ void ALoAPlayerController::OnDashInput()
 
 	if (!Char->SkillManager) return;
 	if (Char->SkillManager->IsSlotOnCooldown(USkillManagerComponent::DashSlotIndex)) return;
+	// 스킬은 무조건 나간다 — 효과가 나오기 전(선딜)엔 대시로 못 끊는다(로아)
+	if (Char->SkillManager->IsExecutePending()) return;
 
 	FHitResult HitResult;
 	FVector TargetLocation;
@@ -1823,6 +1838,8 @@ void ALoAPlayerController::OnDashInput()
 	Char->ExecuteDash(TargetLocation);
 	Char->SkillManager->TriggerCooldown(USkillManagerComponent::DashSlotIndex);
 	StopMovement();
+	// 대시가 끝나면 그 자리에 선다 — 예전엔 찍어 둔 목적지로 다시 걸어갔다
+	bWasAutoMovingBeforeDash = false;
 }
 
 ASorceress* ALoAPlayerController::GetIdentityInputPawn() const
@@ -1830,6 +1847,8 @@ ASorceress* ALoAPlayerController::GetIdentityInputPawn() const
 	// 대시와 같은 조건 — CC·매혹 중엔 못 쓴다
 	ASorceress* Sorceress = GetPawn<ASorceress>();
 	if (!Sorceress || !Sorceress->Identity || Sorceress->IsActionLocked() || Sorceress->IsCharmed()) return nullptr;
+	// 스킬 선딜 중엔 점멸·마력 방출로도 못 끊는다
+	if (Sorceress->SkillManager && Sorceress->SkillManager->IsExecutePending()) return nullptr;
 	return Sorceress;
 }
 
@@ -1838,7 +1857,14 @@ void ALoAPlayerController::OnIdentityReleaseKey()
 	ASorceress* Sorceress = GetIdentityInputPawn();
 	if (!Sorceress) return;
 	FText Reason;
-	if (!Sorceress->Identity->TryRelease(Reason) && !Reason.IsEmpty())
+	if (Sorceress->TryActivateIdentity(Reason))
+	{
+		// 클릭 이동 중이었어도 멈춰 서서 동작 — 이동 목표를 지워야 다음 틱에 다시 걷지 않는다
+		CancelAutoMove();
+		StopMovement();
+		bWasAutoMovingBeforeDash = false;
+	}
+	else if (!Reason.IsEmpty())
 	{
 		ShowTimedNotice(Reason, FText::GetEmpty(), 1.5f);
 	}
@@ -1865,6 +1891,7 @@ void ALoAPlayerController::OnIdentityBlinkKey()
 		}
 		CancelAutoMove();
 		StopMovement();
+		bWasAutoMovingBeforeDash = false;  // 점멸 뒤에도 목적지로 다시 걷지 않게
 	}
 	else if (!Reason.IsEmpty())
 	{
@@ -2469,6 +2496,7 @@ void ALoAPlayerController::SetCharacterInfoOpen(bool bOpen)
 		CharacterInfoWidget->SetBuildSources(Char ? Char->Gems.Get() : nullptr, Char ? Char->Engravings.Get() : nullptr,
 			Char ? Char->Inventory.Get() : nullptr, Char ? Char->SkillManager.Get() : nullptr);
 		CharacterInfoWidget->SetArkPassive(Char ? Char->ArkPassive.Get() : nullptr);
+		CharacterInfoWidget->SetAvatar(Char ? Char->FindComponentByClass<UAvatarComponent>() : nullptr);
 		if (CharacterPreviewActor)
 		{
 			// 열 때마다 복사 — 레벨 이동·캐릭터 교체 후에도 지금 캐릭터 모습
@@ -2844,13 +2872,28 @@ void ALoAPlayerController::OnInteractKey()
 	// 보스 맵 발악 페이즈 — 저스트 가드 장판·격돌 발판이 NPC보다 먼저
 	if (ALoACharacter* Char = GetPawn<ALoACharacter>(); Char && !Char->IsActionLocked() && !bDefeatActive && !bClearActive)
 	{
-		// 저스트 가드 — 누른 순간의 커서 조준점으로 방향 판정. 한 번 누르면 그 장판은 끝(연타 방지)
+		// 저스트 가드 — 근처(장판 가장자리 + RelevantDistance)거나 화면 안에서 진행 중인 장판만. 누른 순간의 커서 조준점으로
+		// 방향 판정, 한 번 누르면 그 장판은 끝(연타 방지). 받은 G는 결과와 무관하게 StanceDuration 동안 제자리
 		for (TActorIterator<AEchidnaJustGuardZoneActor> It(GetWorld()); It; ++It)
 		{
 			if (!It->IsAwaitingInput()) continue;
+			const FVector ZoneLoc = It->GetActorLocation();
+			FVector2D ScreenPos;
+			int32 ViewX = 0, ViewY = 0;
+			GetViewportSize(ViewX, ViewY);
+			const bool bOnScreen = ProjectWorldLocationToScreen(ZoneLoc, ScreenPos)
+				&& ScreenPos.X >= 0.f && ScreenPos.Y >= 0.f && ScreenPos.X <= ViewX && ScreenPos.Y <= ViewY;
+			const bool bNear = FVector::Dist2D(ZoneLoc, Char->GetActorLocation()) <= It->GetRadius() + It->RelevantDistance;
+			if (!bOnScreen && !bNear) continue;
+
 			FVector Aim = Char->GetActorLocation() + Char->GetActorForwardVector() * 100.f;
 			GetCursorAimLocation(Aim);
-			if (It->TryJustGuard(Char, Aim)) return;
+			if (It->TryJustGuard(Char, Aim))
+			{
+				CancelAutoMove();
+				Char->BeginJustGuardStance(It->StanceDuration);
+				return;
+			}
 		}
 
 		for (TActorIterator<AEchidnaClashPlatformActor> It(GetWorld()); It; ++It)
@@ -2883,7 +2926,7 @@ void ALoAPlayerController::OpenNPCMenu(AInteractableNPCActor* NPC)
 	// 하던 이동 멈추고 상점 동안 제자리 — 플레이어는 NPC를 바라봄
 	CancelAutoMove();
 	bHoldMoving = false;
-	Char->SetHeldByPattern(true);
+	Char->SetHeldByPattern(true, false);
 	FVector ToNPC = NPC->GetActorLocation() - Char->GetActorLocation();
 	ToNPC.Z = 0.f;
 	if (!ToNPC.IsNearlyZero())

@@ -23,4 +23,7 @@ public:
 	/** Identity 게이지 비율 반환 0.0 ~ 1.0 (UI 바인딩용) */
 	UFUNCTION(BlueprintPure, Category="Identity")
 	virtual float GetIdentityGaugePercent() const { return 0.f; }
+
+	/** 캐스팅 스킬 시전 시간에서 빼는 초 (소서리스 마력 강화·해방 1초) — USkillBase::GetEffectiveCastTime */
+	virtual float GetCastTimeReduction() const { return 0.f; }
 };

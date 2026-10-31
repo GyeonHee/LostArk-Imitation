@@ -23,9 +23,7 @@ enum class EEchidnaMirrorPhase : uint8
  * 2) TrackingDuration이 끝나면 방향을 고정하고, FiringDuration(기본 3초) 동안
  *    고정된 방향으로 MaxRange까지 뻗은 레이저 장판을 유지하며 LaserDamageTickInterval마다 반복 판정한다.
  * 4방향 배치/동시 스폰은 StateTree Task(FStateTreeTask_EchidnaFourMirrorPattern)가 담당.
- * MirrorMeshComp(거울 몸체)는 엔진 내장 Cylinder를 납작하게 눌러 원판 모양으로, M_EchidnaMirrorSurface
- * (EchidnaModling/other/Mirror 텍스처로 만든 실제 거울 머티리얼)를 입혀서 기본으로 채워져 있음 —
- * 별도 프롭 메시가 프로젝트에 임포트돼 있지 않아 정식 거울 모델 대신 이 방식으로 표현.
+ * MirrorMeshComp(거울 몸체)는 SM_EchidnaMirror(원본 거울 모델, EchidnaMirrorModel) — 레이저는 유리 중심에서 나간다.
  * ZoneMeshComp(장판)는 엔진 내장 Plane + BasicShapeMaterial 기본값 — BP에서 Static Mesh/Material 교체 가능.
  */
 UCLASS(Blueprintable)
@@ -81,9 +79,17 @@ public:
 	// StateTree Task가 전체 패턴이 끝날 때 호출
 	void StopRepeating() { bStopRequested = true; }
 
-	// 거울 자체를 표시하는 메시 (기본값: 엔진 내장 Sphere)
+	// 거울 몸체 (SM_EchidnaMirror)
 	UPROPERTY(VisibleAnywhere, Category = "Mirror")
 	TObjectPtr<UStaticMeshComponent> MirrorMeshComp;
+
+	// 거울 프레임 키 (cm, 원본 301) — BeginPlay에서 균일 스케일로 맞춤
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror|Visual", meta = (ClampMin = "10.0"))
+	float MirrorFrameHeight = 240.f;
+
+	// 유리 중심 높이 (cm, 액터 원점 기준) = 레이저 높이. 원반 시절 120과 같게 — 프레임 바닥이 거의 땅에 닿음
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror|Visual")
+	float MirrorGlassCenterHeight = 120.f;
 
 	// 추적/발사 중 표시되는 직사각형 장판 메시 (기본값: 엔진 내장 Plane)
 	UPROPERTY(VisibleAnywhere, Category = "Mirror")

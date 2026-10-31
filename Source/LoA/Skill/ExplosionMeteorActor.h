@@ -31,8 +31,9 @@ public:
     UPROPERTY(EditDefaultsOnly, Category="VFX")
     float CircleBaseRadius = 100.f;
 
+    // 발판 원을 먼저 보여 주고 날아가기까지 (초) — 0 = 즉시. 캐릭터 애니메이션(sk_greatfire_02)이 투사체와 함께 뒤로 점프하므로 0
     UPROPERTY(EditDefaultsOnly, Category="Explosion")
-    float CircleShowTime = 0.8f;
+    float CircleShowTime = 0.f;
 
     // 액터에 부착되어 함께 이동하는 비행 VFX (중력 제거한 NS_Magma_Shot 복사본 할당)
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="VFX")

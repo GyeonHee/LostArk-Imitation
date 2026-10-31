@@ -52,3 +52,13 @@
 - 합성: 같은 레벨 3개 → 다음 레벨(종류는 재료 중 랜덤), 재료는 소지품에서 빠져 `FuseInputs`(저장됨, 다음 BeginPlay에 돌려줌). 목표 레벨 버튼은 누르는 순간 한 번 채움
 - 보석 상자 `GemBox_Lv1`(1레벨 10개, 골드 1,000), 우클릭으로 열기
 - 시작 Lv7 11개(겁화 6 · 작열 5). 변경은 보스 맵에서 금지(`IsBuildChangeAllowed`)
+
+## 아바타 (`UAvatarComponent`, `AvatarTypes.h`/`AvatarRegistry.cpp`)
+- 칸 6개 `EAvatarSlot` = 머리·어깨·상의·장갑·하의·무기(로아 장비창 순서, **저장 배열 순서라 뒤에만 추가**). 저장은 칸별 착용 Id만(`EquippedAvatars`) — **전부 보유**라 소지품 칸·보유 목록 없음
+- 표 = 원본 의상 파츠 메시 하나당 아바타 하나(105개: `/Game/LostArk/Character/Magician/Sorceress/Avatar/` — Armor v1~v10·Body v1~v2·Weapon W1~W17, LocalOnly에서 옮김). 이름 = 부위 + 세트(-변형). v1 `SK_HQ`(통짜)는 뺌. **Id는 저장에 들어가니 바꾸지 말 것**. 표는 폴더 목록으로 만든 것 — 파츠를 추가하면 같은 규칙으로 줄 추가
+- 드레스(v9 `SK_dress`)는 상의 칸, `bHidesPants`로 하의 메시를 숨김. 빈 칸 = 기본 옷(Body/v1 머리·상의·하의)과 기본 지팡이(`Model/Weapon`), 어깨·장갑은 없음
+- 모습: 캐릭터 몸(통짜 `SK_Sorceress`, `ULoACharacterAnimInstance`)이 리더 — **얼굴·속눈썹·눈동자·머리카락 섹션만 보임**(`LoAAvatars::ShowOnlyBaseBodySections` = `ShowMaterialSection`). 의상 머리 파츠는 모자·장식뿐이라 얼굴이 없음(몸을 통째로 숨겼더니 얼굴이 사라졌던 전례). 칸별 파츠 메시가 `SetLeaderPoseComponent`로 따라감. 무기는 `WeaponMeshComp`(손 소켓)에 메시만. 미리보기 액터도 `ResolveMesh`로 같은 구성
+- 파츠마다 그 부위 맨살(`skin_upper` 등)이 들어 있어 섞어 입어도 몸이 비지 않음. 세트에 따라 상의 메시에 팔 재질이 같이 있어 장갑과 겹칠 수 있음(아직 미확인)
+- **색 = 다운받은 원본 그대로**(염색 없음): 로아 의상 `_d`는 염색 전 회색 바탕이라 대부분 흰색·회색으로 보이는 게 정상 — 원본 데모 렌더도 흰 옷. 실제 색은 게임 머티리얼의 염색 값인데 추출본(`.mat`)에 없음. 염색 마스터·`_Dye` MI·`_cm` 마스크를 한 번 만들었다가 **유저 결정으로 전부 삭제**(임의 색 금지). 참고: 원본 폴더 `Sorceress/Sorceress.blend`에 자료 제작자가 기본 옷·기본 지팡이만 손으로 짠 염색 노드(검정 + 남색 G + 파란 발광)가 있음 — 게임 값 아님. 기본 옷 PSK의 이름 없는 재질(`material_N`)은 맨살·머리카락이라 `Model/Mesh`의 원본 `skin_upper`·`skin_lower`·`hair_mat_1`을 연결해 둠
+- 쿡: 소프트 경로라 `DefaultGame.ini`에 Avatar 폴더 `DirectoriesToAlwaysCook`
+

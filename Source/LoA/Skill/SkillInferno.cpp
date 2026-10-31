@@ -58,6 +58,8 @@ void USkillInferno::CancelRangeMove(AActor* Owner)
 
 void USkillInferno::Execute_Implementation(AActor* Owner)
 {
+    // 사거리 밖에서 걸어온 경우 커서가 움직였을 수 있으니 실제 목표 지점을 본다. 효과는 지팡이를 내려찍는 순간까지 미룬다
+    if (!BeginSkillExecute(Owner, &PendingTarget)) return;
     if (!IsValid(Owner) || !ZoneClass) return;
 
     ALoACharacter* Character = Cast<ALoACharacter>(Owner);

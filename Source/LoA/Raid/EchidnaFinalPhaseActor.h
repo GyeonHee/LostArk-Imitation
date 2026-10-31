@@ -8,6 +8,7 @@ class AEchidnaBoss;
 class AEchidnaClashPlatformActor;
 class AEchidnaShuffleMirrorActor;
 class AEchidnaJustGuardZoneActor;
+class AEchidnaBarrierActor;
 class AEchidnaClashQTEActor;
 class AHexArena;
 class ALoACharacter;
@@ -32,7 +33,8 @@ enum class EEchidnaFinalPhaseStep : uint8
  * 거울 섞기: 보스가 사라지고 맵 가운데에 큰 거울 1 + 외곽 원형 8개. 외곽 하나가 RevealDuration 동안 빨갛게 빛났다 꺼지고,
  * 가운데 거울을 초상화가 PortraitPassCount번 가로지른다(왼→오 = +1, 오→왼 = -1) — 합계만큼 빨간 거울이 시계 방향(+)으로 옮겨 간다.
  * 그다음 FirstSwapDelay 뒤부터 거울 두 개씩 가라앉았다 올라오며 "내용"(빨간 거울 여부)이 바뀐다(실제 위치는 그대로) × SwapCount.
- * 그 뒤 빨간 거울에 카운터 = 성공(누적), 다른 거울 카운터·시간 초과 = 그 거울에서 저스트 가드 장판 → 새 라운드.
+ * 그 뒤 빨간 거울에 카운터 = 성공(누적), 다른 거울 카운터·시간 초과 = 가운데 거울에서 외곽 거울까지 차오르는 저스트 가드 장판 → 새 라운드.
+ * 거울 섞기 동안 외곽 거울 원을 따라 투명 벽 — 원 밖으로 못 나간다.
  * 성공이 RequiredCounterSuccesses에 닿으면 보스가 마지막 정답 거울 자리에서 나온다.
  *
  * 진입 연출은 아직 시간만 흐르는 자리표시. 보스가 광폭화 중이어도 이 액터는 실시간(광폭화 타이머는 페이즈 진입 때 멈춤)
@@ -82,22 +84,36 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle", meta = (ClampMin = "2"))
 	int32 OuterMirrorCount = 8;
 
-	// 맵 가운데 타일에서 외곽 거울까지 (cm)
+	// 구도는 로아 실제 화면(거울 무력화)에서 외곽 거울 7개의 화면 위치를 재서 FOV 90 기준으로 역산한 값 —
+	// 반지름·카메라 암·Pitch·거울 배율은 같이 움직여야 비율이 유지된다
+	// 맵 가운데 타일에서 외곽 거울까지 (cm) — 투명 벽 원·저스트 가드 장판 반지름도 이 값
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
-	float OuterRingRadius = 950.f;
+	float OuterRingRadius = 800.f;
+
+	// 거울 프레임 키 ≈ 255 × 배율 (cm). 가운데 ≈ 400(외곽의 약 1.2배 — 12시 거울을 가리지 않는 크기), 외곽 ≈ 340
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
+	float CenterMirrorScale = 1.55f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
-	float CenterMirrorScale = 1.6f;
+	float OuterMirrorScale = 1.35f;
+
+	// 거울 섞기 동안 카메라 — 내려다보는 시점. Yaw는 평소 카메라 그대로.
+	// FOV 90·가운데 서 있을 때: 12시 거울 바닥이 화면 위 17%, 9시·3시 거울이 좌우 끝 14%·86%, 가까운 대각 거울이 아래 88%
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
+	float ShuffleCameraArmLength = 950.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
-	float OuterMirrorScale = 1.2f;
+	float ShuffleCameraPitch = -52.f;
 
-	// 거울 섞기 동안 카메라 — 비스듬한 3/4 시점(로아 거울 무력화 화면). Yaw는 평소 카메라 그대로
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
-	float ShuffleCameraArmLength = 2000.f;
+	// 외곽 거울 원을 따라 두는 투명 벽(Pawn만 막음) — 조각 수·두께·높이 (cm). 벽 안쪽 면 = OuterRingRadius
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle", meta = (ClampMin = "8"))
+	int32 RingBarrierSegments = 24;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
-	float ShuffleCameraPitch = -40.f;
+	float RingBarrierThickness = 40.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
+	float RingBarrierHeight = 600.f;
 
 	// 거울이 솟은 뒤(또는 라운드 시작 뒤) 빨간 거울이 켜지기까지 (초)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
@@ -151,11 +167,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
 	float CounterSkillCooldown = 5.f;
 
-	// 저스트 가드 장판 반지름 (cm) — 거울 섞기 카메라(암 2000, Pitch -40) 한 화면에 원 전체가 들어오는 정도.
-	// 판정은 위치와 무관(장판 밖으로 도망쳐도 맞음) — 크기는 보이는 것만
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Shuffle")
-	float JustGuardRadius = 1300.f;
-
 	// ── 보스 등장 ──
 	// 마지막 카운터 성공 뒤 거울이 사라지고 보스가 나오기까지 (초)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FinalPhase|Emerge")
@@ -200,7 +211,10 @@ private:
 	void DoPortraitPass();
 	void SetCameraTilt(bool bTilt);
 	void OnMirrorCountered(AEchidnaShuffleMirrorActor* Mirror, AActor* Attacker);
-	void StartJustGuard(int32 MirrorIndex);
+	/** 오답·시간 초과 — 가운데 거울에서 외곽 거울(OuterRingRadius)까지 차오르는 저스트 가드 장판 */
+	void StartJustGuard();
+	void SpawnRingBarriers();
+	void ClearRingBarriers();
 	void EmergeBoss();
 	void SetBossHidden(bool bInHidden);
 	void SetAllMirrorsAcceptCounter(bool bAccept);
@@ -228,6 +242,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<AEchidnaJustGuardZoneActor> JustGuardZone;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AEchidnaBarrierActor>> RingBarriers;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AEchidnaClashQTEActor> ClashQTE;

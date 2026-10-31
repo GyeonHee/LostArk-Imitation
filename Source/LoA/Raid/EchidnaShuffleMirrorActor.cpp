@@ -1,4 +1,5 @@
 #include "Raid/EchidnaShuffleMirrorActor.h"
+#include "Raid/EchidnaMirrorModel.h"
 #include "ProceduralMeshComponent.h"
 #include "UI/NPCWorldWidgets.h"
 #include "Components/StaticMeshComponent.h"
@@ -19,11 +20,9 @@ AEchidnaShuffleMirrorActor::AEchidnaShuffleMirrorActor()
 	Pivot = CreateDefaultSubobject<USceneComponent>(TEXT("Pivot"));
 	Pivot->SetupAttachment(Root);
 
-	// 엔진 Cylinder(지름·높이 100, 중심 피벗)를 Pitch 90으로 세우면 원기둥 축이 받침 +X(정면)를 향해 얇은 타원판이 된다.
-	// Pitch 90 회전에서 로컬 X → 위, 로컬 Z → 정면이므로 스케일은 (높이, 폭, 두께) 순서
+	// SM_EchidnaMirror — 받침 원점(바닥)에 서서 +X(정면)를 본다. 크기·유리 색은 Setup에서 (EchidnaMirrorModel)
 	MirrorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MirrorMesh"));
 	MirrorMesh->SetupAttachment(Pivot);
-	MirrorMesh->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
 	// 돌풍 토네이도의 오브젝트 타입 오버랩(AllDynamicObjects)에만 잡히면 된다 — 채널 응답은 전부 무시해서
 	// 플레이어를 막거나 마우스 클릭 트레이스(Visibility)를 가로채지 않게 (거울 카운터 줄 거울과 같은 설정)
 	MirrorMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
@@ -35,6 +34,8 @@ AEchidnaShuffleMirrorActor::AEchidnaShuffleMirrorActor()
 	PortraitMesh->SetupAttachment(Pivot);
 	PortraitMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PortraitMesh->SetCastShadow(false);
+	// 초상화 머티리얼이 반투명이라 같은 반투명인 유리보다 나중에 그려야 가려지지 않는다
+	PortraitMesh->SetTranslucentSortPriority(1);
 
 	// 받침이 아니라 루트에 — 가라앉는 연출과 무관하게 제자리
 	CountdownComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("CountdownComp"));
@@ -45,10 +46,10 @@ AEchidnaShuffleMirrorActor::AEchidnaShuffleMirrorActor()
 	CountdownComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CountdownComp->SetHiddenInGame(true);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-	if (CylinderFinder.Succeeded())
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> MirrorModelFinder(EchidnaMirrorModel::MeshPath);
+	if (MirrorModelFinder.Succeeded())
 	{
-		MirrorMesh->SetStaticMesh(CylinderFinder.Object);
+		MirrorMesh->SetStaticMesh(MirrorModelFinder.Object);
 	}
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(
@@ -59,7 +60,7 @@ AEchidnaShuffleMirrorActor::AEchidnaShuffleMirrorActor()
 	}
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> PortraitMatFinder(
-		TEXT("/Game/LostArk/Raid/Echidna/Pattern/M_EchidnaMirrorPortrait.M_EchidnaMirrorPortrait"));
+		TEXT("/Game/LostArk/Raid/Echidna/Pattern/M_EchidnaMirrorPortraitPass.M_EchidnaMirrorPortraitPass"));
 	if (PortraitMatFinder.Succeeded())
 	{
 		PortraitMaterial = PortraitMatFinder.Object;
@@ -87,8 +88,7 @@ void AEchidnaShuffleMirrorActor::Setup(float Scale, const FVector& FaceDirection
 
 	const float H = MirrorHeight * CurrentScale;
 	const float W = MirrorWidth * CurrentScale;
-	MirrorMesh->SetRelativeLocation(FVector(0.f, 0.f, H * 0.5f));
-	MirrorMesh->SetRelativeScale3D(FVector(H / 100.f, W / 100.f, MirrorThickness / 100.f));
+	EchidnaMirrorModel::Place(MirrorMesh, W, H);
 	if (!bCounterable)
 	{
 		MirrorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -103,10 +103,11 @@ void AEchidnaShuffleMirrorActor::Setup(float Scale, const FVector& FaceDirection
 	if (BaseMaterial)
 	{
 		MirrorMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-		MirrorMesh->SetMaterial(0, MirrorMID);
+		EchidnaMirrorModel::SetGlassMaterial(MirrorMesh, MirrorMID);
 	}
 	EnsurePortraitMID();
-	if (bStaticPortrait) BuildPortraitSection(0.f);
+	BuildPortraitQuad();
+	PortraitMesh->SetVisibility(bStaticPortrait);
 	ApplyColors();
 
 	CountdownComp->SetRelativeLocation(FVector(0.f, 0.f, H + CountdownHeightOffset));
@@ -127,65 +128,55 @@ void AEchidnaShuffleMirrorActor::EnsurePortraitMID()
 	PortraitMesh->SetMaterial(0, PortraitMID);
 }
 
-void AEchidnaShuffleMirrorActor::BuildPortraitSection(float OffsetY)
+void AEchidnaShuffleMirrorActor::GetPortraitEllipse(float& OutCenterZ, float& OutRadiusY, float& OutRadiusZ) const
+{
+	// 유리 타원 안쪽
+	const float ModelScale = EchidnaMirrorModel::FitScale(MirrorWidth * CurrentScale, MirrorHeight * CurrentScale);
+	OutCenterZ = EchidnaMirrorModel::GlassCenterZ * ModelScale;
+	OutRadiusY = EchidnaMirrorModel::GlassWidth * 0.5f * ModelScale * PortraitInset;
+	OutRadiusZ = EchidnaMirrorModel::GlassHeight * 0.5f * ModelScale * PortraitInset;
+}
+
+void AEchidnaShuffleMirrorActor::BuildPortraitQuad()
 {
 	PortraitMesh->ClearAllMeshSections();
+	PortraitMesh->SetRelativeLocation(FVector::ZeroVector);
 	if (!PortraitMID) return;
 
-	const float H = MirrorHeight * CurrentScale;
-	const float W = MirrorWidth * CurrentScale;
-	// 앞면 = +두께/2, 1cm 띄워 Z-파이팅 방지
-	const float FrontX = MirrorThickness * 0.5f + 1.f;
-	const float CenterZ = H * 0.5f;
-	const float RadiusY = W * 0.5f * PortraitInset;
-	const float RadiusZ = H * 0.5f * PortraitInset;
+	float CenterZ, RadiusY, RadiusZ;
+	GetPortraitEllipse(CenterZ, RadiusY, RadiusZ);
 
-	// 거울 테두리 타원(볼록 다각형)을 초상화 한 장이 차지하는 세로 띠 [OffsetY - RadiusZ, OffsetY + RadiusZ]로 자른다.
-	// 초상화는 정사각 텍스처를 세로 반지름 기준으로 펴므로 폭 = 2·RadiusZ. 정지(OffsetY 0)면 타원이 띠 안이라 그대로
-	TArray<FVector2D> Poly;
-	constexpr int32 Segments = 40;
-	for (int32 s = 0; s < Segments; ++s)
-	{
-		const float Angle = 2.f * PI * s / Segments;
-		Poly.Add(FVector2D(FMath::Cos(Angle) * RadiusY, FMath::Sin(Angle) * RadiusZ));
-	}
-	auto ClipY = [](const TArray<FVector2D>& In, float Bound, bool bKeepAbove)
-	{
-		TArray<FVector2D> Out;
-		auto Inside = [Bound, bKeepAbove](const FVector2D& P) { return bKeepAbove ? P.X >= Bound : P.X <= Bound; };
-		for (int32 i = 0; i < In.Num(); ++i)
-		{
-			const FVector2D& A = In[i];
-			const FVector2D& B = In[(i + 1) % In.Num()];
-			const bool bA = Inside(A), bB = Inside(B);
-			if (bA) Out.Add(A);
-			if (bA != bB)
-			{
-				const double T = (Bound - A.X) / (B.X - A.X);
-				Out.Add(FMath::Lerp(A, B, T));
-			}
-		}
-		return Out;
-	};
-	Poly = ClipY(Poly, OffsetY - RadiusZ, true);
-	Poly = ClipY(Poly, OffsetY + RadiusZ, false);
-	if (Poly.Num() < 3) return;
-
-	// 정면(+X)에서 보는 사람에겐 +Y가 왼쪽이므로 u는 초상화 왼쪽 끝(+Y)에서 0
-	TArray<FVector> Verts;
-	TArray<FVector2D> UVs;
-	TArray<int32> Tris;
-	for (const FVector2D& P : Poly)
-	{
-		Verts.Add(FVector(FrontX, P.X, CenterZ + P.Y));
-		UVs.Add(FVector2D(0.5f - (P.X - OffsetY) / (2.f * RadiusZ), 0.5f - P.Y / (2.f * RadiusZ)));
-	}
-	for (int32 i = 1; i + 1 < Poly.Num(); ++i)
-	{
-		// 양쪽 감김 — PMC 앞면 방향과 무관하게 항상 보이게
-		Tris.Append({ 0, i, i + 1, 0, i + 1, i });
-	}
+	// 정사각 초상화 한 장(한 변 = 세로 지름)을 한 번만 만든다. 지나가기는 컴포넌트를 옮기고, 머티리얼
+	// (M_EchidnaMirrorPortraitPass — 반투명, 불투명도 = 텍스처 알파(인물만) × 유리 타원 ClipCenter/ClipAxisY/ClipAxisZ)이 잘라낸다.
+	// 예전처럼 매 틱 메시를 다시 만들어 UV를 밀면 모션 벡터가 0이라 TSR 잔상으로 그림이 뭉개지고 깨졌다
+	// 유리면(x≈0)에서 1cm 띄워 Z-파이팅 방지. 정면(+X)에서 보는 사람에겐 +Y가 왼쪽이므로 u는 +Y에서 0
+	const float FrontX = 1.f;
+	const float Half = RadiusZ;
+	const TArray<FVector> Verts = {
+		FVector(FrontX, Half, CenterZ + Half), FVector(FrontX, -Half, CenterZ + Half),
+		FVector(FrontX, -Half, CenterZ - Half), FVector(FrontX, Half, CenterZ - Half) };
+	const TArray<FVector2D> UVs = { FVector2D(0.f, 0.f), FVector2D(1.f, 0.f), FVector2D(1.f, 1.f), FVector2D(0.f, 1.f) };
+	// 양쪽 감김 — PMC 앞면 방향과 무관하게 항상 보이게
+	const TArray<int32> Tris = { 0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2 };
 	PortraitMesh->CreateMeshSection(0, Verts, Tris, TArray<FVector>(), UVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+	UpdatePortraitClip();
+}
+
+void AEchidnaShuffleMirrorActor::UpdatePortraitClip()
+{
+	if (!PortraitMID) return;
+
+	float CenterZ, RadiusY, RadiusZ;
+	GetPortraitEllipse(CenterZ, RadiusY, RadiusZ);
+
+	// 받침(가라앉기·기울기 포함) 기준 유리 타원을 월드로 — 머티리얼이 (u/Ry)² + (v/Rz)² > 1인 픽셀을 버린다
+	const FTransform& PivotXform = Pivot->GetComponentTransform();
+	const FVector Center = PivotXform.TransformPosition(FVector(1.f, 0.f, CenterZ));
+	const FVector AxisY = PivotXform.GetUnitAxis(EAxis::Y) / FMath::Max(1.f, RadiusY);
+	const FVector AxisZ = PivotXform.GetUnitAxis(EAxis::Z) / FMath::Max(1.f, RadiusZ);
+	PortraitMID->SetVectorParameterValue(TEXT("ClipCenter"), FLinearColor(Center));
+	PortraitMID->SetVectorParameterValue(TEXT("ClipAxisY"), FLinearColor(AxisY));
+	PortraitMID->SetVectorParameterValue(TEXT("ClipAxisZ"), FLinearColor(AxisZ));
 }
 
 void AEchidnaShuffleMirrorActor::PlayPortraitPass(bool bLeftToRight, float Duration)
@@ -199,7 +190,10 @@ void AEchidnaShuffleMirrorActor::PlayPortraitPass(bool bLeftToRight, float Durat
 	// 인물이 치우친 쪽에서 들어온다 — 01(오른쪽 치우침)은 오른쪽→왼쪽, 02(왼쪽 치우침)는 왼쪽→오른쪽
 	UTexture2D* Texture = (bLeftToRight && PortraitTextureFacingLeft) ? PortraitTextureFacingLeft.Get() : PortraitTexture.Get();
 	PortraitMID->SetTextureParameterValue(TEXT("Portrait"), Texture);
-	BuildPortraitSection(10000.f);  // 시작 전엔 비움
+	if (PortraitMesh->GetNumSections() == 0) BuildPortraitQuad();
+	// 첫 위치는 타원 밖이라 마스크에 다 잘려 안 보인다
+	PortraitMesh->SetRelativeLocation(FVector(0.f, GetPortraitPassTravel() * (bLeftToRight ? 1.f : -1.f), 0.f));
+	PortraitMesh->SetVisibility(true);
 }
 
 void AEchidnaShuffleMirrorActor::SetRedGlow(bool bInRed)
@@ -241,10 +235,34 @@ void AEchidnaShuffleMirrorActor::ApplyColors()
 		const FLinearColor& Color = bCounterGlow ? CounterColor : bCounterReady ? CounterReadyColor : bRed ? RedColor : NormalColor;
 		MirrorMID->SetVectorParameterValue(ColorParameterName, Color);
 	}
+
+	// 빨간 거울은 프레임까지 발광 — 오버레이를 붙였다 뗀다(메시 머티리얼은 그대로)
+	const bool bFrameRed = bRed && !bCounterGlow && !bCounterReady;
+	if (bFrameRed && !FrameGlowMID && BaseMaterial)
+	{
+		FrameGlowMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+	}
+	if (bFrameRed && FrameGlowMID)
+	{
+		FrameGlowMID->SetVectorParameterValue(ColorParameterName, RedFrameGlowColor);
+		MirrorMesh->SetOverlayMaterial(FrameGlowMID);
+	}
+	else
+	{
+		MirrorMesh->SetOverlayMaterial(nullptr);
+	}
 	if (PortraitMID)
 	{
 		PortraitMID->SetVectorParameterValue(TEXT("Tint"), bRed && !bCounterGlow ? RedPortraitTint : NormalPortraitTint);
 	}
+}
+
+float AEchidnaShuffleMirrorActor::GetPortraitPassTravel() const
+{
+	// 초상화(반폭 RadiusZ)가 타원(반폭 RadiusY) 밖 한쪽에서 들어와 반대쪽 밖으로 완전히 빠져나가는 거리
+	float CenterZ, RadiusY, RadiusZ;
+	GetPortraitEllipse(CenterZ, RadiusY, RadiusZ);
+	return RadiusY + RadiusZ;
 }
 
 float AEchidnaShuffleMirrorActor::GetSinkDepth() const
@@ -278,17 +296,21 @@ void AEchidnaShuffleMirrorActor::Tick(float DeltaTime)
 		// 화면 오른쪽 = 거울 로컬 -Y
 		PassElapsed += DeltaTime;
 		const float T = FMath::Clamp(PassElapsed / PassDuration, 0.f, 1.f);
-		const float Travel = (MirrorWidth * 0.5f + MirrorHeight * 0.5f) * PortraitInset * CurrentScale;
-		const float FromY = bPassLeftToRight ? Travel : -Travel;
-		BuildPortraitSection(FMath::Lerp(FromY, -FromY, T));
+		const float FromY = GetPortraitPassTravel() * (bPassLeftToRight ? 1.f : -1.f);
+		PortraitMesh->SetRelativeLocation(FVector(0.f, FMath::Lerp(FromY, -FromY, T), 0.f));
 		if (T >= 1.f)
 		{
 			bPassing = false;
-			PortraitMesh->ClearAllMeshSections();
+			PortraitMesh->SetVisibility(false);
+			PortraitMesh->SetRelativeLocation(FVector::ZeroVector);
 		}
 	}
 
-	if (AnimMode == EAnim::None) return;
+	if (AnimMode == EAnim::None)
+	{
+		if (PortraitMesh->IsVisible()) UpdatePortraitClip();
+		return;
+	}
 
 	AnimElapsed += DeltaTime;
 	const float T = FMath::Clamp(AnimElapsed / AnimDuration, 0.f, 1.f);
@@ -313,6 +335,7 @@ void AEchidnaShuffleMirrorActor::Tick(float DeltaTime)
 		break;
 	}
 	Pivot->SetRelativeLocation(FVector(0.f, 0.f, -GetSinkDepth() * Sink));
+	if (PortraitMesh->IsVisible()) UpdatePortraitClip();
 
 	if (T >= 1.f)
 	{

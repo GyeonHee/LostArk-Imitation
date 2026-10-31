@@ -31,6 +31,10 @@ public:
     UPROPERTY(EditDefaultsOnly, Category="FrostCall")
     float MaxCastRange = 800.f;
 
+    /** 시전 중 몸을 띄우는 높이(cm) — 원본 sk_flashfrost는 b_root가 10cm쯤만 떠서 바닥에 붙어 보였다. 캡슐·판정은 그대로 */
+    UPROPERTY(EditDefaultsOnly, Category="FrostCall")
+    float FloatHeight = 60.f;
+
 protected:
     virtual void Execute_Implementation(AActor* Owner) override;
 

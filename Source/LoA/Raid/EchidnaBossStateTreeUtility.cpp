@@ -5302,7 +5302,7 @@ void FStateTreeTask_EchidnaPalmBlastPattern::Fire(FInstanceDataType& InstanceDat
 	}
 
 	// 보스 쪽이 아니라 장풍 진행 방향으로 날아가게 — 정면 축 뒤쪽 점을 원점으로
-	Player->ApplyKnockdown(Player->GetActorLocation() - Forward * 300.f, HopScale);
+	Player->ApplyKnockdown(Player->GetActorLocation() - Forward * 300.f, HopScale, true);	// 멀리 날아가는 넉다운 애니메이션
 }
 
 EStateTreeRunStatus FStateTreeTask_EchidnaPalmBlastPattern::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const

@@ -9,6 +9,9 @@
 #include "LoACharacter.h"
 #include "Character/Sorceress.h"
 #include "Character/SorceressIdentityComponent.h"
+#include "NiagaraComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "Components/SphereComponent.h"
 
 namespace
 {
@@ -47,6 +50,11 @@ namespace
 		if (!SkillManager || !SkillManager->SkillDataTable || SkillRowName.IsNone()) return nullptr;
 		return SkillManager->SkillDataTable->FindRow<FSkillData>(SkillRowName, TEXT("Damage"), false);
 	}
+
+	// 소서리스 기본공격 판정(입김 NS_SorceressBasicAttackMist에 맞춤) — 사거리·앞머리 속도·폭
+	constexpr float Damage_BasicMistReach = 420.f;
+	constexpr float Damage_BasicMistSpeed = 900.f;
+	constexpr float Damage_BasicMistRadius = 75.f;
 
 	bool Damage_IsBasicAttack(const AActor* Attacker, FName SkillRowName)
 	{
@@ -153,6 +161,33 @@ void ULoADamageLibrary::TagDamageSource(AActor* DamageSource, FName SkillRowName
 {
 	if (!DamageSource || SkillRowName.IsNone()) return;
 	DamageSource->Tags.AddUnique(FName(*(FString(Damage_SkillTagPrefix) + SkillRowName.ToString())));
+
+	// 소서리스 기본공격 투사체(ABP_BasicAttack, BeginPlay에서 여기를 부름)는 판정만 — 보이는 건 USkillBase::SpawnReleaseVFX의 보라 입김.
+	// BP의 Niagara 컴포넌트 에셋을 MCP로 비워도 저장이 안 돼 불 투사체가 계속 보여서 여기서 끈다
+	if (Cast<ASorceress>(DamageSource->GetInstigator()) && Damage_IsBasicAttack(DamageSource->GetInstigator(), SkillRowName))
+	{
+		TArray<UNiagaraComponent*> Effects;
+		DamageSource->GetComponents(Effects);
+		for (UNiagaraComponent* Effect : Effects)
+		{
+			Effect->DeactivateImmediate();
+			Effect->SetVisibility(false);
+		}
+
+		// 판정을 입김에 맞춘다 — 원래 투사체는 초당 5m × 1.25초 = 6.25m, 반지름 30이라 입김(약 4m, 폭 1.5m)과 안 맞았다.
+		// 입김 앞머리 속도로 날아가 4m에서 사라지고, 판정 구는 입김 폭만큼. BP 그래프가 SetLifeSpan(1.25)을 먼저 부른 뒤라 덮어씀
+		if (UProjectileMovementComponent* Movement = DamageSource->FindComponentByClass<UProjectileMovementComponent>())
+		{
+			const FVector Dir = Movement->Velocity.IsNearlyZero() ? DamageSource->GetActorForwardVector() : Movement->Velocity.GetSafeNormal2D();
+			Movement->MaxSpeed = Damage_BasicMistSpeed;
+			Movement->Velocity = Dir * Damage_BasicMistSpeed;
+			DamageSource->SetLifeSpan(Damage_BasicMistReach / Damage_BasicMistSpeed);
+		}
+		if (USphereComponent* Sphere = DamageSource->FindComponentByClass<USphereComponent>())
+		{
+			Sphere->SetSphereRadius(Damage_BasicMistRadius);
+		}
+	}
 }
 
 FName ULoADamageLibrary::GetDamageSourceSkill(const AActor* DamageSource)
@@ -200,5 +235,5 @@ void ULoADamageLibrary::NotifyIdentityHit(const AActor* Instigator, const AActor
 		? Stats->GetStats().AttackPower
 		: CalcOutgoingDamage(Sorceress, 1.f, SkillRowName);
 	if (PerCoefficient <= 0.0) return;
-	Sorceress->Identity->AddGaugeFromHit(static_cast<float>(BaseDamage / PerCoefficient));
+	Sorceress->Identity->AddGaugeFromHit(static_cast<float>(BaseDamage / PerCoefficient), SkillRowName);
 }

@@ -44,7 +44,7 @@
 - 칸 빛 훑기: `M_SlotShine`(UI 머티리얼, `Progress` 보간) — 마우스 올림·드래그 통과. `Width`를 바꾸면 cpp `InvSlot_ShineWidth`도. CVar `LoA.SlotShine`, `LoA.SlotShine.Duration`
 
 ## 캐릭터 정보 (P키, `UCharacterInfoWidget`)
-- 탭 [장비]/[각인 `UEngravingPageWidget`]/[보석 `UGemPageWidget`]을 겹쳐 두고 보이는 것만. [상세정보] = 오른쪽 "전체 효과 정보"(실제 계산에 쓰는 값만 — 새 스탯 적용 시 `RefreshDetailPanel`에 줄 추가)
+- 탭 [장비]/[각인 `UEngravingPageWidget`]/[보석 `UGemPageWidget`]/[아바타 `UAvatarPageWidget`]을 겹쳐 두고 보이는 것만. [아바타] = 왼쪽 같은 미리보기 렌더 타깃(끌어서 회전) + 오른쪽 칸 6개·고른 칸의 아바타 타일(클릭 = 착용, [기본] = 해제, 바꿀 때마다 미리보기 `SetupFromCharacter` 다시). 아이콘 없이 이름 타일. [상세정보] = 오른쪽 "전체 효과 정보"(실제 계산에 쓰는 값만 — 새 스탯 적용 시 `RefreshDetailPanel`에 줄 추가)
 - 장신구 칸 왼쪽 ◆ 3개 = 연마 효과 등급색. 칸 위 글자는 안 띄움. 왼쪽 아래 [아크 패시브] 칸
 - **3D 미리보기 `ACharacterPreviewActor`**(맵 위 Z 60000, SceneCapture → RT → UImage). **SceneCapture를 UI에 띄울 때 이 조합**: 자체 라이트 SpecularScale 0 + 라이팅 채널, 스카이라이트 ShowFlag 끔, **`SCS_FinalToneCurveHDR` + `RTF_RGBA16f`**(LDR 8비트는 톤매퍼 디더링으로 반짝임, SceneColorHDR은 검게 나옴), **TAA 켬**. 수동 노출 EV0이라 라이트가 매우 셈(15000/12500/12500). CVar `LoA.Preview.Light`/`LoA.Preview.Exposure`
 - 공용 조각 `BuildUIHelpers.h`(원 = RoundedBox 브러시, ◆ 단계, 프리셋 줄, 각인 판). 버튼은 Border + 위치 판정

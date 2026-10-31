@@ -11,6 +11,8 @@ void USkillFrostCall::OnKeyDown(AActor* Owner)
 
     bIsActive   = true;
     ElapsedTime = 0.f;
+    PlaySkillCastAnim(Owner);
+    if (ALoACharacter* Character = Cast<ALoACharacter>(Owner)) Character->SetVisualLift(FloatHeight);
     Execute(Owner);
 }
 
@@ -25,6 +27,8 @@ void USkillFrostCall::OnKeyHeld(AActor* Owner, float DeltaTime)
     {
         bIsActive = false;
         StopActiveZone();
+        StopSkillCastAnim(Owner);
+        if (ALoACharacter* Character = Cast<ALoACharacter>(Owner)) Character->SetVisualLift(0.f);
         ElapsedTime = 0.f;
     }
 }
@@ -35,6 +39,8 @@ void USkillFrostCall::OnKeyUp(AActor* Owner)
 
     bIsActive = false;
     StopActiveZone();
+    StopSkillCastAnim(Owner);
+    if (ALoACharacter* Character = Cast<ALoACharacter>(Owner)) Character->SetVisualLift(0.f);
     ElapsedTime = 0.f;
 }
 
@@ -53,6 +59,7 @@ void USkillFrostCall::ForceCancel(AActor* Owner)
 {
     Super::ForceCancel(Owner);
     StopActiveZone();
+    if (ALoACharacter* Character = Cast<ALoACharacter>(Owner)) Character->SetVisualLift(0.f);
 }
 
 void USkillFrostCall::Execute_Implementation(AActor* Owner)
