@@ -119,6 +119,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Effect", meta = (EditCondition = "bApplyCharmGaugeOnHit"))
 	int32 CharmGaugePerHit = 1;
 
+	// true면 원이 캐릭터 몸(캡슐)에 닿기만 해도 맞음 — 기본은 몸 중심이 범위 안이어야 맞는다.
+	// 반지름이 작은 연꽃(50~110cm)은 중심 판정이면 거의 안 맞아서 연꽃만 켬
+	bool bHitTouchingBody = false;
+
 	// 고리가 열릴 때마다 그 고리 영역(부채꼴 조각)을 채우는 Niagara — 비워두면 VFX 없이 색 메시만.
 	// 이펙트 하나를 키우는 게 아니라 RingVFXSpacing 간격의 격자로 여러 개를 깔아서 부채꼴/도넛/호 어떤 모양이든 그대로 따라간다.
 	// 각 인스턴스는 바깥(반지름) 방향을 바라보게 회전 — 원래 앞으로 뻗는 이펙트(블레이즈 등)가 안→밖으로 퍼지는 느낌이 됨

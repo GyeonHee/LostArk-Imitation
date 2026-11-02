@@ -326,6 +326,35 @@ void AEchidnaMirrorWallActor::Tick(float DeltaTime)
 	}
 }
 
+FVector AEchidnaMirrorWallActor::ClampMoveAcrossRows(const UWorld* World, const ACharacter* Mover, const FVector& Start, const FVector& End, bool& bOutBlocked)
+{
+	bOutBlocked = false;
+	if (!World) return End;
+
+	FVector Result = End;
+	const float Margin = GetMirrorWallCapsuleRadius(Mover);
+	for (TActorIterator<AEchidnaMirrorWallActor> It(const_cast<UWorld*>(World)); It; ++It)
+	{
+		const AEchidnaMirrorWallActor* Wall = *It;
+		if (Wall->Phase != EEchidnaMirrorWallPhase::Advancing) continue;
+
+		// 줄 로컬 — 줄은 +X로 다가오고 플레이어는 그 앞(+X 쪽)에 있다. 멈출 선 = 밀어내기와 같은 줄 앞면
+		const FTransform& Xform = Wall->GetActorTransform();
+		const FVector LocalStart = Xform.InverseTransformPosition(Start);
+		const FVector LocalEnd = Xform.InverseTransformPosition(Result);
+		const float StopX = Wall->RowOffset + Wall->MirrorHitThickness + Margin;
+		if (LocalStart.X < StopX - 1.f || LocalEnd.X >= StopX) continue;	// 이미 뒤쪽이거나 줄을 안 넘음
+
+		const float Alpha = FMath::Clamp((LocalStart.X - StopX) / FMath::Max(LocalStart.X - LocalEnd.X, KINDA_SMALL_NUMBER), 0.f, 1.f);
+		const FVector LocalStop = FMath::Lerp(LocalStart, LocalEnd, Alpha);
+		if (FMath::Abs(LocalStop.Y) > Wall->GetRowHalfWidth() + Margin) continue;	// 줄 옆으로 지나감
+
+		Result = Xform.TransformPosition(LocalStop);
+		bOutBlocked = true;
+	}
+	return Result;
+}
+
 void AEchidnaMirrorWallActor::TickAdvancing(float DeltaTime)
 {
 	RowOffset = FMath::Min(RowOffset + MoveSpeed * DeltaTime, TravelDistance);

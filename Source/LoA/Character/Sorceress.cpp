@@ -1,5 +1,6 @@
 #include "Character/Sorceress.h"
 #include "Character/SorceressIdentityComponent.h"
+#include "Raid/EchidnaMirrorWallActor.h"
 #include "Item/AvatarComponent.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
@@ -180,11 +181,14 @@ void ASorceress::TickDash(float DeltaSeconds)
 	const float Progress = GetDashAnimProgress(DashElapsed);
 	FVector Target = DashStart + DashDir * (DashDistance * Progress);
 	Target.Z = GetActorLocation().Z;
+	// 거울 카운터의 다가오는 거울 줄은 대시·점멸로도 못 넘는다 (충돌 없는 비주얼이라 sweep·점멸 검사에 안 걸렸음)
+	bool bBlockedByMirrorRow = false;
+	Target = AEchidnaMirrorWallActor::ClampMoveAcrossRows(GetWorld(), this, GetActorLocation(), Target, bBlockedByMirrorRow);
 	FHitResult Hit;
 	SetActorLocation(Target, bMoveSweep, bMoveSweep ? &Hit : nullptr);
 	// 빠르게 나가는 동안 투명 → 도착 지점에서 다시 보임
 	SetDashHidden(Progress >= MoveHideStart && Progress < MoveShow);
-	if (Hit.bBlockingHit || DashElapsed >= DashDuration || Progress >= 1.f)
+	if (Hit.bBlockingHit || bBlockedByMirrorRow || DashElapsed >= DashDuration || Progress >= 1.f)
 	{
 		EndDash();
 	}
@@ -311,6 +315,8 @@ bool ASorceress::TryActivateIdentity(FText& OutFailReason)
 	// 이동 중이어도 멈춰 서서 동작 — 걷는 속도가 남아 있으면 애니메이션이 바로 끊긴다
 	GetCharacterMovement()->StopMovementImmediately();
 	PlayStateAnim(IdentityReleaseAnim, false, 0.08f, true);
+	// 동작이 끝날 때까지 클릭 이동 금지 — 안 막으면 걸으면서 Z가 나가고 동작이 바로 끊겼다(즉발 스킬과 같은 잠금)
+	LockMoveForSkillAnim(IdentityReleaseAnim ? IdentityReleaseAnim->GetPlayLength() : MagickReleaseDelay);
 	if (MagickReleaseDelay <= 0.f)
 	{
 		FinishIdentityRelease();

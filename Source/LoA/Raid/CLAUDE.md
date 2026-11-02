@@ -15,7 +15,7 @@
 - Pointy-top Axial (q,r). `X = D*(q + r*0.5)`, `Y = D*√3/2*r`, `D = TileSpacing + HexGap`, R = SideCount-1, 타일 수 3R²+3R+1(SideCount 4 → 37). `TileYaw` 30(Flat-top 메시 회전). 좌표 계산은 `ComputeTileLocalTransform` 하나로 공유
 - **에디터는 HISM 프리뷰(`OnConstruction`), 플레이는 `BeginPlay`에서 HISM 숨기고 좌표마다 `AHexTile` 스폰**(`TileMap`, `GetTile`, `WorldToTileCoord`, `GetHexDistance`). `EndPlay`에서 정리
 - 외곽 벽: 노출 변(SideCount 4 → 24개)을 PMC 사다리꼴로 — 꼭짓점 용접 + 미터 오프셋(`1/cos(반각)`)이라 인접 조각이 맞물림. `WallMaterial`. 보이지 않는 `BarrierMesh`(1500cm, **Pawn만 Block**) — 벽 위에 올라가는 버그 방지, Visibility를 막으면 클릭 이동 트레이스를 가로채서 분리
-- 타일: `TileMesh`(BlockAll, 바닥) + `OverlapBox`(서 있는지 감지). 타입 Normal/PoopZone/Flower, 머티리얼만 교체. 위에 선 캐릭터를 타입 무관하게 기억
+- 타일: `TileMesh`(BlockAll, 바닥) + `OverlapBox`(서 있는지 감지, **Pawn만 Overlap** — `InitTile`에서 덮어씀. OverlapAllDynamic이면 평타 투사체가 스폰 즉시 발밑 타일에 "맞고" 사라져 보스에게 안 닿았음). 타입 Normal/PoopZone/Flower, 머티리얼만 교체. 위에 선 캐릭터를 타입 무관하게 기억
 - **오염 장판**: 비활성(핑크 `MI_HexTile_PoopInactive`, 효과 없음) / 활성(`SetAllPoopTilesActive` — 빨강 `MI_HexTile_PoopActive` + 빨간 테두리, 틱마다 매혹 + 데미지). 서 있는 도중 활성화되면 `PoopActivateGraceTime`(0.5초) 뒤 첫 틱. 머티리얼 `M_HexTileTinted`(`Tint`/`Glow`)
 - **꽃**: 실제 이웃이 전부 PoopZone인 Normal 타일이 자동으로 Flower(`NotifyTileTypeChanged`, 외곽은 이웃 수만큼만) → 바닥은 PoopMaterial + `AEchidnaBigFlowerActor`(PMC 순수 비주얼). `TickFlowerAura`: 꽃 1칸 이내면 1초마다 매혹 1. 예전 `FlowerMaterial` 필드는 PIE에서 옛 값이 남아 삭제함
 - **시작 배치**(`SetupInitialLayout`, 폰 스폰 뒤라 한 틱 미룸): 비활성 오염 8칸(폰 타일 제외, 시작부터 꽃이 피는 배치 스킵) + 파란 테두리 2칸(`MarkerTileCoords[0]` 외곽 랜덤, `[1]` 거기서 거리 2인 안쪽). 거울잇기 끝에 `RerollMarkerTiles`
@@ -33,11 +33,21 @@
 - **카운터**: `OpenCounterWindow` = 오버레이 머티리얼 청백 발광. 성공 = 창 열림 + 헤드어택(시전자 위치가 정면 ±60도) + `bCanCounter` 스킬. 판정 대상은 `ICounterable::TryCounterHit(Attacker, HitComponent)`(보스 본체·거울 줄). 성공 시 파란 `Counter!`(`ActivateLabel`) + 그로기
 - **그로기**(`StartGroggy`)는 플래그 + 정지 + BP 훅뿐, AI를 안 멈춘다 — 부른 Task가 `IsGroggy()` 동안 Running으로 버텨야 보스가 가만히 있음. UI 무력화 게이지가 남은 시간 표시
 - `IncomingDamageScale`(11.356): 플레이어 방어력 도입 후에도 패턴 체감이 같도록 곱하는 배율 — 자세한 건 `Source/LoA/Stat/CLAUDE.md`
-- **애니메이션**: `LocalOnly/Echidna/Animations/Battle`(281 — 대기·이동·회전·`att_battle_*`·그로기 `dmg_critical_*`·사망) / `Event`(47 — 공중 등장 `sky_*`·변신 `sden_change`·추락 `fall*`·캐스팅·흡수). 전부 `Echidna_mo_Skeleton`, 원본 이름 그대로. 아직 BP·몽타주 연결 없음 — **안 쓰는 동안 LocalOnly(깃 제외)**, 보스에 연결할 때 `EchidnaModling/Echidna/Animations`로 옮겨서 푸시
+- **머티리얼**: 슬롯 8개 전부 `M_Echidna`(불투명) MI, 머리카락만 예외. **속눈썹·아이라이너는 얼굴이 아니라 머리카락 섹션의 카드**(원본 `.mat`도 hair만 Opacity=hair_d) — 불투명이면 카드가 통째로 칠해져 눈꼬리 밖에 검은 쐐기가 튀어나온다.
+  - `MI_Echidna_Hair` 부모 = **`M_Echidna_HairLash`**(소서리스 `lashes_hiP` 복제: Masked·양면, 텍스처 하나 RGB→BaseColor·A→OpacityMask, 노멀·스펙큘러 없음), 텍스처 = `mn_sden_00_hair_d_noliner`(hair_d 왼쪽 위의 굵은 아이라이너 고리 + 안쪽 알파를 0으로 지운 것 — 알파 0.5~1이라 마스크로 안 잘림. 가는 속눈썹 가닥은 남김)
+  - **함정: `M_Echidna`를 복제해 Blend Mode·OpacityMask 연결을 MCP로 바꾼 `M_Echidna_Masked`, MI의 Blend Mode 오버라이드는 값은 맞게 읽히는데 셰이더가 마스크를 안 했다**(미사용으로 남음). 마스크 머티리얼은 이미 동작하는 Masked 머티리얼을 복제해서 만들 것. 검증은 `CaptureAssetImage` 썸네일 — 마스크가 먹으면 구에 구멍·뒷면이 보인다
+- **애니메이션**: `LocalOnly/Echidna/Animations/Battle`(281 — 대기·이동·회전·`att_battle_*`·그로기 `dmg_critical_*`·사망) / `Event`(47 — 공중 등장 `sky_*`·변신 `sden_change`·추락 `fall*`·캐스팅·흡수). 전부 `Echidna_mo_Skeleton`, 원본 이름 그대로. **안 쓰는 동안 LocalOnly(깃 제외)**, 확정한 것만 `EchidnaModling/Echidna/Animations`로 옮겨서 푸시(로더가 그 폴더 → LocalOnly 순으로 찾으므로 코드 수정 없이 옮기면 됨)
+  - 재생: 소서리스와 같은 `ULoACharacterAnimInstance`(AnimBP 없음, `SetupAnimation`이 BeginPlay에서 붙임) — 기본 `idle_battle_1`↔`walk_normal_1`. **이동은 걷기 + `MaxWalkSpeed` 180으로 덮어씀**(제자리 걸음 보폭 ≈ 180cm/s — `run_battle_1`은 발을 거의 안 떼는 떠다니는 동작이었음). 레이드 시작(인트로)도 대기 자세. `b_root` 수평 이동은 포즈에서 버림(높이는 남아 점프가 보임). 대기 애니메이션이 없으면(LocalOnly 없는 PC) 애니메이션을 안 붙임
+  - **패턴 키 → 애니메이션 표는 `EchidnaBossAnim.cpp`의 `GEchidnaAnimTable` 하나**(유저가 PIE에서 보고 정한 짝, StateTree는 MCP로 못 써서 C++). 표기 `a,b*,c!` — 쉼표 = 차례로, `*` 반복, `!` 마지막 프레임 유지, `a|b` 무작위. ExitState에서 `EndPatternAnim`(반복·유지만 끊고 저절로 끝나는 동작은 둠 + 걸어 둔 이동 정지), 패트롤 시작에 `StopPatternAnim`. 그로기 중엔 End가 무시되고 `EndGroggy`가 `<그로기 키>_End`를 틂(거울 카운터 성공은 `MirrorGroggy`)
+  - **짤패턴 타이밍은 애니메이션 기준** — 각 Task가 키 하나(체인)를 틀고 판정 시각을 `GetPatternAnimStepStart(키, 단계) + 그 애니메이션 안의 타격 초`로 잡아 `GetPatternAnimTime()`(애니메이션 재생 시간 그대로 → 광폭화 배율 자동)과 비교. 장판 예고 = 그 시각까지 남은 시간. 타격 초는 Task 파일의 익명 상수(원본 PSA의 손 속도 정점을 스크립트로 뽑음 — 다운로드 폴더 PSA + PSK 계층으로 FK). **ST의 예고·간격 값은 대부분 지움**(남은 건 예고를 얼마나 미리 깔지 정도). 패턴은 동작이 끝나야 Succeeded. 체인 순서를 바꾸면 Task의 단계 번호도 같이
+  - 이동이 있는 동작(백스텝 27·30_03, 좌우장판 12_02·12_03, 리본 3_02·도약 5_02)은 `StartPatternAnimMove(키, 단계, 방향, 거리)` — 그 단계의 b_root 진행도대로 보스를 옮김(거리 음수 = 애니메이션 거리 × 메시 배율). Tick은 이 동안만 켜짐, sweep에 막히거나 발밑이 아레나 타일·바닥이 아니면 멈춤(낙사 방지 — 옛 LaunchCharacter 홉과 착지 검사 대체). 카운터 분신·돌진, 연꽃 슬라이드는 자기 보간에 `GetAnimRootProgress`만 씀. **b_root 위치는 부모 사슬(아마추어 `Echidna_ao`)을 곱해 메시 공간으로** — 로컬 값 그대로면 거리가 수 cm로 나와 뒤로 빠지기가 안 움직였음. 캡슐 이동은 `SafeMoveUpdatedComponent`(바닥에 붙은 캡슐을 sweep `SetActorLocation`으로 밀면 첫 프레임부터 바닥에 막힘) 두번긋고 상승은 캡슐을 안 띄우고 애니메이션 높이로만
+  - 사라짐(`SetBossVanished`·발악 `SetBossHidden`)은 본체를 즉시 숨기기만 함(예전 메시 사본 `19_0x`는 한 바퀴 돌며 옆으로 가는 동작이라 뺌). 다시 나타나면 `Rise`(7_08)
+  - 숨긴 본체를 카운터 분신이 LeaderPose로 따라가므로 메시 `VisibilityBasedAnimTickOption = AlwaysTickPoseAndRefreshBones`
+  - 비교용 콘솔: `LoAEchidnaAnim <키|표기>`(미리보기), `LoAEchidnaAnimSet <키> <표기>`(이번 실행 동안 교체), `LoAEchidnaAnimList`, `LoAEchidnaFreeze 1/0`(AI 정지)
   - 원본은 PSA(다운로드 폴더 `Echidna (1)`) → `Tools/Blender/psa_to_fbx.py`(Blender 5.2 + PSK/PSA 애드온)로 FBX → 기존 스켈레톤에 임포트. 함정: **PSA 위치는 cm라 `translation_scale=0.01`**(안 하면 메시가 100배로 터짐), Blender 5 FBX 내보내기는 `animation_data` 없는 아마추어의 액션을 통째로 빠뜨림, 메시 없는 FBX는 MCP 스켈레탈 임포트가 실패 → 메시를 같이 넣고 생긴 중복 메시는 삭제
   - 안 넣은 것: `for_Echidna_BIG.psa`(왕키드나 50개), 뱀·스킬·그네 메시와 애니메이션, 거울 애니메이션(깨짐 `mn_sdsm_00_ani.psa`) — PSK/PSA 그대로 다운로드 폴더에
 - **거울 모델 `SM_EchidnaMirror`**(`EchidnaModling/other/Mirror/`, 원본 `Mirror_v1.psk` — v2는 같은 모양 저폴리): `Tools/Blender/psk_to_static_fbx.py`로 아마추어 떼고 정적 메시. 피벗 바닥 가운데·정면 +X·양면 장식, 프레임 229.8×301.1, 유리 타원 138.8×176.9(중심 높이 137.15). 슬롯 Frame·FrameOrnament(`M_Echidna` MI, 원본 텍스처) / Glass·GlassShards(유리 — 색 MID는 여기에만). 볼록 껍질 콜리전 1개(토네이도 카운터 오버랩용), Nanite 꺼짐
-  - 치수·배치는 `EchidnaMirrorModel.h` 하나로: `Place`(W×H 상자에 균일 스케일, 바닥에 세움) · `SetGlassMaterial` · `GetGlassCenter`. 4거울·거울잇기·거울 카운터 줄·거울 섞기가 공유. 초상화는 **유리 타원** 안(`PortraitInset`은 유리 기준). 컴포넌트 위치는 이제 거울 바닥이라 "거울 중심"이 필요하면 `GetGlassCenter`/Bounds를 쓸 것
+  - 치수·배치는 `EchidnaMirrorModel.h` 하나로: `Place`(W×H 상자에 균일 스케일, 바닥에 세움) · `SetGlassMaterial` · `GetGlassCenter`. 4거울·거울잇기·거울 카운터 줄·거울 섞기가 공유. 초상화는 **유리 타원** 안(`PortraitInset`은 유리 기준). **유리 슬롯 기본 머티리얼(`M_EchidnaMirrorSurface`)은 프레임 갈색 텍스처라 그대로 두면 앞면이 뒷판처럼 보인다** — 거울을 쓰는 액터는 유리를 `EchidnaMirrorModel::ApplyGlassColor`(M_MirrorLaser MID 연보라)로 덮어쓸 것(4·8거울은 `AEchidnaMirrorActor::GlassColor`, 거울잇기 거울). 4·8거울 크기 = 거울 카운터 줄 거울(프레임 키 417, 유리 중심 190) 컴포넌트 위치는 이제 거울 바닥이라 "거울 중심"이 필요하면 `GetGlassCenter`/Bounds를 쓸 것
 
 ## StateTree `ST_Echidna` 규칙
 - **MCP로는 읽기만 가능**(`StateTreeTools.get_root_states/get_children/get_tasks`) — 배치·값 변경은 에디터에서 유저가 직접. Task 인스턴스에 한 번 입력한 값은 C++ 기본값을 바꿔도 안 바뀜(노란 화살표 → Reset to Default)
@@ -99,3 +109,6 @@
 ## 보스 맵 흐름 (컨트롤러 쪽은 `Source/LoA/CLAUDE.md`)
 - 인트로: 페이드 인 → `ACameraActor`가 보스 정면 높은 곳 → 얼굴 앞 ease-in-out → 레터박스·타이틀 → 플레이어 카메라 블렌드 → `StartCombat()`. 연출 중 붙잡힘(폰이 늦게 빙의될 수 있어 매 틱), HUD 숨김, 뷰 타깃 매 틱 재설정, 카메라는 `SetLifeSpan(0.5)`로 정리
 - 사망/클리어/중단 → 정비소 복귀. 레이드 보상은 `Source/LoA/Item/CLAUDE.md`
+- 거울 카운터 다가오는 줄은 충돌 없는 비주얼 — 걷기는 `TickAdvancing`이 밀어내고, 대시·점멸(소서리스 `TickDash`)은 `AEchidnaMirrorWallActor::ClampMoveAcrossRows`로 줄 앞에서 멈춤
+- 0줄 발악 진입 시 `AHexArena::ResetTilesForFinalPhase` — 오염·꽃 → 일반, 파란·노란 테두리 끔
+- 연꽃(랜잡·뒤로 빠지며 연꽃)은 경직 + 매혹 1스택, `bHitTouchingBody`(몸에 닿기만 해도 판정 — 반지름 50~110이라 중심 판정이면 거의 안 맞음)

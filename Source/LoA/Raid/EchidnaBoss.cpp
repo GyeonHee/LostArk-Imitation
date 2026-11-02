@@ -17,7 +17,9 @@
 
 AEchidnaBoss::AEchidnaBoss()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 평소엔 꺼 두고 애니메이션 이동(StartPatternAnimMove) 동안만 켠다
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	// UCharacterMovementComponent 기본값(true)을 끔 — 켜져 있으면 LaunchCharacter로 물리 이동시킬 때마다
 	// (예: 뒤로 빠지며 좌우장판의 후방 홉) 보스가 자기 이동 방향(예: 후방)을 향해 자동으로 회전해버려서,
@@ -56,6 +58,8 @@ void AEchidnaBoss::BeginPlay()
 
 	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
 
+	SetupAnimation();
+
 	if (bWaitForIntro)
 	{
 		// 인트로가 끝나면 컨트롤러가 StartCombat을 부른다. 안 불리면 IntroMaxWait 뒤 스스로 시작
@@ -73,6 +77,7 @@ void AEchidnaBoss::StartCombat()
 	if (bCombatStarted) return;
 	bCombatStarted = true;
 	GetWorldTimerManager().ClearTimer(IntroFallbackTimerHandle);
+	StopPatternAnim(0.4f);
 
 	// 레이드 시작 = 전투 시작. 월드 타이머라 보스 자신의 CustomTimeDilation과 무관하게 실제 시간으로 흐른다
 	EnrageStartTime = GetWorld()->GetTimeSeconds();
@@ -346,6 +351,8 @@ void AEchidnaBoss::BeginFinalPhase()
 	OnSettlementGaugeChanged.Broadcast(SettlementGauge);  // 정산 UI 흑백(IsSettlementPaused)
 
 	UE_LOG(LogLoA, Warning, TEXT("[Echidna] 0줄 발악 진입 — HP 고정, AI 정지"));
+	EndGroggy();
+	PlayPatternAnim(TEXT("FinalPhase"));
 	OnFinalPhaseVisual();
 
 	UWorld* World = GetWorld();
@@ -400,6 +407,9 @@ void AEchidnaBoss::HandleDefeated()
 	GetWorldTimerManager().ClearTimer(IntroFallbackTimerHandle);
 
 	UE_LOG(LogLoA, Log, TEXT("[Echidna] 처치 — 클리어 시간 %.1f초"), ClearTime);
+	GetWorldTimerManager().ClearTimer(GroggyTimerHandle);
+	bGroggy = false;
+	PlayPatternAnim(TEXT("Defeat"));
 	OnDefeatedVisual();
 	OnDefeated.Broadcast();
 }
@@ -566,6 +576,7 @@ void AEchidnaBoss::StartGroggy(float Duration)
 	UE_LOG(LogLoA, Warning, TEXT("[Groggy] 그로기 %.1f초"), Duration);
 	if (!bWasGroggy)
 	{
+		PlayGroggyAnim(TEXT("Groggy"));
 		OnGroggyVisualChanged(true);
 	}
 }
@@ -580,6 +591,11 @@ void AEchidnaBoss::EndGroggy()
 {
 	if (!bGroggy) return;
 	bGroggy = false;
+	GetWorldTimerManager().ClearTimer(GroggyTimerHandle);
+	if (!bDefeated)
+	{
+		PlayPatternAnim(FName(*(GroggyAnimKey.ToString() + TEXT("_End"))));
+	}
 	OnGroggyVisualChanged(false);
 }
 

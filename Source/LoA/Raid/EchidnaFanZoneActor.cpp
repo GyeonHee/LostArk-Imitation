@@ -235,7 +235,11 @@ bool AEchidnaFanZoneActor::IsActorInRing(const AActor* Actor, float InnerRadius,
 
 	FVector ToActor = Actor->GetActorLocation() - GetApexLocation();
 	ToActor.Z = 0.f;
-	const float Distance = ToActor.Size();
+	float Distance = ToActor.Size();
+	if (bHitTouchingBody)
+	{
+		Distance = FMath::Max(0.f, Distance - Actor->GetSimpleCollisionRadius());
+	}
 	if (Distance < InnerRadius || Distance > OuterRadius) return false;
 	if (Distance < KINDA_SMALL_NUMBER) return true;
 

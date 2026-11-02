@@ -9,6 +9,9 @@ class UBossDirectionIndicatorComponent;
 class ADamageNumberActor;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
+class UAnimSequence;
+class ULoACharacterAnimInstance;
+struct FLoAAnimStep;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnBossLineChanged, int32 /*NewLine*/);
 
@@ -397,6 +400,87 @@ public:
 	// 연출 훅 — 그로기 시작/종료 (쓰러지는 애니메이션 등)
 	UFUNCTION(BlueprintImplementableEvent, Category = "Counter")
 	void OnGroggyVisualChanged(bool bIsGroggy);
+
+	// ── 애니메이션 ──────────────────────────────────────────
+	// AnimBP 없이 ULoACharacterAnimInstance(소서리스와 같은 C++ 방식) — 기본 = 대기↔달리기, 위에 패턴 액션.
+	// 키 → 애니메이션 표는 EchidnaBossAnim.cpp 하나(GEchidnaAnimTable). 표기: "a,b*,c!" — 쉼표 = 차례로,
+	// * = 반복, ! = 마지막 프레임 유지, "a|b" = 둘 중 무작위. 콘솔 LoAEchidnaAnimSet으로 PIE 중 덮어쓸 수 있다
+
+	/** 패턴 애니메이션 재생 — 표에 없거나 애니메이션을 못 찾으면 아무 일도 안 함 */
+	UFUNCTION(BlueprintCallable, Category = "Anim")
+	void PlayPatternAnim(FName Key, float BlendTime = 0.2f, float PlayRate = 1.f);
+
+	/** 반복·유지 중인 액션이면 끊고 대기로 — 저절로 끝나는 동작(착지 등)은 끝까지 둔다. 패턴 Task ExitState용 */
+	void EndPatternAnim(float BlendTime = 0.25f);
+
+	/** 무조건 액션을 끊고 대기·달리기로 (패트롤 시작 등) */
+	void StopPatternAnim(float BlendTime = 0.25f);
+
+	/** 그로기 동작을 Key로 바꿔 재생 — 그로기가 끝날 때 Key + "_End"를 튼다 (기본 "Groggy") */
+	void PlayGroggyAnim(FName Key);
+
+	/** 테스트·콘솔용 — 표기("a,b*,c!")를 그대로 재생 / 키 하나를 덮어씀 / 키 목록 */
+	bool PlaySpecAnim(const FString& Spec, float BlendTime = 0.2f, float PlayRate = 1.f);
+	void SetPatternAnimOverride(FName Key, const FString& Spec);
+	FString GetPatternAnimSpec(FName Key) const;
+	static TArray<FName> GetPatternAnimKeys();
+
+	/** 애니메이션 이름 → 시퀀스 (EchidnaModling/Echidna/Animations → LocalOnly/Echidna/Animations/Battle·Event 순으로 찾음) */
+	UAnimSequence* FindEchidnaAnim(const FString& Name);
+
+	// ── 애니메이션에 맞춘 패턴 타이밍 ──
+	// 패턴 Task는 판정 시각을 "키의 Step번째 애니메이션 시작 + 그 애니메이션 안의 타격 순간(초)"으로 잡고
+	// GetPatternAnimTime()과 비교한다 — 애니메이션 재생 시간 그대로라 광폭화 배율도 자동으로 맞는다
+
+	/** 마지막 PlayPatternAnim 이후 흐른 애니메이션 시간 (초, 광폭화 배율 포함). 애니메이션이 없으면 월드 시간 × 배율 */
+	float GetPatternAnimTime() const;
+
+	/** 키 체인의 Step번째 애니메이션 (무작위 표기는 첫 후보) / 그 단계가 시작되는 시각 = 앞 단계 길이 합 / 반복 아닌 단계 전체 길이 */
+	UAnimSequence* GetPatternAnimStep(FName Key, int32 Step);
+	float GetPatternAnimStepStart(FName Key, int32 Step);
+	float GetPatternAnimLength(FName Key);
+
+	/** 시퀀스의 b_root 수평 이동 진행도 0~1 (시작에서 멀어진 거리 / 끝 거리) — 이동이 없으면 시간 비율 */
+	static float GetAnimRootProgress(const UAnimSequence* Sequence, float Time);
+	/** 시퀀스 b_root 수평 이동 거리 (cm, 메시 배율 적용) */
+	float GetAnimRootDistance(const UAnimSequence* Sequence) const;
+
+	/** 방금 튼 키의 Step번째 애니메이션이 시작되면 그 b_root 이동 곡선대로 Dir 쪽으로 Distance만큼 보스를 옮긴다
+	 *  (Distance < 0 = 애니메이션 거리 그대로). 벽은 sweep으로, 발밑에 바닥이 없으면 그 자리에서 멈춤(낙사 방지).
+	 *  다음 PlayPatternAnim·StopPatternAnimMove에서 끝남 */
+	void StartPatternAnimMove(FName Key, int32 Step, const FVector& Dir, float Distance = -1.f);
+	void StopPatternAnimMove();
+	bool IsPatternAnimMoving() const { return bPatternAnimMoving; }
+
+	/** 패턴 동작(대기·달리기 위의 액션)이 아직 재생 중인가 — 끝나는 동작(착지 등)을 패트롤이 끊지 않게 기다릴 때 */
+	bool IsPatternActionPlaying() const;
+
+	virtual void Tick(float DeltaSeconds) override;
+
+private:
+	ULoACharacterAnimInstance* GetBossAnim() const;
+	void SetupAnimation();
+	bool BuildSteps(const FString& Spec, TArray<FLoAAnimStep>& OutSteps);
+	void TickPatternAnimMove();
+
+	UPROPERTY(Transient)
+	TMap<FName, TObjectPtr<UAnimSequence>> AnimCache;
+
+	TMap<FName, FString> AnimOverrides;
+	FName GroggyAnimKey = TEXT("Groggy");
+
+	// GetPatternAnimTime — 애니메이션 인스턴스가 체인을 틀었으면 그 시간, 아니면 월드 시간 기준
+	bool bPatternAnimOnInstance = false;
+	double PatternAnimStartWorldTime = 0.0;
+
+	// StartPatternAnimMove 상태
+	bool bPatternAnimMoving = false;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> PatternMoveSequence;
+	float PatternMoveStepStart = 0.f;
+	float PatternMoveDistance = 0.f;
+	FVector PatternMoveStart = FVector::ZeroVector;
+	FVector PatternMoveDir = FVector::ForwardVector;
 
 private:
 	bool bCounterWindowOpen = false;

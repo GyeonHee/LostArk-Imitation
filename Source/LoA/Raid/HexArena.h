@@ -103,6 +103,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Hex Tile")
 	void ClearAllLinkHighlights();
 
+	// 0줄 발악 진입 — 오염·꽃 타일을 전부 일반으로, 파란·노란 테두리와 빨간 점멸도 끔 (발악 동안 안 쓰는 표시)
+	void ResetTilesForFinalPhase();
+
 	// 두 타일 좌표 사이 헥스 거리
 	UFUNCTION(BlueprintPure, Category = "Hex Tile")
 	static int32 GetHexDistance(const FIntPoint& A, const FIntPoint& B);

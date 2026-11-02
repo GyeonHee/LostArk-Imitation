@@ -54,6 +54,7 @@
 #include "Skill/SkillManagerComponent.h"
 #include "Raid/EchidnaBoss.h"
 #include "Raid/EchidnaFinalPhaseActor.h"
+#include "Raid/EchidnaBossAIController.h"
 #include "Raid/EchidnaClashPlatformActor.h"
 #include "Raid/EchidnaJustGuardZoneActor.h"
 #include "Raid/EchidnaClashQTEActor.h"
@@ -454,6 +455,73 @@ void ALoAPlayerController::LoAKillBoss()
 		}
 		Boss->ReceiveDamage(static_cast<float>(Boss->GetHP()) + 1.f);
 	}
+}
+
+void ALoAPlayerController::LoAEchidnaAnim(const FString& KeyOrSpec)
+{
+	AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
+	if (!Boss)
+	{
+		ClientMessage(TEXT("[Cheat] LoAEchidnaAnim — 보스 없음"));
+		return;
+	}
+	const FName Key(*KeyOrSpec);
+	if (AEchidnaBoss::GetPatternAnimKeys().Contains(Key))
+	{
+		Boss->PlayPatternAnim(Key);
+		ClientMessage(FString::Printf(TEXT("[EchidnaAnim] %s = %s"), *KeyOrSpec, *Boss->GetPatternAnimSpec(Key)));
+	}
+	else if (!Boss->PlaySpecAnim(KeyOrSpec))
+	{
+		ClientMessage(FString::Printf(TEXT("[EchidnaAnim] 키도 애니메이션도 아님: %s"), *KeyOrSpec));
+	}
+}
+
+void ALoAPlayerController::LoAEchidnaAnimSet(const FString& Key, const FString& Spec)
+{
+	AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
+	if (!Boss || !AEchidnaBoss::GetPatternAnimKeys().Contains(FName(*Key)))
+	{
+		ClientMessage(FString::Printf(TEXT("[EchidnaAnim] 보스가 없거나 표에 없는 키: %s (LoAEchidnaAnimList)"), *Key));
+		return;
+	}
+	Boss->SetPatternAnimOverride(FName(*Key), Spec);
+	const FString Now = Boss->GetPatternAnimSpec(FName(*Key));
+	ClientMessage(FString::Printf(TEXT("[EchidnaAnim] %s = %s"), *Key, *Now));
+	UE_LOG(LogTemp, Log, TEXT("[EchidnaAnim] 덮어씀 %s = %s"), *Key, *Now);
+}
+
+void ALoAPlayerController::LoAEchidnaAnimList()
+{
+	AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
+	for (const FName& Key : AEchidnaBoss::GetPatternAnimKeys())
+	{
+		const FString Line = FString::Printf(TEXT("%s = %s"), *Key.ToString(), Boss ? *Boss->GetPatternAnimSpec(Key) : TEXT("?"));
+		ClientMessage(Line);
+		UE_LOG(LogTemp, Log, TEXT("[EchidnaAnim] %s"), *Line);
+	}
+}
+
+void ALoAPlayerController::LoAEchidnaFreeze(int32 bFreeze)
+{
+	AEchidnaBoss* Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
+	AEchidnaBossAIController* AIC = Boss ? Cast<AEchidnaBossAIController>(Boss->GetController()) : nullptr;
+	if (!AIC)
+	{
+		ClientMessage(TEXT("[Cheat] LoAEchidnaFreeze — 보스/AI 없음"));
+		return;
+	}
+	if (bFreeze != 0)
+	{
+		AIC->StopMovement();
+		AIC->StopBossLogic();
+		Boss->StopPatternAnim();
+	}
+	else
+	{
+		AIC->StartBossLogic();
+	}
+	ClientMessage(bFreeze != 0 ? TEXT("[EchidnaAnim] AI 정지") : TEXT("[EchidnaAnim] AI 재개"));
 }
 
 void ALoAPlayerController::LoAClashResult(int32 Result)

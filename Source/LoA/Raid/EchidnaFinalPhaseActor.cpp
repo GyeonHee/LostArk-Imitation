@@ -32,10 +32,12 @@ void AEchidnaFinalPhaseActor::StartPhase(AEchidnaBoss* InBoss)
 	Arena = Cast<AHexArena>(UGameplayStatics::GetActorOfClass(this, AHexArena::StaticClass()));
 
 	// 거울을 세울 맵 가운데 — 가운데 타일 윗면. 아레나가 없으면 보스 발밑
-	ArenaCenter = InBoss ? InBoss->GetActorLocation() - FVector(0.f, 0.f, InBoss->GetSimpleCollisionHalfHeight()) : GetActorLocation();
+	ArenaCenter = InBoss ? InBoss->GetActorLocation() - FVector(0.f, 0.f, InBoss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()) : GetActorLocation();
 	if (AHexArena* A = Arena.Get())
 	{
 		A->GetTileTopLocation(FIntPoint(0, 0), ArenaCenter);
+		// 발악 동안은 파란 테두리·오염 장판이 의미 없음 — 전부 일반 타일로
+		A->ResetTilesForFinalPhase();
 	}
 
 	UE_LOG(LogLoA, Warning, TEXT("[FinalPhase] 0줄 발악 시작 — Arena:%s Player:%s"),
@@ -455,7 +457,18 @@ void AEchidnaFinalPhaseActor::StartJustGuard()
 void AEchidnaFinalPhaseActor::EmergeBoss()
 {
 	AEchidnaShuffleMirrorActor* Mirror = OuterMirrors.IsValidIndex(EmergeMirrorIndex) ? OuterMirrors[EmergeMirrorIndex].Get() : nullptr;
-	const FVector MirrorLoc = Mirror ? Mirror->GetActorLocation() : ArenaCenter;
+	FVector MirrorLoc = Mirror ? Mirror->GetActorLocation() : ArenaCenter;
+	// 높이는 거울이 아니라 바닥(그 자리 타일 윗면) — 카운터 맞은 거울은 이미 가라앉는 중이라 그 높이를 쓰면 보스가 반쯤 묻혀 나왔다
+	MirrorLoc.Z = ArenaCenter.Z;
+	if (AHexArena* A = Arena.Get())
+	{
+		FIntPoint Coord;
+		FVector TileTop;
+		if (A->WorldToTileCoord(MirrorLoc, Coord) && A->GetTileTopLocation(Coord, TileTop))
+		{
+			MirrorLoc.Z = TileTop.Z;
+		}
+	}
 	ClearMirrors(true);
 
 	// 보스가 그 거울 자리에서 맵 가운데를 보고 나온다 → 바로 앞(가운데 쪽)에 격돌 발판
@@ -463,7 +476,8 @@ void AEchidnaFinalPhaseActor::EmergeBoss()
 	if (Forward.IsNearlyZero()) Forward = FVector::ForwardVector;
 	if (AEchidnaBoss* B = Boss.Get())
 	{
-		B->SetActorLocationAndRotation(MirrorLoc + FVector(0.f, 0.f, B->GetSimpleCollisionHalfHeight()), Forward.Rotation(),
+		// 캡슐 크기를 직접 — 숨김 동안 충돌이 꺼져 있어 GetSimpleCollisionHalfHeight()가 0을 돌려줘 몸 절반이 바닥에 묻혔었다
+		B->SetActorLocationAndRotation(MirrorLoc + FVector(0.f, 0.f, B->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()), Forward.Rotation(),
 			false, nullptr, ETeleportType::TeleportPhysics);
 	}
 	SetBossHidden(false);
@@ -476,7 +490,9 @@ void AEchidnaFinalPhaseActor::EmergeBoss()
 	SetCameraZoom(0.f);
 	SetCameraTilt(false);
 	SpawnPlatform(MirrorLoc + Forward * PlatformFrontDistance);
-	UE_LOG(LogLoA, Warning, TEXT("[FinalPhase] 보스 등장 — %d번 거울 자리"), EmergeMirrorIndex);
+	UE_LOG(LogLoA, Warning, TEXT("[FinalPhase] 보스 등장 — %d번 거울 자리, 바닥 Z=%.0f 보스 Z=%.0f(캡슐 절반 %.0f) 숨김=%d"), EmergeMirrorIndex,
+		MirrorLoc.Z, Boss.IsValid() ? Boss->GetActorLocation().Z : 0.f,
+		Boss.IsValid() ? Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 0.f, Boss.IsValid() && Boss->IsHidden() ? 1 : 0);
 	EnterStep(EEchidnaFinalPhaseStep::Platform);
 }
 
@@ -486,6 +502,11 @@ void AEchidnaFinalPhaseActor::SetBossHidden(bool bInHidden)
 	if (!B || bBossHidden == bInHidden) return;
 	bBossHidden = bInHidden;
 
+	// 꺼지는 사본 / 솟아오르는 동작 (패턴의 SetBossVanished와 같음)
+	if (!bInHidden)
+	{
+		B->PlayPatternAnim(TEXT("Rise"), 0.f);
+	}
 	B->SetActorHiddenInGame(bInHidden);
 	B->SetActorEnableCollision(!bInHidden);
 	// 충돌을 끈 동안 바닥을 뚫고 떨어지지 않게 (카운터 패턴 분신과 같은 이유)

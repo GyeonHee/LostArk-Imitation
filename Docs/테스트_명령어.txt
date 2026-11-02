@@ -11,6 +11,11 @@ LoAKillBoss                     보스 HP를 다 깎음 → 0줄 발악 페이�
 LoAClashResult <1|0>            발악 페이즈 중 격돌 결과 강제 — 1 클리어 / 0 레이드 실패(패배 화면). 예) LoAClashResult 0
 LoAKillSelf                     플레이어 즉사 → 공략 실패 화면
 LoAIdentity <0~100>             소서리스 신비한 마력 게이지 설정 (100이면 Z로 마력 해방). 예) LoAIdentity 100
+LoAEchidnaFreeze <1|0>          에키드나 AI 정지(1)/재개(0) — 정지 중엔 패턴을 안 써서 아래 미리보기가 안 덮임
+LoAEchidnaAnimList              에키드나 애니메이션 키와 지금 값 목록 (화면 + 로그)
+LoAEchidnaAnim <키|애니메이션>   보스에 바로 재생. 예) LoAEchidnaAnim HexRibbon_1 / LoAEchidnaAnim att_battle_27
+                                여러 개 이어서: 쉼표, 반복 *, 마지막 프레임 유지 !  예) LoAEchidnaAnim att_battle_26_01,att_battle_26_02*
+LoAEchidnaAnimSet <키> <표기>    이번 실행 동안 키를 다른 애니메이션으로 교체(패턴에도 적용, - 면 원래대로). 예) LoAEchidnaAnimSet PalmBlast att_battle_24_07!
 
 
 ■ 아이템 · 화폐

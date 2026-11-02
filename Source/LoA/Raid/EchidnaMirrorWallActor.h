@@ -6,6 +6,7 @@
 #include "EchidnaMirrorWallActor.generated.h"
 
 class AEchidnaBoss;
+class ACharacter;
 class UProceduralMeshComponent;
 class UStaticMeshComponent;
 class UStaticMesh;
@@ -56,6 +57,10 @@ public:
 	virtual bool TryCounterHit(AActor* Attacker, UPrimitiveComponent* HitComponent) override;
 
 	bool IsCountered() const { return bCountered; }
+
+	/** 대시·점멸 같은 스크립트 이동이 전진 중인 거울 줄을 앞에서 뒤로 넘어가면, 줄 앞(밀려나는 위치)에서 멈춘 끝점을 돌려준다.
+	 *  걷기는 TickAdvancing의 밀어내기가 막지만 순간 이동은 한 프레임에 줄을 건너뛰어 반대편으로 넘어갔다. 안 막히면 End 그대로 */
+	static FVector ClampMoveAcrossRows(const UWorld* World, const ACharacter* Mover, const FVector& Start, const FVector& End, bool& bOutBlocked);
 
 	// 카운터 거울 없는 줄로 만든다(앞 줄 카운터 실패 → 이후 줄은 칠 수 없음). Activate 전에 불러야 반영
 	void DisableCounter() { bCounterDisabled = true; }

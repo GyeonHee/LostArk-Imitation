@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 class UMaterialInterface;
 
@@ -48,6 +49,22 @@ namespace EchidnaMirrorModel
 		if (!Mesh || !Material) return;
 		Mesh->SetMaterial(GlassSlotFront, Material);
 		Mesh->SetMaterial(GlassSlotShards, Material);
+	}
+
+	/** 유리를 연보라 유리색(M_MirrorLaser MID, Alpha = 불투명도)으로 — 메시 기본 유리(M_EchidnaMirrorSurface)는 프레임 갈색 텍스처라
+	 *  그대로 두면 앞면이 뒷판처럼 보인다. 거울 섞기·거울 카운터 줄과 같은 색 */
+	inline UMaterialInstanceDynamic* ApplyGlassColor(UStaticMeshComponent* Mesh, UObject* Outer,
+		const FLinearColor& Color = FLinearColor(0.85f, 0.75f, 0.95f, 0.95f))
+	{
+		static const TCHAR* const GlassBasePath = TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser");
+		UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, GlassBasePath);
+		UMaterialInstanceDynamic* MID = (Mesh && Base) ? UMaterialInstanceDynamic::Create(Base, Outer) : nullptr;
+		if (MID)
+		{
+			MID->SetVectorParameterValue(TEXT("Base Color"), Color);
+			SetGlassMaterial(Mesh, MID);
+		}
+		return MID;
 	}
 
 	/** 유리 앞면 슬롯의 머티리얼 (색 MID를 다시 꺼낼 때) */

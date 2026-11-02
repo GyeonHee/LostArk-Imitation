@@ -24,7 +24,7 @@
 | 기절 | `ApplyStun(Duration)` | 제자리 정지, 지속시간은 호출마다 |
 | 경직 | `ApplyStagger()` | 기절과 같은 방식, `StaggerDuration` 0.3초 고정 |
 | 끌려감 | `ApplyPull` | 정지 `PullHoldDuration` → Tick에서 `AddActorWorldOffset(sweep)`로 목표까지(속도 = StateTree `PullStrength` cm/s) → **패턴이 `ReleasePull()` 할 때까지 묶임**, 안전장치 `PullMaxHoldTime` 8초 |
-| 붙잡힘 | `SetHeldByPattern(bool, bShowStunAnim=true)` | 시간 제한 없음 — 건 쪽이 반드시 해제(ExitState). **조작만 막는 용도(입장 이동·레이드 인트로·NPC 메뉴·중단·패턴 실패·발악 연출/격돌)는 `false`** — 로비 → 보스맵에서 기절 모션이 나왔던 원인. 기절 모션은 실제로 잡히는 패턴(파리지옥·거울잇기)만 |
+| 붙잡힘 | `SetHeldByPattern(bool, bShowStunAnim=true)` | 시간 제한 없음 — 건 쪽이 반드시 해제(ExitState). **조작만 막는 용도(입장 이동·레이드 인트로·NPC 메뉴·중단·패턴 실패·발악 연출/격돌)는 `false`** — 로비 → 보스맵에서 기절 모션이 나왔던 원인. 기절 모션은 실제로 잡히는 패턴(파리지옥)만 — 거울잇기 발사 순간은 조작만 막음(유저 요청) |
 - 넉다운이 더 강해서 경직·기절은 넉다운 중 무시. 모든 CC는 캐스팅·사거리이동 취소 + 정지. BP 훅 `On*VisualChanged`
 - 사망 `Die()`: `OnDied`, 매혹 해제, 이후 데미지·CC 무시
 
@@ -35,7 +35,7 @@
 ### 소서리스 아이덴티티 (`ASorceress` + `USorceressIdentityComponent`)
 - `BP_Sorceress`의 부모가 `ASorceress`. 수치는 `LoASorceressIdentity`(헤더) — 로아 값(나무위키) + 자료에 없는 것은 "추정" 주석
 - 신비한 마력: 보스·허수아비 피격마다 **스킬별 수급량(풀히트 기준, `SorceressIdentity_SkillGauge` — 유저 제공 표의 특화 0·노룬 값 ÷ 100) × 이 타격의 몫(타격 계수 ÷ DT 스킬 계수) × 특화 배율(1 + 특화 × 0.136%, 1800이면 ×3.45 = 표의 실전값)**. 혹한 11.5 · 아이스 에로우 6.2 · 인페르노 3.1 · 블레이즈 2.2(틱 합) · 돌풍 0.5 · 종말의 날 2.5 · 익스플로전 2.3 · 천벌 2.0. 표에 없는 기본공격만 계수 × 1.8%. 타격 계수는 `NotifyIdentityHit`(피해 ÷ 계수 1 피해, BP 기본공격은 공격력으로 나눔). 종말의 날 BP 행 이름 "Meteor"도 키로 넣음. 강화·해방 중엔 안 참
-- Z 마력 방출: 30~99% 강화(속성 피해 +9%) / 100% 해방(+18%·쿨감 25%·슈퍼아머 = 넉다운·경직만 무시). **둘 다 캐스팅 스킬 시전 시간 1초 감소**(`GetCastTimeReduction` → `USkillBase::GetEffectiveCastTime`, 하한 0.1초, 캐스팅 시작 때 정해서 도중에 끝나도 바 길이 유지 — 예전 추정치 캐스팅 속도 +15/30%는 뺌). 지속 = 게이지 × 0.08초, 쿨 2초. 효과는 수정치 출처 "Identity"
+- Z 마력 방출: 30~99% 강화(속성 피해 +10%) / 100% 해방(+20%·**발동 즉시** Q~F 남은 쿨 25% 감소·슈퍼아머 = 넉다운·경직만 무시). 점화를 배우면 발동 쿨 감소가 점화 값(33/41/50%)으로 **대체**(곱하지 않음), 환류면 Z 불가. 화염 부위파괴 +1·번개 무력화 증가는 시스템이 없어 생략. **둘 다 캐스팅 스킬 시전 시간 1초 감소**(정량 감소 — "1초로 단축" 아님, 유저 확인. `GetCastTimeReduction` → `USkillBase::GetEffectiveCastTime`, 하한 0.1초, 캐스팅 시작 때 정해서 도중에 끝나도 바 길이 유지 — 예전 추정치 캐스팅 속도 +15/30%는 뺌). 지속 = 게이지 × 0.08초, 쿨 2초. 효과는 수정치 출처 "Identity"
 - Z 애니메이션 `sk_arcanereinforce` + 몸에 붙는 오라 `Sorceress/VFX/NS_SorceressMagickAmplify`(파랑)·`NS_SorceressMagickRelease`(보라) — `Mixed_Magic_VFX_Pack/VFX/NS_Potion` 복사본에 InitializeParticle Color만 바꿈(원래 밝기 유지). 원본 NS_Potion은 0.5초짜리 1회 이펙트라 복사본은 4개 이미터 Loop Behavior = Infinite(파동·연기는 Loop Duration 1초 + SpawnRate 0 → 1초마다 한 번)로 바꿈. 캡슐 중심에 붙임(발밑이면 몸에 가려 안 보임). 잘 보이게 입자 크기 1.5배·색 채도↑·밝기 2.5배(원본 밝기 기준), 컴포넌트 배율 `MagickVFXScale` 1.3. **Z = 멈춰 서서 애니메이션 → 주먹 쥘 때(`MagickReleaseDelay` 0.88초) 실제 방출**(게이지 소모·버프·오라 동시). 그 사이 CC·사망이면 취소(게이지 안 씀), 검사는 `CanRelease`로 먼저. 강화·해방이 끝나면 오라 Deactivate(`UpdateMagickVFX` 상태 변화 감지). 컨트롤러는 Z 성공 시 클릭 이동 목표를 지움 **Z 키는 `ASorceress::TryActivateIdentity`로** — 컴포넌트 `TryRelease`를 직접 부르면 애니메이션이 빠짐(실제로 그랬음)
 - X 점멸: 30%, 15m, 쿨 1초. WorldStatic에서 멈추고 보스는 넘음, 바닥 없으면 당김. 애니메이션 `sk_arcaneshift`의 b_root 곡선대로 목적지까지 **통과 이동**(대시와 같은 `StartAnimMove`, 끝에서 `TeleportTo`로 보스 겹침 해소), 진행도 `BlinkHideStartProgress` 0.14 ~ `BlinkShowProgress` 0.95 동안 안 보임(약 0.4~0.7초). 아크 패시브 "점멸" 노드는 여기(스페이스 대시는 추진력만)
 - 환류·응집되는 마력이면 Z 사용 불가. 마력 방출·점멸도 `OnSkillUsed(INDEX_NONE)`(아드레날린·달인)

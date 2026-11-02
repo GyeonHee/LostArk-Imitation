@@ -63,6 +63,11 @@ void AHexTile::InitTile(AHexArena* InOwnerArena, const FIntPoint& InCoord, float
 	const float Extent = TileRadius * 0.85f;
 	OverlapBox->SetBoxExtent(FVector(Extent, Extent, 150.f));
 
+	// 서 있는 캐릭터만 감지 — OverlapAllDynamic 그대로면 투사체(평타 ABP_BasicAttack 등)가 스폰되자마자 발밑 타일 박스와
+	// 겹쳐 "타일에 맞고" 사라져 보스에게 안 닿았다(허수아비는 타일이 없는 로비라 맞았음). 런타임에 덮어써서 BP 값과 무관하게
+	OverlapBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	OverlapBox->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+
 	SetTileType(EHexTileType::Normal);
 }
 

@@ -170,14 +170,13 @@ bool USorceressIdentityComponent::TryRelease(FText& OutFailReason)
 	Gauge = 0.f;
 	World->GetTimerManager().SetTimer(StateTimer, this, &USorceressIdentityComponent::EndState, StateDuration, false);
 
-	// 점화 — 해방 발동 시 스킬(Q~F)의 남은 쿨타임 감소
+	// 해방 발동 즉시 스킬(Q~F — 이동기·기상기·각성기 제외)의 남은 쿨타임 25% 감소. 점화는 이 효과를 33/41/50%로 강화(겹쳐 곱하지 않음)
 	if (State == ESorceressMagickState::Release)
 	{
-		const float Igniter = ArkValue(TEXT("Enl_Igniter"), 0) / 100.f;
-		USkillManagerComponent* SkillManager = GetOwner() ? GetOwner()->FindComponentByClass<USkillManagerComponent>() : nullptr;
-		if (Igniter > 0.f && SkillManager)
+		const float Reduction = FMath::Max(LoASorceressIdentity::ReleaseCooldownReduction, ArkValue(TEXT("Enl_Igniter"), 0) / 100.f);
+		if (USkillManagerComponent* SkillManager = GetOwner() ? GetOwner()->FindComponentByClass<USkillManagerComponent>() : nullptr)
 		{
-			SkillManager->ReduceRemainingSkillCooldowns(Igniter);
+			SkillManager->ReduceRemainingSkillCooldowns(Reduction);
 		}
 	}
 	ApplyModifiers();
@@ -277,7 +276,6 @@ void USorceressIdentityComponent::ApplyModifiers()
 	else if (State == ESorceressMagickState::Release)
 	{
 		Add(T::SkillDamage, LoASorceressIdentity::ReleaseSkillDamage);
-		Add(T::CooldownReduction, LoASorceressIdentity::ReleaseCooldownReduction);
 		Add(T::CritRate, ArkValue(TEXT("Enl_IgniterEmber"), 0) / 100.0);        // 점화의 불씨
 		Add(T::CritDamage, ArkValue(TEXT("Enl_Ignite"), 0) / 100.0);            // 발화 (무력화 피해는 없음)
 		Add(T::MultiplicativeDamage, ArkValue(TEXT("Enl_MagickCycle"), 1) / 100.0);  // 마나 순환 — 해방 중 적에게 주는 피해

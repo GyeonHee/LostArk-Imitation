@@ -43,6 +43,13 @@ public:
 
 	UAnimSequence* GetCurrentActionSequence() const { return Cur.Sequence; }
 
+	/** 마지막 PlayActionChain 이후 흐른 애니메이션 시간 (초) — 액션이 끝나도 계속 흐른다. 단계가 넘어갈 때 남은 시간을
+	 *  다음 단계로 이어 주므로 체인 안의 위치와 같다(보스 패턴이 타격 순간을 맞추는 기준) */
+	double GetActionChainTime() const { return ActionChainTime; }
+
+	/** 지금 액션이 저절로 끝나는가 — 남은 단계가 전부 반복·마지막 프레임 유지가 아님. 액션이 없으면 true */
+	bool IsActionSelfEnding() const;
+
 	/** 이 본의 수평 이동은 포즈에서 빼고 기준 포즈 위치로 고정한다(높이는 남겨 점프가 보이게) — 원본 애니메이션의 이동은 캐릭터가 따로
 	 *  움직인다. 소서리스 스켈레톤 맨 위 "Sorceress"(아마추어) 아래 b_root가 실제 이동 본이라 엔진 루트 모션으로는 못 뽑는다 */
 	FName RootLockBone = TEXT("b_root");
@@ -99,6 +106,7 @@ private:
 
 	FLayer Cur;
 	FLayer Prev;
+	double ActionChainTime = 0.0;
 	TArray<FLoAAnimStep> Queue;
 	bool bCurHold = false;
 	bool bStopOnMove = false;

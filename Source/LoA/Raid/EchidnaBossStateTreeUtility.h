@@ -324,6 +324,13 @@ struct FStateTreeEchidnaPoopPatternInstanceData
 
 	UPROPERTY()
 	bool bBeamSpawned = false;
+
+	// 두 손으로 땅을 짚는 마무리 동작(32_03)을 틀었는지 / 틀 시각(체인 "Poop" 기준) — 빔이 터지는 순간에 손이 닿게
+	UPROPERTY(Transient)
+	bool bEndAnimPlayed = false;
+
+	UPROPERTY(Transient)
+	float EndAnimAt = 0.f;
 };
 
 /**
@@ -538,6 +545,7 @@ enum class EEchidnaMirrorLinkPhase : uint8
 {
 	Vanished,	// 보스 사라짐
 	Linking,	// 보스·거울 등장, 거울이 추적 → 발사 → 결과 대기
+	Succeeded,	// 성공 — 보스가 지친 자세(26_08)로 SuccessHoldDuration
 	Failing,	// 실패 — 전 타일 빨간 점멸 유지
 	Ending,
 	Done
@@ -600,6 +608,10 @@ struct FStateTreeEchidnaMirrorLinkPatternInstanceData
 	// 실패 시 전 타일이 빨갛게 유지되는 시간 (초)
 	UPROPERTY(EditAnywhere, Category = "Pattern")
 	float FailFlashDuration = 2.f;
+
+	// 성공 시 보스가 지친 자세(26_08)로 서 있는 시간 (초) — 자세만, 그로기 판정은 없음
+	UPROPERTY(EditAnywhere, Category = "Pattern")
+	float SuccessHoldDuration = 4.f;
 
 	// 결과가 난 뒤 패턴 종료까지 (초)
 	UPROPERTY(EditAnywhere, Category = "Pattern")
@@ -876,8 +888,16 @@ struct FStateTreeEchidnaFourMirrorPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Mirror")
 	float Damage = 4000.f;
 
+	// 예고 장판이 플레이어를 따라 도는 속도 배율 — 거울 BP(BP_EchidnaMirror)의 추적 각속도·따라잡기 속도에 곱함. 1 = BP 그대로
+	UPROPERTY(EditAnywhere, Category = "Mirror", meta = (ClampMin = "0.1"))
+	float TrackingSpeedScale = 1.15f;
+
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AEchidnaMirrorActor>> SpawnedMirrors;
+
+	// 거울이 다 끝나 마무리 동작(25_04)을 틀었는지
+	UPROPERTY(Transient)
+	bool bEnding = false;
 };
 
 /**
@@ -896,6 +916,7 @@ struct FStateTreeTask_EchidnaFourMirrorPattern : public FStateTreeTaskCommonBase
 
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
@@ -924,9 +945,9 @@ struct FStateTreeEchidnaEightMirrorPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Mirror")
 	TSubclassOf<AEchidnaMirrorActor> MirrorClass;
 
-	// 보스 중심에서 거울까지 배치 거리 (cm)
+	// 거울 8개가 보스를 팔각형으로 둘러쌀 때 이웃 거울 프레임 사이 틈 (cm) — 반지름은 거울 폭에서 계산(0 = 딱 붙음)
 	UPROPERTY(EditAnywhere, Category = "Mirror")
-	float MirrorSpawnRadius = 500.f;
+	float MirrorGap = 4.f;
 
 	// 거울이 8개라 동시 피격이 잦음 — 개당 데미지는 4거울(4000)보다 낮게
 	UPROPERTY(EditAnywhere, Category = "Mirror")
@@ -965,6 +986,10 @@ struct FStateTreeEchidnaEightMirrorPatternInstanceData
 
 	UPROPERTY(Transient)
 	bool bGuidedSpawned = false;
+
+	// 내려오는 동작(29_03)을 틀었는지
+	UPROPERTY(Transient)
+	bool bEnding = false;
 
 	// 패턴 시작(EnterState) 시점에 한 번만 고정하는 기준 방향 — "+"(0/90/180/270)/"X"(45/135/225/315) 스포크 각도의 기준선
 	UPROPERTY(Transient)
@@ -1008,9 +1033,8 @@ private:
 UENUM()
 enum class EEchidnaRetreatFanPhase : uint8
 {
-	Hop1,		// 1번째 백점프 — 착지하면 그 자리에서 1번 장판
-	Casting1,	// 1번째 장판(왼쪽으로 비스듬히) 진행 중 — 터지기 시작하면 2번째 백점프, 착지 자리에서 2번 장판
-	Casting2,	// 2번째 장판(오른쪽으로 비스듬히) 진행 중
+	Casting1,	// 1번 장판 예고(12_01) → 12_02 휘두를 때 터지며 뒤로 빠짐
+	Casting2,	// 착지 자리에서 2번 장판 예고 → 12_03 휘두를 때 터지며 한 번 더 뒤로
 	Done
 };
 
@@ -1050,27 +1074,6 @@ struct FStateTreeEchidnaRetreatFanPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Fan|Shape")
 	float FanAngle = 50.f;
 
-	// 1번 장판이 터지기 시작한 순간 → 2번 장판이 터지기 시작하는 순간까지 (초, 광폭화 배율 적용).
-	// 2번은 백점프 착지 직후 깔리고 남은 시간만큼 예고한다(최소 SecondFanMinTelegraph)
-	UPROPERTY(EditAnywhere, Category = "Fan|Timing", meta = (ClampMin = "0.0"))
-	float SecondFanInterval = 1.75f;
-
-	// 착지가 늦어 남은 시간이 짧아도 2번 예고는 최소 이만큼 (초)
-	UPROPERTY(EditAnywhere, Category = "Fan|Timing", meta = (ClampMin = "0.0"))
-	float SecondFanMinTelegraph = 0.3f;
-
-	// 장판이 실제로 터지는 순간(HasStartedExploding) 보스를 뒤로 밀어내는 힘 (수평, cm/s)
-	UPROPERTY(EditAnywhere, Category = "Fan")
-	float HopBackStrength = 500.f;
-
-	// 같은 순간 위로 띄우는 힘 (cm/s) — 값이 있어야 점프하듯 포물선을 그림
-	UPROPERTY(EditAnywhere, Category = "Fan")
-	float HopUpwardStrength = 300.f;
-
-	// 착지 예상 지점(뒤 방향으로 이 거리만큼)에 바닥이 있는지 미리 검사 — 없으면 맵 밖으로 떨어지지 않도록 홉 자체를 취소
-	UPROPERTY(EditAnywhere, Category = "Fan")
-	float HopCheckDistance = 350.f;
-
 	// 고리 1개당 1회만 판정 — 플레이어 최대체력(10만)의 12%
 	UPROPERTY(EditAnywhere, Category = "Fan")
 	float Damage = 12000.f;
@@ -1093,25 +1096,13 @@ struct FStateTreeEchidnaRetreatFanPatternInstanceData
 	UPROPERTY(Transient)
 	TObjectPtr<AEchidnaFanZoneActor> CurrentFan;
 
-	// 현재 진행 중인 장판에 대해 이미 후방 홉을 실행했는지 (장판 하나당 1회만)
-	UPROPERTY(Transient)
-	bool bHoppedForCurrentCast = false;
-
-	// 1번 장판이 터지기 시작한 뒤 흐른 시간 (광폭화 배율 적용)
-	UPROPERTY(Transient)
-	float SinceFirstExplode = 0.f;
-
 	// 2번이 깔린 뒤에도 1번이 아직 퍼지는 중일 수 있어 끝날 때까지 기다리는 용도
 	UPROPERTY(Transient)
 	TObjectPtr<AEchidnaFanZoneActor> FirstFan;
 
-	// 현재 백점프가 실제로 발사됐는지 / 발사 후 흐른 시간 — LaunchCharacter는 다음 이동 틱에 적용돼 발사 직후엔
-	// IsFalling이 아직 false라, 최소 시간을 둬야 "바로 착지한 것"으로 오판하지 않는다
+	// 두 번째 뒤로 빠지기를 걸었는지
 	UPROPERTY(Transient)
-	bool bHopLaunched = false;
-
-	UPROPERTY(Transient)
-	float HopElapsed = 0.f;
+	bool bSecondHopStarted = false;
 
 	// 패턴 시작(EnterState) 시점에 한 번만 계산해서 고정하는 기준 조준 방향 — 1번/2번 캐스팅 모두 이 값 + YawOffsetDeg를 씀.
 	// 매 캐스팅마다 플레이어 위치를 다시 조준하면 후퇴/이동 중 기준선이 흔들려 1번·2번이 어긋나 보이므로 시작 시점 값으로 고정
@@ -1130,13 +1121,11 @@ struct FStateTreeEchidnaRetreatFanPatternInstanceData
 };
 
 /**
- * "뒤로 빠지며 좌우장판" 짤패턴 — 보스가 제자리에 멈춘 채로 정면 기준 왼쪽으로 비스듬한 부채꼴(1)을
- * 먼저 터뜨리고, 이어서 오른쪽으로 비스듬한 부채꼴(2)을 터뜨린다 (가운데는 두 부채꼴이 겹침).
- * 캐스팅 직전 보스를 그 장판이 날아가는 방향으로 회전시켜 실제로 조준하는 것처럼 보이게 한다.
- * 각 장판이 예고를 마치고 실제 판정이 시작되는 순간(AEchidnaFanZoneActor::HasStartedExploding)
- * 보스를 LaunchCharacter로 살짝 뒤로 띄워 점프하듯 물러나게 한다 (장판당 1회) —
- * 단, 착지 예상 지점에 바닥이 없으면(맵 끝자락) 홉 자체를 취소해 낙사를 막는다.
- * 장판 2까지 다 끝나면(IsFinished) Succeeded.
+ * "뒤로 빠지며 좌우장판" 짤패턴 — 애니메이션 "RetreatFan"(12_01 → 12_02 → 12_03)에 맞춤.
+ * 시작하자마자 정면 기준 왼쪽으로 비스듬한 1번 부채꼴 예고(12_01) → 12_02에서 손을 휘두르는 순간(0.47초) 터지며
+ * 애니메이션 이동 곡선대로 약 2m 뒤로 빠짐 → 착지(12_02 1.40초) 자리에서 오른쪽 2번 부채꼴 예고 → 12_03 휘두름(1.33초)에
+ * 터지며 한 번 더 약 1.6m 뒤로. 2번은 물러난 거리만큼 길게(바깥 끝이 1번과 비슷하게). 둘 다 끝나면 Succeeded.
+ * 뒤로 빠지는 이동은 AEchidnaBoss::StartPatternAnimMove(벽 sweep, 바닥 없으면 멈춤)
  */
 USTRUCT(meta = (DisplayName = "Echidna Retreat Fan Pattern", Category = "EchidnaBoss"))
 struct FStateTreeTask_EchidnaRetreatFanPattern : public FStateTreeTaskCommonBase
@@ -1158,9 +1147,6 @@ private:
 	FRotator ComputeAimRotation(const AEchidnaBoss* Boss) const;
 	// TelegraphOverride > 0이면 그 예고 시간, 아니면 BP 값
 	AEchidnaFanZoneActor* SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg, const FVector& Origin, float ExtraRange, float TelegraphOverride = -1.f) const;
-	// 정면 정반대로 백점프. 착지 지점에 바닥이 없어 취소했으면 false
-	bool HopBackward(FInstanceDataType& InstanceData) const;
-	bool HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const;
 };
 
 UENUM()
@@ -1271,7 +1257,8 @@ struct FStateTreeTask_EchidnaDragFanPattern : public FStateTreeTaskCommonBase
 
 private:
 	FRotator ComputeAimRotation(const AEchidnaBoss* Boss) const;
-	AEchidnaFanZoneActor* SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg, float FanAngleOverride) const;
+	// HitTime = 터질 체인 시각(애니메이션 "DragFan" 기준) — 그때까지가 예고
+	AEchidnaFanZoneActor* SpawnFan(FInstanceDataType& InstanceData, float YawOffsetDeg, float FanAngleOverride, float HitTime) const;
 	void SpawnTethers(FInstanceDataType& InstanceData) const;
 	bool AreTethersFinished(const FInstanceDataType& InstanceData) const;
 	bool AnyTetherHit(const FInstanceDataType& InstanceData) const;
@@ -1280,12 +1267,12 @@ private:
 UENUM()
 enum class EEchidnaDonutSlashPhase : uint8
 {
-	Slash1,				// 1번 슬래시(우측 대각) 진행 중
-	Slash2,				// 2번 슬래시(좌측 대각) 진행 중
-	InnerDonutTelegraph,	// 작은 도넛(3번) 예고 표시 중 — 보스는 아직 지상에 그대로 있음
-	AirborneTelegraph,	// 보스 주변 원형 에어본 장판 예고 중 — 터지는 순간 보스가 뜸
-	Rising,				// 에어본 장판이 터진 직후부터 보스가 하늘로 상승, 정점에서 대기
-	FallAndOuterDonut,	// 보스가 하강하며 외곽 도넛(4번) 예고→폭발
+	Slash1,				// 1번 슬래시(우측 대각) — 2_01 1타에 터짐
+	Slash2,				// 2번 슬래시(좌측 대각) — 2_02 2타에 터짐
+	InnerDonutTelegraph,	// 작은 도넛(3번) — 2_03 내려앉을 때 터짐
+	AirborneTelegraph,	// 보스 주변 원형 에어본 장판 — 2_04 이륙할 때 터짐
+	Rising,				// 도약 정점까지 — 정점에서 외곽 도넛(4번) 예고
+	FallAndOuterDonut,	// 내려오며 외곽 도넛(4번) — 착지에 터짐
 	Done
 };
 
@@ -1334,10 +1321,6 @@ struct FStateTreeEchidnaDonutSlashPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Slash")
 	float SlashRange = 850.f;
 
-	// 슬래시(1·2번) 전용 예고시간 오버라이드 (초) — 예고 후 한 번만 딱 때리도록(RingCount=1 강제) SpawnZone에서 씀
-	UPROPERTY(EditAnywhere, Category = "Slash")
-	float SlashTelegraphDuration = 1.2f;
-
 	// 1번(오른쪽) — 정면(BaseAimRotation) 기준 부채꼴 중심 Yaw (도, +값=오른쪽). 45면 -20 ~ 110도
 	UPROPERTY(EditAnywhere, Category = "Slash")
 	float Slash1Yaw = 45.f;
@@ -1358,18 +1341,9 @@ struct FStateTreeEchidnaDonutSlashPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Donut")
 	float SmallDonutOuterRadius = 650.f;
 
-	// 작은 도넛(3번) 전용 예고시간 오버라이드 (초) — FanZoneClass의 기본 TelegraphDuration을 무시하고 이 값을 씀.
-	// "올라가면서 터져야" 하므로 RiseDuration보다 확실히 짧게 잡아 상승 도중에 다 터지도록 강제함
-	UPROPERTY(EditAnywhere, Category = "Donut")
-	float InnerDonutTelegraphDuration = 0.5f;
-
 	// 에어본 원 — 보스가 뜨는 순간 이 반지름 안에 있으면 넉다운 (FanZoneClass 사용, cm)
 	UPROPERTY(EditAnywhere, Category = "Donut")
 	float AirborneRadius = 450.f;
-
-	// 에어본 원 예고시간 (초) — 3번 구멍 안에서 이 반지름 밖으로 나갈 시간
-	UPROPERTY(EditAnywhere, Category = "Donut")
-	float AirborneTelegraphDuration = 0.8f;
 
 	// 큰 도넛(4번) — 안쪽 안전 구멍 반지름 (cm)
 	UPROPERTY(EditAnywhere, Category = "Donut")
@@ -1378,29 +1352,6 @@ struct FStateTreeEchidnaDonutSlashPatternInstanceData
 	// 외곽 도넛(4번) — 바깥 반지름 (cm)
 	UPROPERTY(EditAnywhere, Category = "Donut")
 	float OuterDonutOuterRadius = 1000.f;
-
-	// 외곽 도넛(4번) 전용 예고시간 오버라이드 (초) — OuterDonutClass의 기본 TelegraphDuration을 무시하고 이 값을 씀.
-	// 하강(FallDuration)과 동시에 예고가 뜨므로 착지 타이밍과 맞추려면 FallDuration과 비슷하게 잡을 것
-	UPROPERTY(EditAnywhere, Category = "Donut")
-	float OuterDonutTelegraphDuration = 0.9f;
-
-	// 보스가 하늘로 상승하는 높이 (cm)
-	UPROPERTY(EditAnywhere, Category = "Rise")
-	float RiseHeight = 500.f;
-
-	// 상승 시간 (초) — 작은 도넛(3번) 예고→폭발이 다 끝난 뒤(InnerDonutTelegraph 단계 종료)부터 세는 시간
-	UPROPERTY(EditAnywhere, Category = "Rise")
-	float RiseDuration = 1.0f;
-
-	// 정점 도달 후 대기 시간 (초) — 작은 도넛(3번)은 이미 상승 시작 전에 예고→폭발이 끝난 상태이므로,
-	// 이 구간은 순수하게 "정점에서 잠깐 멈춰있는" 연출용 대기 시간
-	UPROPERTY(EditAnywhere, Category = "Rise")
-	float ApexHoldDuration = 0.7f;
-
-	// 하강 시간 (초) — 이 구간 시작과 동시에 외곽 도넛(4번) 예고가 뜸. 착지 무렵 터지도록 OuterDonutTelegraphDuration을
-	// 이 값과 비슷하게 맞춰두면 좋음
-	UPROPERTY(EditAnywhere, Category = "Rise")
-	float FallDuration = 0.9f;
 
 	// 슬래시(1·2번)·도넛(3·4번) 공용 — 1~2번은 경직, 3~4번은 넉다운이라 체감은 뒤쪽이 더 아픔
 	UPROPERTY(EditAnywhere, Category = "Fan")
@@ -1429,35 +1380,22 @@ struct FStateTreeEchidnaDonutSlashPatternInstanceData
 	UPROPERTY(Transient)
 	FVector BaseSpawnLocation = FVector::ZeroVector;
 
-	// 상승 시작 직전 보스의 실제 액터 Z(캡슐 중심) — 상승/하강 높이 계산 및 하강 완료 후 복귀 기준
-	UPROPERTY(Transient)
-	float GroundActorZ = 0.f;
-
-	// Rising/FallAndOuterDonut 단계 진입 후 경과 시간 (단계 진입 시 0으로 리셋)
-	UPROPERTY(Transient)
-	float PhaseElapsed = 0.f;
 };
 
 /**
  * "두번긋고 도넛장판"(안밖안) 짤패턴, 총 5타 — 우측 대각(1)·좌측 대각(2) 슬래시 → 작은 도넛(3, 보스 바로 옆은
- * 안전 = 안) → 보스 주변 꽉 찬 원(에어본, 터지는 순간 보스 상승 = 밖) → 하강하며 큰 도넛(4, 안쪽 구멍 안전 = 안).
- * **순서 주의**: "예고 표시 → 폭발 → (그제서야) 보스 상승"이어야 하며, 예고를 보여주면서 동시에 이미 공중에
- * 떠서 뜬 채로 터지는 것처럼 보이면 안 됨(레퍼런스 요구사항) — 그래서 InnerDonutTelegraph 단계를 Rising 단계와
- * 분리해 InnerDonut이 `IsFinished()`(예고+단발판정 완료)가 된 다음에만 MOVE_Flying 전환/상승을 시작한다.
+ * 안전 = 안) → 보스 주변 꽉 찬 원(에어본, 터지는 순간 보스가 뛰어오름 = 밖) → 내려오며 큰 도넛(4, 안쪽 구멍 안전 = 안).
+ * 터지는 순간은 전부 애니메이션 "DonutSlash"(2_01 → 2_02 → 2_03 → 2_04)에 맞춘다: 1타 2_01 1.53초, 2타 2_02 1.03초,
+ * 내려앉기 2_03 1.40초, 이륙 2_04 0.70초, 정점 1.40초(4번 예고 시작), 착지 2.45초(4번 폭발). 각 장판은 앞 장판이 끝나면 깔리고
+ * 남은 시간만큼 예고한다. 보스의 뛰어오름은 애니메이션 b_root 높이로만 보이고 캡슐은 땅에 그대로다.
  * 1~3번은 넉다운(FanZoneClass, bApplyKnockdownOnHit=true 권장)만 적용되고 매혹 게이지는 쌓이지 않으며,
  * 4번(OuterDonutClass, bApplyCharmGaugeOnHit=true 권장)만 매혹 게이지가 쌓인다 — 실제 판정 효과는
  * AEchidnaFanZoneActor 서브클래스(BP)의 bApplyKnockdownOnHit/bApplyCharmGaugeOnHit 설정을 그대로 따르므로
  * FanZoneClass/OuterDonutClass에 서로 다른 BP를 할당해야 함.
  * 3·4번(도넛)은 AEchidnaFanZoneActor의 FanAngle=360 오버라이드로 표현(부채꼴이 아니라 원형 고리가 됨) —
  * FanInnerRadius/FanRange도 함께 오버라이드해서 고리 두께를 조절한다.
- * **1~4번 전부 예고 후 한 번만 딱 때리는 단발 판정** — "뒤로 빠지며 좌우장판"이 쓰는 RingCount 계단식 확장(안→밖으로
- * 훑으며 여러 번 판정)은 이 패턴에는 안 맞아서, SpawnZone()이 4번 스폰 전부에 RingCount=1을 강제 오버라이드한다
- * (BP 기본 RingCount가 5여도 무시됨). 예고시간은 Slash1/2YawOffset 옆의 SlashTelegraphDuration, 작은 도넛의
- * InnerDonutTelegraphDuration, 외곽 도넛의 OuterDonutTelegraphDuration으로 각각 따로 조절한다.
- * 보스의 상승/하강은 물리(LaunchCharacter)가 아니라 CharacterMovementComponent를 MOVE_Flying으로 바꾼 뒤
- * 매 틱 Z를 직접 보간하는 방식으로 처리 — 넉백 패턴들과 달리 정점 대기·착지 타이밍이 중요해서 물리 예측에
- * 맡기지 않고 스크립트로 직접 제어한다(EndRiseFall에서 MOVE_Walking으로 복구 + Z를 원래 지상 높이로 스냅).
- * 4번까지 다 끝나면(OuterDonut->IsFinished()) Succeeded.
+ * **1~4번 전부 예고 후 한 번만 딱 때리는 단발 판정** — SpawnZone()이 RingCount=1을 강제한다.
+ * 4번까지 다 끝나고 동작도 끝나면 Succeeded.
  */
 USTRUCT(meta = (DisplayName = "Echidna Donut Slash Pattern", Category = "EchidnaBoss"))
 struct FStateTreeTask_EchidnaDonutSlashPattern : public FStateTreeTaskCommonBase
@@ -1482,7 +1420,6 @@ private:
 	AEchidnaFanZoneActor* SpawnZone(FInstanceDataType& InstanceData, TSubclassOf<AEchidnaFanZoneActor> ZoneClass,
 		float YawOffsetDeg, float FanAngleOverride, float InnerRadiusOverride, float OuterRadiusOverride,
 		float TelegraphDurationOverride, int32 RingCountOverride) const;
-	void EndRiseFall(FInstanceDataType& InstanceData) const;
 };
 
 UENUM()
@@ -1540,6 +1477,10 @@ struct FStateTreeEchidnaHeartBurstPatternInstanceData
 	// 플레이어 캡슐 중심 높이와 비슷하게 잡아서 실제로 충돌하도록 함
 	UPROPERTY(EditAnywhere, Category = "Heart")
 	float HeartFireHeight = 100.f;
+
+	// 예고 하트를 보스 머리 본(bip001-head)에서 이만큼 위에 띄움 (cm) — 캡슐 위쪽은 가슴께라 몸 안에 묻혀 보였음
+	UPROPERTY(EditAnywhere, Category = "Heart")
+	float TelegraphAboveHead = 90.f;
 
 	// 3초 기절이 같이 걸려 후속 피격으로 이어지므로 데미지 자체는 낮게 — 최대체력(10만)의 10%
 	UPROPERTY(EditAnywhere, Category = "Heart")
@@ -1609,8 +1550,8 @@ private:
 UENUM()
 enum class EEchidnaBackstepHeartPhase : uint8
 {
-	Backstep,	// 뒤로 튕겨나가는 중 — 그동안 보스는 계속 플레이어를 바라본다
-	Fire,		// 하트 4개를 부채꼴로 발사한 뒤 짧게 대기
+	Backstep,	// 뒤로 빠졌다가 발사 순간까지 — 그동안 보스는 계속 플레이어를 바라본다
+	Fire,		// 하트 발사 → 두 번째 휘두름에 부채꼴 장판 → 장판·동작이 끝날 때까지
 	Done
 };
 
@@ -1639,26 +1580,6 @@ struct FStateTreeEchidnaBackstepHeartPatternInstanceData
 	// 부채꼴 전체 벌어짐 각도 (도) — 하트들이 이 범위에 균등 분포한다. 개수와 무관하게 양 끝은 항상 ±절반
 	UPROPERTY(EditAnywhere, Category = "Heart")
 	float FanSpreadAngle = 60.f;
-
-	// 뒤로 튕겨나가는 힘 (cm/s) — 플레이어 반대 방향
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepStrength = 900.f;
-
-	// 같은 순간 위로 띄우는 힘 (cm/s) — 값이 있어야 점프하듯 포물선을 그림
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepUpwardStrength = 350.f;
-
-	// 착지 예상 지점(뒤로 이 거리만큼)에 바닥이 있는지 미리 검사 — 없으면 백스텝을 건너뛴다(낙사 방지)
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepCheckDistance = 450.f;
-
-	// 백스텝 후 하트를 쏘기까지의 시간 (초) — 착지할 때쯤 발사되도록 맞춰둘 것
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepDuration = 0.6f;
-
-	// 발사 후 State가 끝나기까지의 여유 시간 (초) — 발사 모션이 끊겨 보이지 않게 하는 용도
-	UPROPERTY(EditAnywhere, Category = "Heart")
-	float FireLingerDuration = 0.4f;
 
 	UPROPERTY(EditAnywhere, Category = "Heart")
 	float HeartSpeed = 900.f;
@@ -1689,7 +1610,7 @@ struct FStateTreeEchidnaBackstepHeartPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Blast")
 	float BlastRange = 1200.f;
 
-	// 발사 순간부터 터질 때까지 예고 (초) — 하트가 먼저 날아간 뒤 장판이 터짐
+	// 부채꼴 예고 시간 (초) — 두 손을 내뻗는 순간(27의 4.60초)에 터지고, 그보다 이만큼 먼저 깔림(하트를 쏜 뒤)
 	UPROPERTY(EditAnywhere, Category = "Blast")
 	float BlastTelegraph = 1.f;
 
@@ -1705,12 +1626,18 @@ struct FStateTreeEchidnaBackstepHeartPatternInstanceData
 
 	UPROPERTY(Transient)
 	float PhaseElapsed = 0.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AEchidnaFanZoneActor> BlastFan;
+
+	UPROPERTY(Transient)
+	bool bBlastSpawned = false;
 };
 
 /**
  * "백스탭 후 하트발사" 짤패턴 (레퍼런스 8번) —
- * 보스가 플레이어를 바라본 채 뒤로 크게 튕겨나가고(LaunchCharacter 기반 백스텝), 착지할 즈음
- * 정면으로 하트 HeartCount(기본 4)개를 FanSpreadAngle(기본 60도) 범위에 균등하게 부채꼴로 발사한다.
+ * 애니메이션 "BackstepHeart"(27)에 맞춤 — 보스가 플레이어를 바라본 채 애니메이션 이동 곡선대로 뒤로 크게 빠지고(0~0.8초, 약 4.7m),
+ * 키스를 날리는 순간(1.85초)에 정면으로 하트 HeartCount개를 FanSpreadAngle 범위에 균등하게 부채꼴로 발사한다.
  *
  * - **백스텝 중에는 매 틱 플레이어를 다시 바라본다.** 뒤로 밀려나는 동안에도 정면이 플레이어를 향해야
  *   레퍼런스 그림처럼 "물러나면서 앞으로 쏘는" 모양이 나온다. 발사 직전에 그 시점의 조준 방향을
@@ -1719,9 +1646,9 @@ struct FStateTreeEchidnaBackstepHeartPatternInstanceData
  * - 하트는 "전방향 하트발사"와 같은 AEchidnaHeartActor를 그대로 재사용한다 — 맞으면 데미지 +
  *   HeartStunDuration 기절 + HeartCharmGaugeAmount 매혹 게이지. 레퍼런스의 "상태이상은 정화로 해제가능"은
  *   이 프로젝트에 정화 시스템이 없어 기존 기절로 대체했다
- * - 착지 예상 지점에 바닥이 없으면 백스텝을 건너뛰고 제자리에서 발사만 한다(낙사 방지 — RetreatFan과 동일)
- * - 발사와 동시에 같은 방향 부채꼴(하트 벌어짐 + BlastExtraAngle) 예고 → BlastTelegraph 뒤 한 번에 폭발(RingCount 1)
- * - FireLingerDuration이 지나면 (하트·장판이 아직 남아 있어도) Succeeded — 하트·장판은 각자 끝난다
+ * - 뒤로 빠지다 발밑에 바닥이 없으면 그 자리에서 멈춘다(낙사 방지 — AEchidnaBoss::StartPatternAnimMove)
+ * - 하트를 쏜 뒤 같은 방향 부채꼴(하트 벌어짐 + BlastExtraAngle) 예고 → 두 손을 내뻗는 순간(4.60초) 폭발(RingCount 1)
+ * - 장판과 동작이 끝나면 Succeeded (하트는 각자 끝난다)
  */
 USTRUCT(meta = (DisplayName = "Echidna Backstep Heart Pattern", Category = "EchidnaBoss"))
 struct FStateTreeTask_EchidnaBackstepHeartPattern : public FStateTreeTaskCommonBase
@@ -1733,6 +1660,7 @@ struct FStateTreeTask_EchidnaBackstepHeartPattern : public FStateTreeTaskCommonB
 
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
@@ -1742,21 +1670,19 @@ private:
 	/** 플레이어 방향(없으면 보스 현재 회전)을 구해 보스를 그쪽으로 즉시 회전시키고 그 Rotation을 반환 */
 	FRotator FacePlayer(AEchidnaBoss* Boss) const;
 
-	/** 플레이어 반대 방향으로 LaunchCharacter — 착지 지점에 바닥이 없으면 아무것도 하지 않는다 */
-	void Backstep(FInstanceDataType& InstanceData) const;
-
 	/** BaseAimRotation 기준 부채꼴로 하트를 한 번에 전부 발사 */
 	void FireFan(FInstanceDataType& InstanceData) const;
 
-	bool HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const;
+	/** 하트를 쏜 방향 그대로 부채꼴 장판 한 번 */
+	void SpawnBlast(FInstanceDataType& InstanceData) const;
 };
 
 UENUM()
 enum class EEchidnaReturningOrbPhase : uint8
 {
-	Throw1,		// 플레이어 방향으로 1번째 구체
-	Throw2,		// 플레이어 방향으로 2번째 구체
-	Backstep,	// 뒤로 물러나는 중
+	Throw1,		// 플레이어를 바라보다 1번째 구체
+	Throw2,		// 다시 조준해서 2번째 구체
+	Backstep,	// 뒤로 물러났다가 부채꼴 던지는 순간까지
 	WaitReturn,	// 부채꼴 4개까지 던지고, 구체들이 전부 돌아올 때까지 대기
 	Done
 };
@@ -1772,20 +1698,12 @@ struct FStateTreeEchidnaReturningOrbPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AEchidnaBoss> Boss;
 
-	// 패턴 시작 시 잔여 이동을 멈추는 용도로만 사용 — 백스텝은 LaunchCharacter라 이동 명령엔 안 씀
+	// 패턴 시작 시 잔여 이동을 멈추는 용도로만 사용 — 백스텝은 애니메이션 이동이라 이동 명령엔 안 씀
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController;
 
 	UPROPERTY(EditAnywhere, Category = "Orb")
 	TSubclassOf<AEchidnaOrbActor> OrbClass;
-
-	// 1번째 → 2번째 구체 사이 간격 (초). 각 발사 시점에 플레이어를 다시 조준한다
-	UPROPERTY(EditAnywhere, Category = "Orb")
-	float ThrowInterval = 1.2f;
-
-	// 백스텝 후 부채꼴 발사까지의 시간 (초) — 착지할 즈음 쏘도록 맞춰둘 것
-	UPROPERTY(EditAnywhere, Category = "Orb")
-	float BackstepDuration = 0.7f;
 
 	// 부채꼴로 쏠 구체 개수 (레퍼런스: 4개 — 앞선 2개까지 합쳐 총 6개)
 	UPROPERTY(EditAnywhere, Category = "Orb", meta = (ClampMin = "1"))
@@ -1826,16 +1744,6 @@ struct FStateTreeEchidnaReturningOrbPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Orb|Override")
 	float OrbMaxRangeOverride = -1.f;
 
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepStrength = 900.f;
-
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepUpwardStrength = 350.f;
-
-	// 착지 예상 지점에 바닥이 있는지 미리 검사 — 없으면 백스텝을 건너뛴다(낙사 방지)
-	UPROPERTY(EditAnywhere, Category = "Backstep")
-	float BackstepCheckDistance = 450.f;
-
 	UPROPERTY(Transient)
 	EEchidnaReturningOrbPhase Phase = EEchidnaReturningOrbPhase::Throw1;
 
@@ -1856,13 +1764,14 @@ struct FStateTreeEchidnaReturningOrbPatternInstanceData
  * 보스가 큰 구체를 전방으로 던지는데, **한 번 나간 구체는 그 경로를 그대로 되짚어 돌아온다**
  * (`AEchidnaOrbActor`). 나갈 때 피했어도 돌아올 때 다시 맞을 수 있다.
  *
- * 순서: 플레이어 조준 후 1번째 → ThrowInterval 뒤 **플레이어를 다시 조준해서** 2번째 →
- * 백스텝(플레이어 반대 방향으로 LaunchCharacter) → 착지할 즈음 정면으로 부채꼴 FanOrbCount(기본 4)개 →
- * 6개가 전부 돌아오면(각 구체의 IsFinished) Succeeded.
+ * 순서는 애니메이션 "ReturningOrb"(30_01 → 30_02 → 30_03 → 30_04)의 던지는 순간에 맞춘다:
+ * 플레이어를 바라보다 1번째(30_01 1.73초) → **다시 조준해서** 2번째(30_02 1.13초) →
+ * 백스텝(30_03, 플레이어 반대로 약 4m, 애니메이션 이동 곡선) → 정면으로 부채꼴 FanOrbCount개(30_04 1.93초) →
+ * 전부 돌아오고 동작도 끝나면(각 구체의 IsFinished) Succeeded.
  *
  * - **앞의 2개는 발사 시점마다 다시 조준**한다(플레이어를 쫓아감). 반면 **부채꼴 4개는 발사 직전에
  *   방향을 한 번 고정**해서 서로의 각도 간격이 항상 일정하게 유지된다 — RetreatFan/BackstepHeart와 같은 방침
- * - 착지 예상 지점에 바닥이 없으면 백스텝을 건너뛰고 제자리에서 쏜다(낙사 방지)
+ * - 뒤로 빠지다 발밑에 바닥이 없으면 그 자리에서 멈춘다(낙사 방지 — AEchidnaBoss::StartPatternAnimMove)
  * - `MaxWaitDuration`이 지나면 아직 안 돌아온 구체가 있어도 패턴을 끝낸다(지형에 끼는 경우 대비)
  */
 USTRUCT(meta = (DisplayName = "Echidna Returning Orb Pattern", Category = "EchidnaBoss"))
@@ -1875,6 +1784,7 @@ struct FStateTreeTask_EchidnaReturningOrbPattern : public FStateTreeTaskCommonBa
 
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
@@ -1890,19 +1800,20 @@ private:
 	/** 부채꼴로 FanOrbCount개를 한 번에 발사 */
 	void ThrowFan(FInstanceDataType& InstanceData) const;
 
-	void Backstep(FInstanceDataType& InstanceData) const;
-	bool HasGroundBelow(const FInstanceDataType& InstanceData, const FVector& Location) const;
 	bool AreOrbsFinished(const FInstanceDataType& InstanceData) const;
 };
 
 UENUM()
 enum class EEchidnaRibbonPhase : uint8
 {
-	Ribbon1,	// 1차 리본 2갈래 — 판정이 끝날 때까지 대기
-	MoveToEnd,	// 1차가 빗나감 → 리본이 뻗었던 끝자락까지 이동
+	Ribbon1,	// 1차 리본 2갈래 — 던지는 동작(3_01)의 판정까지 대기
+	Recover1,	// 던지기 동작이 끝날 때까지 — 맞았으면 Pull, 빗나갔으면 MoveToEnd
+	MoveToEnd,	// 1차가 빗나감 → 리본이 뻗었던 끝자락까지 도약(5_02)
 	Ribbon2,	// 2차 리본 2갈래 (그 자리에서 플레이어를 다시 조준)
-	CircleZone,	// 리본에 맞음 → 보스 중심 원형 장판(넉다운)
-	ArcSlash,	// 둘 다 빗나감 → 좌측 전방 호 내려치기
+	Recover2,	// 던지기 동작이 끝날 때까지 — 맞았으면 Pull, 빗나갔으면 호 내려치기(예고는 판정 순간 바로)
+	Pull,		// 리본에 맞음 → 앞으로 끌려가듯 다가가(3_02) 원형 장판 예고
+	CircleZone,	// 원형 장판(넉다운) — 3_02 내려칠 때 터짐
+	ArcSlash,	// 둘 다 빗나감 → 좌측 전방 호 내려치기(3_03)
 	Done
 };
 
@@ -1944,10 +1855,6 @@ struct FStateTreeEchidnaRibbonPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Ribbon|Override")
 	float RibbonHalfWidthOverride = -1.f;
 
-	// 1차가 빗나갔을 때 리본 끝자락까지 이동하는 시간 (초)
-	UPROPERTY(EditAnywhere, Category = "Ribbon")
-	float MoveDuration = 0.8f;
-
 	/** 리본 피격 시 터지는 보스 중심 원형 장판 — `FanAngle=360`으로 덮어써 원형으로 쓴다.
 	 *  넉다운이 걸려야 하므로 `bApplyKnockdownOnHit=true`인 BP를 넣을 것 */
 	UPROPERTY(EditAnywhere, Category = "Circle")
@@ -1958,9 +1865,6 @@ struct FStateTreeEchidnaRibbonPatternInstanceData
 
 	UPROPERTY(EditAnywhere, Category = "Circle")
 	float CircleInnerRadius = 0.f;
-
-	UPROPERTY(EditAnywhere, Category = "Circle")
-	float CircleTelegraphDuration = 0.8f;
 
 	/** 둘 다 빗나갔을 때 좌측 전방으로 내려치는 호 — 얇은 부채꼴 고리(annulus)로 만든다
 	 *  (두번긋고 도넛장판의 슬래시와 같은 방식) */
@@ -1980,9 +1884,6 @@ struct FStateTreeEchidnaRibbonPatternInstanceData
 
 	UPROPERTY(EditAnywhere, Category = "Arc")
 	float ArcRange = 900.f;
-
-	UPROPERTY(EditAnywhere, Category = "Arc")
-	float ArcTelegraphDuration = 0.9f;
 
 	// 원형/호 장판 공통 데미지
 	UPROPERTY(EditAnywhere, Category = "Zone")
@@ -2011,11 +1912,9 @@ struct FStateTreeEchidnaRibbonPatternInstanceData
 	UPROPERTY(Transient)
 	FVector RibbonEndLocation = FVector::ZeroVector;
 
+	// 방금 판정한 리본이 맞았는지 — Recover 단계에서 다음 동작을 고를 때
 	UPROPERTY(Transient)
-	FVector MoveStartLocation = FVector::ZeroVector;
-
-	UPROPERTY(Transient)
-	FVector MoveTargetLocation = FVector::ZeroVector;
+	bool bRibbonHit = false;
 };
 
 /**
@@ -2031,8 +1930,9 @@ struct FStateTreeEchidnaRibbonPatternInstanceData
  * (원형은 `FanAngle=360`, 호는 `ArcInnerRadius`를 준 얇은 고리). 둘 다 `RingCount=1`로 강제해
  * "예고 후 단발 판정"만 나오게 한다(계단식 확장은 뒤로 빠지며 좌우장판 전용 연출).
  *
- * 리본 끝자락 이동은 NavMesh(`MoveToLocation`)가 아니라 **직접 위치 보간**이다 — 도착 시점이
- * 정확해야 다음 단계 타이밍이 어긋나지 않고, NavMesh 유무에 의존하지 않기 위함(두번긋고 도넛장판의 상승/하강과 같은 방침).
+ * 타이밍은 애니메이션에 맞춘다 — 던지기 3_01(2.03초 판정) / 맞음 3_02(앞으로 약 2.3m 다가가 2.63초 내려침, 원형은 1.0초에 깔림) /
+ * 빗나감 → 끝자락까지 5_02 도약(이동 곡선을 리본 길이만큼 늘림) / 2차도 빗나감 → 3_03(0.47초 내려침, 호는 판정 순간 바로 예고).
+ * 이동은 AEchidnaBoss::StartPatternAnimMove(벽 sweep, 바닥 없으면 멈춤).
  */
 USTRUCT(meta = (DisplayName = "Echidna Ribbon Pattern", Category = "EchidnaBoss"))
 struct FStateTreeTask_EchidnaRibbonPattern : public FStateTreeTaskCommonBase
@@ -2044,6 +1944,7 @@ struct FStateTreeTask_EchidnaRibbonPattern : public FStateTreeTaskCommonBase
 
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
@@ -2058,11 +1959,14 @@ private:
 	bool AreRibbonsFinished(const FInstanceDataType& InstanceData) const;
 	bool AnyRibbonHit(const FInstanceDataType& InstanceData) const;
 
-	/** 보스 중심 원형 장판(FanAngle=360) */
-	void SpawnCircleZone(FInstanceDataType& InstanceData) const;
+	/** 보스 중심 원형 장판(FanAngle=360) — Telegraph 뒤 폭발 */
+	void SpawnCircleZone(FInstanceDataType& InstanceData, float Telegraph) const;
 
-	/** 좌측 전방 호(얇은 부채꼴 고리) */
-	void SpawnArcZone(FInstanceDataType& InstanceData) const;
+	/** 좌측 전방 호(얇은 부채꼴 고리) — Telegraph 뒤 폭발 */
+	void SpawnArcZone(FInstanceDataType& InstanceData, float Telegraph) const;
+
+	/** 다음 동작 — 맞았으면 다가가 원형, 아니면 bFirst면 끝자락으로 도약·아니면 호 */
+	void StartAfterRibbon(FInstanceDataType& InstanceData, bool bFirst) const;
 
 	/** 보스 발밑(지면) 높이 — 장판은 여기에 깔려야 공중에 떠 보이지 않는다 */
 	FVector GetBossFeetLocation(const AEchidnaBoss* Boss) const;
@@ -2112,12 +2016,7 @@ struct FStateTreeEchidnaRetreatLotusPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Slide")
 	float SlideDistance = 600.f;
 
-	UPROPERTY(EditAnywhere, Category = "Slide", meta = (ClampMin = "0.1"))
-	float SlideDuration = 1.0f;
-
-	// 미끄러지는 동안 살짝 떠오르는 높이 (cm) — 0이면 바닥에 붙어서
-	UPROPERTY(EditAnywhere, Category = "Slide")
-	float SlideHoverHeight = 60.f;
+	// 미끄러지는 시간·떠오르는 높이는 애니메이션 "RetreatLotus"(8_02) — 0.3~1.0초에 대부분 이동, 1.95초 착지
 
 	// ── 부채꼴 (도착 지점 기준, 슬라이드가 끝나는 순간 터짐) ──
 
@@ -2208,10 +2107,10 @@ struct FStateTreeEchidnaRetreatLotusPatternInstanceData
 
 /**
  * "뒤로 빠지며 연꽃 + 부채꼴" 짤패턴 (공략 그림 9번). 한 사이클:
- *  1) 플레이어를 조준해 방향 고정, 뒤로 SlideDistance 떨어진 도착 지점 기준 정면 부채꼴 예고(슬라이드 시간만큼)
- *  2) 보스가 그 방향을 본 채 SlideDuration 동안 부드럽게 뒤로 미끄러짐(살짝 떠서) — 그동안 주변에 연꽃이 하나씩 피고
+ *  1) 플레이어를 조준해 방향 고정, 뒤로 SlideDistance 떨어진 도착 지점 기준 정면 부채꼴 — 뒤로 빠지기 시작하며 손을 휘두르는 순간(0.37초) 터짐
+ *  2) 보스가 그 방향을 본 채 8_02의 이동 곡선대로 뒤로 미끄러짐(떠오르는 건 애니메이션 높이) — 그동안 주변에 연꽃이 하나씩 피고
  *     각 연꽃은 LotusFuseTime(1초) 뒤 원형으로 터짐
- *  3) 슬라이드가 끝나는 순간 부채꼴 판정
+ *  3) 착지(1.95초)하면 다음 사이클 준비
  * RepeatCount(2)번 반복, 마지막 부채꼴과 연꽃이 다 터지면 Succeeded. 피격은 경직 + 매혹 1스택
  */
 USTRUCT(meta = (DisplayName = "Echidna Retreat Lotus Pattern", Category = "EchidnaBoss"))
@@ -2265,7 +2164,7 @@ struct FStateTreeEchidnaHexRibbonPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Ribbon")
 	TObjectPtr<UNiagaraSystem> StrikeVFX;
 
-	// ── 1·2번 (경직) — 둘 다 보스가 팔을 앞으로 나란히 했을 때의 오른손 위치에서 시작 ──
+	// ── 1·2번 (경직) — 둘 다 보스가 팔을 앞으로 나란히 했을 때의 오른손 위치에서 시작(왼손 동작이면 좌우 반대) ──
 	// 오른손 위치 — 보스 중심에서 정면으로 / 오른쪽으로 (cm)
 	UPROPERTY(EditAnywhere, Category = "Line")
 	float HandForwardOffset = 200.f;
@@ -2281,11 +2180,7 @@ struct FStateTreeEchidnaHexRibbonPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Line")
 	float Line2Length = 1800.f;
 
-	// 1번 → 2번 → 육각형 시작 간격 (초)
-	UPROPERTY(EditAnywhere, Category = "Line")
-	float LineInterval = 1.f;
-
-	// 1·2번 예고 시간 (초)
+	// 1·2번 예고 시간 (초) — 터지는 순간은 애니메이션 타격(1_01 1.50초, 1_03 1.10초)에 맞추고 그 전에 이만큼 미리 깖
 	UPROPERTY(EditAnywhere, Category = "Line")
 	float LineTelegraph = 1.f;
 
@@ -2297,7 +2192,7 @@ struct FStateTreeEchidnaHexRibbonPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Hex")
 	float HexRadius = 600.f;
 
-	// 변 하나씩 연속으로 나가는 간격 (초)
+	// 변 하나씩 연속으로 터지는 간격 (초) — 첫 변은 2타 동작(1_03)의 회전 시작 1.90초에
 	UPROPERTY(EditAnywhere, Category = "Hex")
 	float HexEdgeInterval = 0.25f;
 
@@ -2320,11 +2215,9 @@ struct FStateTreeEchidnaHexRibbonPatternInstanceData
 	UPROPERTY(Transient)
 	FVector Center = FVector::ZeroVector;
 
+	// 왼손 동작(1_02) — 2번 리본과 육각형 도는 방향을 좌우로 뒤집음
 	UPROPERTY(Transient)
-	float Elapsed = 0.f;
-
-	UPROPERTY(Transient)
-	float NextSpawnTime = 0.f;
+	bool bMirror = false;
 
 	// 다음에 낼 단계 — 0 = 1번, 1 = 2번, 2~7 = 육각형 변 3~8번
 	UPROPERTY(Transient)
@@ -2335,9 +2228,11 @@ struct FStateTreeEchidnaHexRibbonPatternInstanceData
 };
 
 /**
- * 육각 리본 짤패턴 — 보스는 시작 방향 그대로 제자리. 1번(정면 오른쪽 세로)·2번(정면 가로) 리본이 1초 간격(경직),
+ * 육각 리본 짤패턴 — 보스는 시작 방향 그대로 제자리. 1번(정면 오른쪽 세로)·2번(정면 가로) 리본(경직),
  * 이어서 보스를 가운데 둔 육각형을 왼쪽 꼭짓점 → 왼쪽 뒤 → 뒤 → 오른쪽 뒤 → 오른쪽 앞 → 앞 → 왼쪽 앞 순서로
  * 변 하나씩 연속으로 그리며(3~8번), 변마다 그 변이 끝나는 꼭짓점에서 바깥으로 뻗는 리본이 같이 나간다(넉다운).
+ * 터지는 순간은 애니메이션 "HexRibbon"(1_01 → 1_03, 오른손) 타격에 맞춘다. 절반 확률로 "HexRibbon_Mirror"(1_01 → 1_02,
+ * 왼손)를 쓰고 그때는 2번이 왼손에서 오른쪽으로, 육각형은 오른쪽 꼭짓점부터 반대로 돈다.
  * 리본은 AEchidnaTetherActor(정면 리본과 같은 액터)를 피격 효과만 바꿔 씀.
  */
 USTRUCT(meta = (DisplayName = "Echidna Hex Ribbon Pattern", Category = "EchidnaBoss"))
@@ -2379,19 +2274,16 @@ struct FStateTreeEchidnaPalmBlastPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController;
 
-	// 플레이어를 쳐다보며 따라 도는 시간 (초) — 끝나는 순간 그 방향으로 발사
-	UPROPERTY(EditAnywhere, Category = "Track")
-	float TrackDuration = 1.f;
-
 	// 따라 도는 최대 속도 (도/초). 플레이어가 보스 주위를 도는 각속도보다 살짝 느리게 —
 	// 보스 가까이에서 옆으로 뛰면 아슬아슬하게 빠져나가고, 멀리서 돌면 못 빠져나감
+	// (옛 TrackTurnRate 60 / TrackCatchUpRate 400은 너무 빨라서 이름을 바꿔 ST 저장값을 버림)
 	UPROPERTY(EditAnywhere, Category = "Track")
-	float TrackTurnRate = 60.f;
+	float TrackTurnSpeed = 35.f;
 
 	// 각도 차가 크면(시작할 때 플레이어가 뒤에 있는 등) 이 속도까지 빨리 돌아 따라잡음 (도/초) —
-	// 차가 TrackCatchUpStartAngle 이하면 TrackTurnRate, TrackCatchUpFullAngle 이상이면 이 값, 사이는 부드럽게
+	// 차가 TrackCatchUpStartAngle 이하면 TrackTurnSpeed, TrackCatchUpFullAngle 이상이면 이 값, 사이는 부드럽게
 	UPROPERTY(EditAnywhere, Category = "Track")
-	float TrackCatchUpRate = 400.f;
+	float TrackCatchUpSpeed = 180.f;
 
 	UPROPERTY(EditAnywhere, Category = "Track")
 	float TrackCatchUpStartAngle = 20.f;
@@ -2417,10 +2309,6 @@ struct FStateTreeEchidnaPalmBlastPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Blast")
 	float KnockdownHopScale = 3.f;
 
-	// 발사 후 다음 패턴까지 쉬는 시간 (초)
-	UPROPERTY(EditAnywhere, Category = "Blast")
-	float RecoverDuration = 0.8f;
-
 	// ── 연출: 플레이어 돌풍(NS_Gust)을 핑크로 ──
 	// 비우면 NS_Gust
 	UPROPERTY(EditAnywhere, Category = "VFX")
@@ -2443,9 +2331,6 @@ struct FStateTreeEchidnaPalmBlastPatternInstanceData
 	float BlastVFXScale = 2.5f;
 
 	UPROPERTY(Transient)
-	float Elapsed = 0.f;
-
-	UPROPERTY(Transient)
 	bool bFired = false;
 
 	UPROPERTY(Transient)
@@ -2453,8 +2338,8 @@ struct FStateTreeEchidnaPalmBlastPatternInstanceData
 };
 
 /**
- * 장풍 짤패턴 — TrackDuration 동안 플레이어를 쳐다보며 TrackTurnRate로 따라 돌다가(완전히 같은 속도가 아니라
- * 살짝 느리게), 끝나는 순간 그 방향으로 핑크 돌풍을 쏜다. 추적 동안 판정 직사각형이 보스 쪽부터 게이지로 차오름. 정면 직사각형 안이면 데미지 + 멀리 넉다운.
+ * 장풍 짤패턴 — 애니메이션 "PalmBlast"(28_04)의 발사 순간(1.20초)까지 플레이어를 쳐다보며 TrackTurnSpeed로 따라 돌다가
+ * (완전히 같은 속도가 아니라 살짝 느리게), 그 순간 그 방향으로 핑크 돌풍을 쏜다. 동작이 끝나면 Succeeded. 추적 동안 판정 직사각형이 보스 쪽부터 게이지로 차오름. 정면 직사각형 안이면 데미지 + 멀리 넉다운.
  */
 USTRUCT(meta = (DisplayName = "Echidna Palm Blast Pattern", Category = "EchidnaBoss"))
 struct FStateTreeTask_EchidnaPalmBlastPattern : public FStateTreeTaskCommonBase
@@ -2505,6 +2390,20 @@ struct FStateTreeEchidnaPatrolInstanceData
 	// 목표 지점 도착 판정 반경 (cm)
 	UPROPERTY(EditAnywhere, Category = "Patrol")
 	float AcceptanceRadius = 50.f;
+
+	// 앞 패턴의 마무리 동작이 끝나길 기다리는 최대 시간 (초) — 그동안은 제자리
+	UPROPERTY(EditAnywhere, Category = "Patrol")
+	float MaxWaitForAnim = 4.f;
+
+	UPROPERTY(Transient)
+	FVector PendingTarget = FVector::ZeroVector;
+
+	// MoveToLocation을 이미 보냈는지 — 마무리 동작 중이면 늦게 보낸다
+	UPROPERTY(Transient)
+	bool bMoveRequested = false;
+
+	UPROPERTY(Transient)
+	float WaitElapsed = 0.f;
 };
 
 /**
@@ -2527,6 +2426,10 @@ struct FStateTreeTask_EchidnaPatrol : public FStateTreeTaskCommonBase
 #if WITH_EDITOR
 	virtual FText GetDescription(const FGuid& ID, FStateTreeDataView InstanceDataView, const IStateTreeBindingLookup& BindingLookup, EStateTreeNodeFormatting Formatting = EStateTreeNodeFormatting::Text) const override;
 #endif // WITH_EDITOR
+
+private:
+	// 고른 목표로 출발 (마무리 동작은 이때 끊음) — 경로 요청이 실패하면 false
+	bool RequestPatrolMove(FInstanceDataType& InstanceData) const;
 };
 
 UENUM()
@@ -2554,10 +2457,9 @@ struct FStateTreeEchidnaCounterPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController;
 
-	// 카운터 창(청백색 발광) 유지 시간 (초) — 이름을 바꾼 건 ST에 직렬화된 옛 값(2초)을 버리려는 것
-	UPROPERTY(EditAnywhere, Category = "Counter", meta = (ClampMin = "0.1"))
-	float CounterWindowTime = 0.75f;
-
+	// 카운터 창(청백색 발광) 시간 (초) — 기 모으는 동작(5_01, 원래 1.63초)을 이 시간에 맞춰 빠르게 튼다. 보자마자 쳐야 맞게
+	UPROPERTY(EditAnywhere, Category = "Counter", meta = (ClampMin = "0.2"))
+	float CounterWindowDuration = 1.f;
 	// 카운터 성공 시 그로기 시간 (초) — 보스 CounterGroggyDuration(거울 카운터 등 공용) 대신 이 패턴만 이 값으로 덮어씀
 	UPROPERTY(EditAnywhere, Category = "Counter", meta = (ClampMin = "0.1"))
 	float GroggyDuration = 2.5f;
@@ -2567,18 +2469,12 @@ struct FStateTreeEchidnaCounterPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Split")
 	float SplitDistance = 900.f;
 
-	// 분신 4개가 갈래 끝까지 가는 시간 (초)
-	UPROPERTY(EditAnywhere, Category = "Split")
-	float SplitDuration = 0.45f;
-
+	// 분신 4개는 도약 동작(5_02)의 이동 곡선대로 갈래 끝까지 간다
 	// 본체가 갈래 끝 한 곳에 나타난 뒤 돌진하기 전까지 멈춰 있는 시간 (초) — 어느 갈래인지 보고 피할 시간
 	UPROPERTY(EditAnywhere, Category = "Split")
 	float ReturnDelay = 0.6f;
 
-	// 본체가 원래 자리로 돌아오는 시간 (초)
-	UPROPERTY(EditAnywhere, Category = "Split")
-	float ReturnDuration = 0.4f;
-
+	// 본체는 돌진 동작(5_03)의 이동 곡선대로 원래 자리로 돌아온다
 	// 돌진 판정 반폭 (cm) — 지나간 선분에서 이 거리(+캡슐 반지름) 안이면 피격
 	UPROPERTY(EditAnywhere, Category = "Split")
 	float DashHitRadius = 150.f;
@@ -2598,10 +2494,10 @@ struct FStateTreeEchidnaCounterPatternInstanceData
 	UPROPERTY(EditAnywhere, Category = "Split|VFX")
 	float TrailVFXScale = 0.6f;
 
-	// 이펙트가 한 번 터지고(약 1초) 꺼지는 버스트형이라, 깔고 이 시간(초) 뒤 불꽃이 올라온 상태에서 일시정지해 유지.
-	// 본체가 돌아오면 재생을 풀어 나머지가 자연스럽게 사그라지게 함
-	UPROPERTY(EditAnywhere, Category = "Split|VFX")
-	float TrailHoldTime = 0.3f;
+	// 이펙트가 한 번 터지고(약 1초) 꺼지는 버스트형이라, 지나간 길 전체에 이 간격(초)마다 다시 깔아 계속 타오르게 한다.
+	// (예전엔 불꽃이 올라온 순간 일시정지해 유지했는데 화면에서 멈춘 것처럼 보였음) 본체가 돌아오면 끄고 남은 불꽃은 사그라짐
+	UPROPERTY(EditAnywhere, Category = "Split|VFX", meta = (ClampMin = "0.1"))
+	float TrailRefreshInterval = 0.5f;
 
 	UPROPERTY()
 	EEchidnaCounterPhase Phase = EEchidnaCounterPhase::Window;
@@ -2645,13 +2541,13 @@ struct FStateTreeEchidnaCounterPatternInstanceData
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UNiagaraComponent>> TrailComps;
 
-	// TrailComps와 같은 순서 — 스폰 후 경과 시간, TrailHoldTime을 넘으면 일시정지
+	// 마지막으로 길 전체를 다시 깐 뒤 흐른 시간
 	UPROPERTY(Transient)
-	TArray<float> TrailCompAges;
+	float TrailRefreshElapsed = 0.f;
 };
 
 /**
- * 카운터 패턴 — 보스가 멈춰서 플레이어를 바라보고 청백색으로 빛난다(카운터 창 0.75초).
+ * 카운터 패턴 — 보스가 멈춰서 플레이어를 바라보고 청백색으로 빛난다(카운터 창 CounterWindowDuration, 5_01을 그 길이로 배속).
  * 창 동안 정면에서 [카운터 가능] 스킬(돌풍)로 맞히면 카운터 성공 → GroggyDuration 동안 그로기, 이 Task가 Running 유지.
  * 실패하면 본체를 숨기고 분신 4개가 정면 기준 + 모양으로 돌진 → 분신이 사라지고 4갈래 끝 중 랜덤 한 곳에 본체가
  * 나타나 원래 자리로 돌아오며 돌진. 갈라질 때·돌아올 때 각각 지나간 선분 판정(데미지 + 넉다운).
@@ -2681,7 +2577,7 @@ private:
 	void RestoreBoss(FInstanceDataType& InstanceData) const;
 	// 갈래 ArmIndex의 [FromLength, ToLength] 구간에 길 이펙트를 깖
 	void SpawnTrailSegment(FInstanceDataType& InstanceData, int32 ArmIndex, float FromLength, float ToLength) const;
-	// 분신이 나아간 만큼 이어 깔고, 깐 지 TrailHoldTime이 지난 이펙트는 일시정지
+	// 분신이 나아간 만큼 이어 깔고, TrailRefreshInterval마다 지나간 길 전체를 다시 깖
 	void TickTrail(FInstanceDataType& InstanceData, float ScaledDelta, float SplitAlpha) const;
 	void ClearTrail(FInstanceDataType& InstanceData) const;
 };

@@ -423,6 +423,24 @@ public:
 	UFUNCTION(Exec)
 	void LoARefineSim(int32 TargetLevel, int32 Runs);
 
+	/** 테스트용 콘솔 명령 — 에키드나 애니메이션 미리보기. 표의 키(LoAEchidnaAnimList) 또는 애니메이션 표기를 바로 재생.
+	 *  예) LoAEchidnaAnim HexRibbon_1 / LoAEchidnaAnim att_battle_27 / LoAEchidnaAnim att_battle_26_01,att_battle_26_02* */
+	UFUNCTION(Exec)
+	void LoAEchidnaAnim(const FString& KeyOrSpec);
+
+	/** 테스트용 콘솔 명령 — 표의 키 하나를 이번 실행 동안 다른 애니메이션으로 바꿈("-"면 원래대로). 패턴에도 그대로 쓰임.
+	 *  예) LoAEchidnaAnimSet PalmBlast att_battle_24_07! */
+	UFUNCTION(Exec)
+	void LoAEchidnaAnimSet(const FString& Key, const FString& Spec);
+
+	/** 테스트용 콘솔 명령 — 에키드나 애니메이션 키와 지금 값 목록(화면 + 로그) */
+	UFUNCTION(Exec)
+	void LoAEchidnaAnimList();
+
+	/** 테스트용 콘솔 명령 — 에키드나 AI 정지(1)/재개(0). 정지 중엔 패턴을 안 써서 LoAEchidnaAnim 미리보기가 안 덮인다 */
+	UFUNCTION(Exec)
+	void LoAEchidnaFreeze(int32 bFreeze);
+
 	// ── 소지품 창 (I키) ──
 	void SetInventoryOpen(bool bOpen);
 	bool IsInventoryOpen() const;

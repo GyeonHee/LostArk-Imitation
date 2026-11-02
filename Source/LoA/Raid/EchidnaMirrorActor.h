@@ -45,6 +45,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror")
 	bool bLockDirectionOnSpawn = false;
 
+	// true면 발사가 끝나도 스스로 사라지지 않고 몸체가 남는다(정리는 패턴이 Destroy) — 8거울은 8개가 처음부터 끝까지 원형으로 서 있음
+	bool bKeepAfterFinish = false;
+
+	// true면 예고·발사 중 프레임까지 빨갛게 발광(메시 전체 오버레이) — 8거울 원형 대형에서 어느 거울이 쏠지 한눈에. Activate 전에 설정
+	bool bGlowWhenActive = false;
+
 	// true면 "하늘에서 나를 향해 쏘는" 유도 레이저 모드 — 다른 패턴들과 달리 예고(Tracking/반투명 예상범위)
 	// 단계가 없이 Activate() 즉시 상시 발사 상태로 들어가 StopRepeating()이 불릴 때까지 계속 데미지 틱을
 	// 반복한다. 매 틱 자신의 X/Y를 플레이어 위치로 맞춰 따라다니고(Z는 스폰 높이 그대로 유지), 조준도
@@ -83,13 +89,14 @@ public:
 	UPROPERTY(VisibleAnywhere, Category = "Mirror")
 	TObjectPtr<UStaticMeshComponent> MirrorMeshComp;
 
-	// 거울 프레임 키 (cm, 원본 301) — BeginPlay에서 균일 스케일로 맞춤
+	// 거울 프레임 키 (cm, 원본 301) — BeginPlay에서 균일 스케일로 맞춤. 거울 카운터 줄 거울과 같은 크기
+	// (정사각형 폭 2.1타일×2 ÷ 7개 ≈ 폭 318 → 프레임 키 417)
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror|Visual", meta = (ClampMin = "10.0"))
-	float MirrorFrameHeight = 240.f;
+	float MirrorFrameHeight = 417.f;
 
-	// 유리 중심 높이 (cm, 액터 원점 기준) = 레이저 높이. 원반 시절 120과 같게 — 프레임 바닥이 거의 땅에 닿음
+	// 유리 중심 높이 (cm, 액터 원점 기준) = 레이저 높이. 원본 유리 중심 137.15 × 배율(417/301.1) — 프레임 바닥이 땅에 닿음
 	UPROPERTY(EditDefaultsOnly, Category = "Mirror|Visual")
-	float MirrorGlassCenterHeight = 120.f;
+	float MirrorGlassCenterHeight = 190.f;
 
 	// 추적/발사 중 표시되는 직사각형 장판 메시 (기본값: 엔진 내장 Plane)
 	UPROPERTY(VisibleAnywhere, Category = "Mirror")
@@ -222,9 +229,26 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	// 유리 색 — 메시 기본 유리(M_EchidnaMirrorSurface)는 프레임 갈색 텍스처라 앞면이 뒷판처럼 보였다.
+	// 거울 섞기·거울 카운터 거울과 같은 연보라 유리(M_MirrorLaser MID, Alpha = 불투명도)
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror|Visual")
+	FLinearColor GlassColor = FLinearColor(0.85f, 0.75f, 0.95f, 0.95f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Mirror|Visual")
+	FLinearColor ActiveFrameGlowColor = FLinearColor(10.f, 0.5f, 0.3f, 0.6f);
+
 	virtual void Tick(float DeltaTime) override;
 
 private:
+	void SetFrameGlow(bool bOn);
+
+	// 프레임 발광 오버레이 — M_MirrorLaser(Translucent, "Base Color" 알파 = 불투명도) MID. 거울 섞기(ShuffleMirror)의 빨간 거울과 같은 방식
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> FrameGlowBaseMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UMaterialInstanceDynamic> FrameGlowMID;
+
 	EEchidnaMirrorPhase Phase = EEchidnaMirrorPhase::Tracking;
 	float TickDamage = 0.f;
 	TWeakObjectPtr<AController> InstigatorController;

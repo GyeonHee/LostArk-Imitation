@@ -304,6 +304,22 @@ void AHexArena::ClearAllLinkHighlights()
 	}
 }
 
+void AHexArena::ResetTilesForFinalPhase()
+{
+	SetAllPoopTilesActive(false);
+	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)
+	{
+		if (AHexTile* Tile = Pair.Value.Get())
+		{
+			Tile->SetTileType(EHexTileType::Normal);
+			Tile->SetHighlighted(false);
+			Tile->SetLinkHighlighted(false);
+		}
+	}
+	SetAllTilesDangerFlash(false);
+	MarkerTileCoords.Reset();
+}
+
 void AHexArena::SetAllPoopTilesActive(bool bActive)
 {
 	for (const TPair<FIntPoint, TObjectPtr<AHexTile>>& Pair : TileMap)

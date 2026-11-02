@@ -64,6 +64,7 @@ void AEchidnaLinkMirrorActor::BeginPlay()
 
 	// 예전 원반(지름 MirrorDiameter)이 차지하던 정사각형에 프레임을 맞춤 — 키 기준이라 꼭대기 높이가 같다
 	EchidnaMirrorModel::Place(MirrorMeshComp, MirrorDiameter, MirrorDiameter, MirrorFloatHeight);
+	EchidnaMirrorModel::ApplyGlassColor(MirrorMeshComp, this);	// 기본 유리는 갈색 프레임 텍스처라 뒷면처럼 보였음
 	OrbMeshComp->SetWorldScale3D(FVector(OrbRadius / 50.f));	// 엔진 Sphere = 반지름 50
 
 	if (UMaterialInterface* GlowMat = BeamMeshComp->GetMaterial(0))
@@ -155,7 +156,7 @@ void AEchidnaLinkMirrorActor::BeginFiring()
 	ALoACharacter* Character = Player.Get();
 	if (Character)
 	{
-		Character->SetHeldByPattern(true);
+		Character->SetHeldByPattern(true, false);	// 조작만 막음 — 기절 모션 없이 대기 자세
 	}
 
 	BeamMeshComp->SetVisibility(false);

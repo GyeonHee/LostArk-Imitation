@@ -38,7 +38,7 @@ AEchidnaMirrorActor::AEchidnaMirrorActor()
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DefaultMatFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 
 	// 거울 몸체 = SM_EchidnaMirror(원본 PSK 변환, 피벗 바닥·정면 +X). 머티리얼은 메시 기본값(프레임 원본 텍스처 +
-	// 유리 M_EchidnaMirrorSurface). 크기·높이는 BeginPlay에서(BP 컴포넌트 트리 값을 덮어씀)
+	// 유리는 BeginPlay에서 GlassColor MID로 덮어씀). 크기·높이도 BeginPlay에서(BP 컴포넌트 트리 값을 덮어씀)
 	MirrorMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MirrorMeshComp"));
 	MirrorMeshComp->SetupAttachment(Root);
 	MirrorMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -56,6 +56,28 @@ AEchidnaMirrorActor::AEchidnaMirrorActor()
 	// 레이저 판정 연출 (NS_Lightning_Strike 복제 → 노랑) — 4거울·8거울·유도 거울 공용
 	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> LaserVFXFinder(TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaMirrorLaser.NS_EchidnaMirrorLaser"));
 	if (LaserVFXFinder.Succeeded()) LaserVFX = LaserVFXFinder.Object;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GlowMatFinder(
+		TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser"));
+	if (GlowMatFinder.Succeeded()) FrameGlowBaseMaterial = GlowMatFinder.Object;
+}
+
+void AEchidnaMirrorActor::SetFrameGlow(bool bOn)
+{
+	if (!MirrorMeshComp) return;
+	if (bOn && !FrameGlowMID && FrameGlowBaseMaterial)
+	{
+		FrameGlowMID = UMaterialInstanceDynamic::Create(FrameGlowBaseMaterial, this);
+	}
+	if (bOn && FrameGlowMID)
+	{
+		FrameGlowMID->SetVectorParameterValue(TEXT("Base Color"), ActiveFrameGlowColor);
+		MirrorMeshComp->SetOverlayMaterial(FrameGlowMID);
+	}
+	else
+	{
+		MirrorMeshComp->SetOverlayMaterial(nullptr);
+	}
 }
 
 void AEchidnaMirrorActor::BeginPlay()
@@ -70,6 +92,14 @@ void AEchidnaMirrorActor::BeginPlay()
 	const float MirrorScale = EchidnaMirrorModel::FitScale(MirrorFrameHeight, MirrorFrameHeight);
 	EchidnaMirrorModel::Place(MirrorMeshComp, MirrorFrameHeight, MirrorFrameHeight,
 		MirrorGlassCenterHeight - EchidnaMirrorModel::GlassCenterZ * MirrorScale);
+	if (FrameGlowBaseMaterial)
+	{
+		if (UMaterialInstanceDynamic* GlassMID = UMaterialInstanceDynamic::Create(FrameGlowBaseMaterial, this))
+		{
+			GlassMID->SetVectorParameterValue(TEXT("Base Color"), GlassColor);
+			EchidnaMirrorModel::SetGlassMaterial(MirrorMeshComp, GlassMID);
+		}
+	}
 
 	// 8거울은 나중 차례 거울을 미리 스폰만 해두고 Activate()를 늦게 부른다 — 그 전엔 장판(엔진 Plane 기본 흰색)이 보이면 안 됨
 	if (!bActivated && ZoneMeshComp)
@@ -93,6 +123,10 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 	bActivated = true;
 	SkyGuidedElapsed = 0.f;
 	bStopRequested = false;
+	if (bGlowWhenActive)
+	{
+		SetFrameGlow(true);
+	}
 
 	// 하늘 유도 모드는 예고(Tracking/반투명 예상범위) 단계 자체가 없음 — 스폰 즉시 "발사 중" 상태로 들어가
 	// 상시로 데미지 틱을 반복하다가 StopRepeating()이 불릴 때만 멈춤. 다른 패턴들의 Tracking→Firing
@@ -142,7 +176,7 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 		{
 			SetActorRotation(ToPlayer.GetSafeNormal().Rotation());
 		}
-		UpdateZoneTransform(FMath::Min(ToPlayer.Size(), MaxRange));
+		UpdateZoneTransform(MaxRange);
 	}
 	else
 	{
@@ -228,7 +262,8 @@ void AEchidnaMirrorActor::Tick(float DeltaTime)
 				const float RotationSpeed = FMath::Max(CatchUp, SweepDegPerSec);
 				SetActorRotation(FMath::RInterpConstantTo(GetActorRotation(), TargetRotation, DeltaTime, RotationSpeed));
 			}
-			UpdateZoneTransform(FMath::Min(ToPlayer.Size(), MaxRange));
+			// 거리와 무관하게 늘 최대 사거리 — 플레이어와의 거리에 따라 예고가 늘었다 줄었다 했음
+			UpdateZoneTransform(MaxRange);
 			UpdateMirrorBodyRotation();
 		}
 	}
@@ -256,16 +291,14 @@ void AEchidnaMirrorActor::UpdateMirrorBodyRotation()
 
 	if (bSkyGuidedMode)
 	{
-		// 몸체는 액터 자체의 회전(조준용, 발사 중엔 고정됨)에 의존하지 않고 그때그때 플레이어 방향을
-		// 직접 계산해서 씀 — 그래야 발사로 조준이 잠겨있는 동안에도, 이동하면서도 항상 플레이어 쪽을
-		// "쳐다보는" 것처럼 보임(4거울이 추적 중 계속 플레이어를 향해 도는 것과 같은 느낌).
-		// 실제 레이저 조준(액터 Rotation)은 건드리지 않으므로 발사 방향 고정 로직에는 영향 없음
-		float BodyYaw = GetActorRotation().Yaw;
+		// 몸체 앞면(+X)이 그때그때 플레이어 쪽을 보며 따라 돈다 — 레이저 조준(액터 Rotation)은 따로.
+		// 바로 위에 겹치면 방향이 없으므로 직전 방향 유지
+		float BodyYaw = MirrorMeshComp->GetComponentRotation().Yaw;
 		if (ACharacter* PlayerChar = UGameplayStatics::GetPlayerCharacter(this, 0))
 		{
 			FVector ToPlayer = PlayerChar->GetActorLocation() - GetActorLocation();
 			ToPlayer.Z = 0.f;
-			if (!ToPlayer.IsNearlyZero())
+			if (ToPlayer.SizeSquared() > FMath::Square(30.f))
 			{
 				BodyYaw = ToPlayer.Rotation().Yaw;
 			}
@@ -420,7 +453,11 @@ void AEchidnaMirrorActor::FinishFiring()
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaMirror] FinishFiring — Loc=%s"), *GetActorLocation().ToString());
 
-	SetLifeSpan(LifeAfterBeam);
+	SetFrameGlow(false);
+	if (!bKeepAfterFinish)
+	{
+		SetLifeSpan(LifeAfterBeam);
+	}
 }
 
 void AEchidnaMirrorActor::ApplyPhaseVisuals(UMaterialInterface* BaseMaterial, const FLinearColor& Color, float InZoneOpacity)

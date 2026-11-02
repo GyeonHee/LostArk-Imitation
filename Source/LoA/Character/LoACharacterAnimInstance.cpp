@@ -177,6 +177,7 @@ void ULoACharacterAnimInstance::PlayActionChain(const TArray<FLoAAnimStep>& Step
 
 	Queue = Steps;
 	bStopOnMove = bInStopOnMove;
+	ActionChainTime = 0.0;
 	StartStep(Queue[0]);
 	Queue.RemoveAt(0);
 }
@@ -203,6 +204,19 @@ void ULoACharacterAnimInstance::StopAction(float BlendTime, const UAnimSequence*
 	Cur = FLayer();
 	Queue.Reset();
 	bStopOnMove = false;
+}
+
+bool ULoACharacterAnimInstance::IsActionSelfEnding() const
+{
+	if (!Cur.Sequence) return true;
+	if (Cur.bLoop) return false;
+	if (Queue.Num() == 0) return !bCurHold;
+	const FLoAAnimStep& Last = Queue.Last();
+	for (const FLoAAnimStep& Step : Queue)
+	{
+		if (Step.bLoop) return false;
+	}
+	return !Last.bHoldLastFrame;
 }
 
 void ULoACharacterAnimInstance::AdvanceLayer(FLayer& Layer, float DeltaSeconds) const
@@ -247,10 +261,13 @@ void ULoACharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	}
 
 	// 액션 레이어
+	ActionChainTime += DeltaSeconds;
 	if (Cur.Sequence)
 	{
 		Cur.Weight = FMath::Min(1.f, Cur.Weight + CurBlendSpeed * DeltaSeconds);
 		const double PrevTime = Cur.Time;
+		// 이번 업데이트에 단계 끝을 넘긴 시간 — 다음 단계로 이어 줘야 체인 시간과 어긋나지 않는다
+		const double Overflow = Cur.bLoop ? 0.0 : PrevTime + DeltaSeconds * Cur.PlayRate - Cur.Sequence->GetPlayLength();
 		AdvanceLayer(Cur, DeltaSeconds);
 		// 반복이 한 바퀴 돌아 시간이 줄었으면 그 프레임은 건너뛴다
 		if (Cur.bRootMotion && Cur.Time > PrevTime)
@@ -264,6 +281,10 @@ void ULoACharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 			{
 				StartStep(Queue[0]);
 				Queue.RemoveAt(0);
+				if (Overflow > 0.0)
+				{
+					AdvanceLayer(Cur, static_cast<float>(Overflow / FMath::Max(0.01f, Cur.PlayRate)));
+				}
 			}
 			else if (!bCurHold)
 			{
