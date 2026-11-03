@@ -40,6 +40,11 @@
 - X 점멸: 30%, 15m, 쿨 1초. WorldStatic에서 멈추고 보스는 넘음, 바닥 없으면 당김. 애니메이션 `sk_arcaneshift`의 b_root 곡선대로 목적지까지 **통과 이동**(대시와 같은 `StartAnimMove`, 끝에서 `TeleportTo`로 보스 겹침 해소), 진행도 `BlinkHideStartProgress` 0.14 ~ `BlinkShowProgress` 0.95 동안 안 보임(약 0.4~0.7초). 아크 패시브 "점멸" 노드는 여기(스페이스 대시는 추진력만)
 - 환류·응집되는 마력이면 Z 사용 불가. 마력 방출·점멸도 `OnSkillUsed(INDEX_NONE)`(아드레날린·달인)
 
+## 적 표시 `UTargetHighlightComponent` (보스·허수아비에 C++로 붙음)
+- **커서 아웃라인(주황)**: 컨트롤러 `UpdateTargetHover`가 매 틱 카메라 커서 광선을 등록된 대상의 **보이는 모양**에 판정(가장 가까운 것, 창·HUD 슬롯 위·NPC 메뉴 중엔 없음, 숨김·충돌 끈 보스 제외). 캡슐로 하면 허수아비 머리는 안 잡히고 발밑 바닥이 잡혔음 → 스태틱 메시는 복합 충돌(삼각형) `LineTraceComponent` — 메시 충돌이 꺼져 있으면 BeginPlay에서 QueryOnly + 모든 채널 Ignore로 켬(게임플레이 영향 없음). 물리 에셋 없는 스켈레탈(에키드나)은 뼈마디(부모→자식) 선분과 광선 거리 ≤ `CursorBoneRadius` 30cm × 메시 배율, 루트에서 나오는 마디는 뺌 → `SetHovered`가 메시 CustomDepth 스텐실 **2** → 플레이어 카메라 `PostProcessSettings`에 런타임으로 붙인 `/Game/LostArk/UI/Outline/M_PP_TargetOutline`(Custom 노드: 상하좌우 `Thickness` px 이웃 스텐실이 2이고 자신은 아니면 `OutlineColor`)이 그림. **`r.CustomDepth=3`(Enabled with Stencil, DefaultEngine.ini) 필요**, 스텐실 1은 HexArena 에디터 프리뷰가 씀. 머티리얼 코드의 `s = 2.0`과 `OutlineStencilValue`를 같이 바꿀 것
+- **피격 흰빛**: 피해를 받으면 `PlayHitFlash` — 오버레이 `M_MirrorLaser` MID("Base Color" 알파 = 불투명도, 기본 HDR 흰색 0.35)를 `HitFlashDuration` 0.15초 동안 0으로 빼고 떼어냄(이 동안만 컴포넌트 Tick). **다른 오버레이(보스 카운터 청백 발광)가 걸려 있으면 건너뛰고**, 끝날 때도 자기 MID일 때만 뗌 — 카운터 발광을 꺼 버리지 않게
+- 대상 메시는 ACharacter면 `GetMesh()`, 아니면 스켈레탈 → 스태틱 순(`UWidgetComponent` HP바도 `UMeshComponent`라 그냥 찾으면 잡힘). 새 몬스터는 이 컴포넌트를 붙이고 피격 지점에서 `PlayHitFlash`만 부르면 됨
+
 ## ALoAPlayerController
 - 이동: 클릭 → `RequestDirectMove`(NavMesh 없음). `BP_LoAPlayerController` EventGraph의 이동 노드는 C++와 충돌해서 제거됨
 - Tick 순서: `UpdateRaidIntro`/`UpdateDefeat`/`UpdateClear`는 **폰 체크보다 앞**, `UpdateCastBar`/`UpdateEnrageTimer`는 **`IsActionLocked` 조기 return보다 앞**

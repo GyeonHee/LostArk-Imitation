@@ -17,7 +17,9 @@ class UClashQTEWidget;
  *    판정 시각보다 EarlyIgnore 넘게 이른 입력은 무시(다음 노트를 미리 누른 것으로 치지 않음)
  *  - 연타: 다음 키를 맞게 누를 때마다 +MashGainPerPress, 매초 -MashDecayPerSecond. MashTimeLimit 안에 가득 = 성공
  * 키 입력은 ALoAPlayerController::InputKey가 HandleKey로 넘기고, 후보 키(Q W E R A S D F)는 스킬로 새지 않게 먹는다.
- * 박진감: 연타 게이지가 찰수록 카메라가 다가가고, 판정마다 큰 글자 + 플레이어 머리 위 라벨.
+ * 연출: 카메라가 플레이어 등 뒤에서 보스 정면을 클로즈업, 플레이어는 저스트 가드 자세, 보스는 단계별 동작
+ *  (EchidnaBossAnim.cpp의 Clash_1·_2·_3·_Mash·_End 키). 성공 = 보스 Defeat(쓰러짐), 실패 = 보스 대기.
+ *  연타 게이지가 찰수록 카메라가 더 다가간다. 판정마다 큰 글자.
  * 실시간 진행(CustomTimeDilation 1)
  */
 UCLASS(Blueprintable)
@@ -96,12 +98,36 @@ public:
 	float MashWrongKeyPenalty = 0.03f;
 
 	// ── 연출 ──
-	// 연타 게이지 0 → 1에 따라 카메라 암 길이 (가까워질수록 긴장감)
+	// 카메라: 플레이어 등 뒤에서 보스 정면을 바라봄 — 플레이어가 화면 앞에서 보스를 막아 서는 구도.
+	// 초점 = 플레이어 → 보스 사이 CloseupFocusTowardBoss 지점, 암 길이 = 초점까지 거리 + 여유(카메라가 플레이어 뒤에 오게)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
-	float MashCameraArmStart = 900.f;
+	float CloseupCameraPitch = -20.f;
+
+	// 0 = 플레이어, 1 = 보스
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual", meta = (ClampMin = "0", ClampMax = "1"))
+	float CloseupFocusTowardBoss = 0.6f;
+
+	// 플레이어 뒤로 물러나는 여유 (초점~플레이어 거리에 더함)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
+	float CloseupArmPadding = 450.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
-	float MashCameraArmEnd = 600.f;
+	float CloseupArmMin = 500.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
+	float CloseupArmMax = 1100.f;
+
+	// 카메라 초점 높이 (플레이어 캡슐 중심 기준 위로 — 보스가 커서 얼굴까지 들어오게)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
+	float CloseupFocusHeight = 120.f;
+
+	// 초점(가운데 지점)으로 옮겨 가는 보간 속도
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
+	float CloseupFocusInterpSpeed = 3.f;
+
+	// 연타 게이지 0 → 1에 따라 카메라 암 배율 (클로즈업 암 × 이 값 — 가까워질수록 긴장감)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
+	float MashCameraArmScaleEnd = 0.75f;
 
 	// 결과 글자를 보여주고 끝나기까지 (초)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ClashQTE|Visual")
@@ -123,6 +149,13 @@ private:
 	FKey PickRandomKey(const FKey& Exclude = EKeys::Invalid) const;
 	void ShowJudge(int32 Result);
 
+	// 연출 — 카메라 클로즈업, 플레이어 저스트 가드 자세, 보스 단계별 동작
+	void BeginCloseup();
+	void TickCloseup(float DeltaTime);
+	void EndCloseup();
+	void PlayBossClash(FName Key);
+	void StopPlayerGuard();
+
 	TWeakObjectPtr<ALoACharacter> Player;
 	TWeakObjectPtr<AEchidnaBoss> Boss;
 
@@ -142,6 +175,13 @@ private:
 	float MashStart = 0.f;
 
 	float ResolvedAt = 0.f;
+
+	// 클로즈업 — 붐 TargetOffset(월드 기준)으로 초점을 가운데로 옮긴다. 끝나면 원래 값으로
+	bool bCloseupActive = false;
+	float CloseupArm = 0.f;
+	FVector OriginalBoomTargetOffset = FVector::ZeroVector;
+	bool bPlayerGuardAnimPlaying = false;
+
 	bool bActive = false;
 	bool bResolved = false;
 	bool bSuccess = false;

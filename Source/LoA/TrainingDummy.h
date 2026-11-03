@@ -77,6 +77,10 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UStaticMeshComponent> Mesh;
 
+	// 커서 아웃라인 + 피격 발광
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<class UTargetHighlightComponent> Highlight;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UWidgetComponent> HPWidget;
 

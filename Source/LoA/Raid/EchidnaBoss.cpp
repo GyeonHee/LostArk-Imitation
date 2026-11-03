@@ -4,6 +4,8 @@
 #include "EchidnaBossAIController.h"
 #include "EchidnaFinalPhaseActor.h"
 #include "UI/DamageNumberActor.h"
+#include "Character/LoACharacterAnimInstance.h"
+#include "TargetHighlightComponent.h"
 #include "Stat/LoADamageLibrary.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -29,6 +31,7 @@ AEchidnaBoss::AEchidnaBoss()
 
 	// 앞/뒤 방향 표시 — 캡슐(루트)에 붙이면 보스 회전을 그대로 따라간다
 	DirectionIndicator = CreateDefaultSubobject<UBossDirectionIndicatorComponent>(TEXT("DirectionIndicator"));
+	TargetHighlight = CreateDefaultSubobject<UTargetHighlightComponent>(TEXT("TargetHighlight"));
 	DirectionIndicator->SetupAttachment(RootComponent);
 
 	// 285줄 기준 217줄에서 거울 카운터.
@@ -308,6 +311,7 @@ void AEchidnaBoss::ReceiveDamage(float DamageAmount, bool bCritical)
 	OnHPChanged.Broadcast(HP, MaxHP);
 
 	SpawnDamageNumber(DamageAmount, bCritical);
+	if (TargetHighlight && DamageAmount > 0.f) TargetHighlight->PlayHitFlash();
 
 	const int32 NewLine = GetCurrentLine();
 	if (NewLine != LastBroadcastLine)
@@ -409,7 +413,12 @@ void AEchidnaBoss::HandleDefeated()
 	UE_LOG(LogLoA, Log, TEXT("[Echidna] 처치 — 클리어 시간 %.1f초"), ClearTime);
 	GetWorldTimerManager().ClearTimer(GroggyTimerHandle);
 	bGroggy = false;
-	PlayPatternAnim(TEXT("Defeat"));
+	// 격돌 QTE 성공 순간 이미 쓰러지는 중이면 다시 틀지 않는다(결과 글자가 떠 있는 동안 dead_1이 처음부터 다시 나옴)
+	const UAnimSequence* CurAction = GetBossAnim() ? GetBossAnim()->GetCurrentActionSequence() : nullptr;
+	if (!CurAction || (CurAction != FindEchidnaAnim(TEXT("dead_1")) && CurAction != FindEchidnaAnim(TEXT("dead_loop_1"))))
+	{
+		PlayPatternAnim(TEXT("Defeat"));
+	}
 	OnDefeatedVisual();
 	OnDefeated.Broadcast();
 }

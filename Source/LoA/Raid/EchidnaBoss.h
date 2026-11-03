@@ -73,6 +73,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Indicator")
 	TObjectPtr<UBossDirectionIndicatorComponent> DirectionIndicator;
 
+	/** 커서 아웃라인(주황) + 피격 흰빛 — 카운터 발광 중엔 피격 발광을 건너뜀 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Indicator")
+	TObjectPtr<class UTargetHighlightComponent> TargetHighlight;
+
 	/** 피격 시 띄울 데미지 숫자 액터 — BP_Echidna에서 BP_DamageNumber 할당. 비어 있으면 숫자를 안 띄운다 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Damage")
 	TSubclassOf<ADamageNumberActor> DamageNumberClass;

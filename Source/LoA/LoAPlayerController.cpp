@@ -95,6 +95,7 @@
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "TargetHighlightComponent.h"
 #include "Engine/Texture2D.h"
 
 ALoAPlayerController::ALoAPlayerController()
@@ -1600,6 +1601,7 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 	UpdateCastBar();
 	UpdateBattleItemHUD();
 	UpdateNPCInteraction();
+	UpdateTargetHover();
 	if (InventoryWidget && IsInventoryOpen())
 	{
 		const ALoACharacter* InvChar = Cast<ALoACharacter>(ControlledPawn);
@@ -2880,6 +2882,70 @@ void ALoAPlayerController::LoARefineSim(int32 TargetLevel, int32 Runs)
 	ClientMessage(Line);
 }
 
+// ─── 적 커서 아웃라인 ───────────────────────────────────────────────────────
+
+bool ALoAPlayerController::IsCursorOverAnyPanel() const
+{
+	return (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel()) || (RefineWidget && RefineWidget->IsCursorOverPanel())
+		|| (PolishWidget && PolishWidget->IsCursorOverPanel())
+		|| (StoneFacetWidget && StoneFacetWidget->IsCursorOverPanel())
+		|| (BraceletEnchantWidget && BraceletEnchantWidget->IsCursorOverPanel())
+		|| (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel())
+		|| (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel())
+		|| (ArkPassiveWidget && ArkPassiveWidget->IsCursorOverPanel())
+		|| (GemFuseWidget && GemFuseWidget->IsCursorOverPanel())
+		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
+}
+
+void ALoAPlayerController::UpdateTargetHover()
+{
+	// 아웃라인 후처리는 플레이어 카메라에 한 번만 붙인다 (폰이 바뀌면 새 카메라에)
+	if (ALoACharacter* Char = GetPawn<ALoACharacter>())
+	{
+		UCameraComponent* Camera = Char->GetTopDownCameraComponent();
+		if (Camera && OutlineCamera.Get() != Camera)
+		{
+			static const TCHAR* OutlinePath = TEXT("/Game/LostArk/UI/Outline/M_PP_TargetOutline.M_PP_TargetOutline");
+			if (UMaterialInterface* OutlineMat = LoadObject<UMaterialInterface>(nullptr, OutlinePath))
+			{
+				Camera->PostProcessSettings.AddBlendable(OutlineMat, 1.f);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Outline] 후처리 머티리얼 없음: %s"), OutlinePath);
+			}
+			OutlineCamera = Camera;
+		}
+	}
+
+	// 커서 광선이 닿는 가장 가까운 대상 — 창·HUD 슬롯 위, NPC 메뉴 중엔 없음
+	UTargetHighlightComponent* Best = nullptr;
+	int32 SlotGroup = 0, SlotIndex = 0;
+	FVector RayStart, RayDir;
+	if (!bNPCMenuOpen && !IsCursorOverAnyPanel() && !FindHUDSlotUnderCursor(SlotGroup, SlotIndex) && DeprojectMousePositionToWorld(RayStart, RayDir))
+	{
+		const FVector RayEnd = RayStart + RayDir * 100000.f;
+		float BestDist = TNumericLimits<float>::Max();
+		for (const TWeakObjectPtr<UTargetHighlightComponent>& Weak : UTargetHighlightComponent::GetAll())
+		{
+			UTargetHighlightComponent* Target = Weak.Get();
+			float Dist = 0.f;
+			if (Target && Target->GetWorld() == GetWorld() && Target->TraceCursorRay(RayStart, RayEnd, Dist) && Dist < BestDist)
+			{
+				BestDist = Dist;
+				Best = Target;
+			}
+		}
+	}
+
+	if (HoveredTarget.Get() != Best)
+	{
+		if (UTargetHighlightComponent* Old = HoveredTarget.Get()) Old->SetHovered(false);
+		if (Best) Best->SetHovered(true);
+		HoveredTarget = Best;
+	}
+}
+
 // ─── 상점 NPC ───────────────────────────────────────────────────────────────
 
 void ALoAPlayerController::UpdateNPCInteraction()
@@ -2906,16 +2972,7 @@ void ALoAPlayerController::UpdateNPCInteraction()
 
 	// 커서 아래 NPC — 창 위에 커서가 있으면 무시
 	AInteractableNPCActor* Hovered = nullptr;
-	const bool bCursorOverUI = (InventoryWidget && InventoryWidget->IsCursorOverPanel()) || (ShopWidget && ShopWidget->IsCursorOverPanel()) || (RefineWidget && RefineWidget->IsCursorOverPanel())
-		|| (PolishWidget && PolishWidget->IsCursorOverPanel())
-		|| (StoneFacetWidget && StoneFacetWidget->IsCursorOverPanel())
-		|| (BraceletEnchantWidget && BraceletEnchantWidget->IsCursorOverPanel())
-		|| (CharacterInfoWidget && CharacterInfoWidget->IsCursorOverPanel())
-		|| (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel())
-		|| (ArkPassiveWidget && ArkPassiveWidget->IsCursorOverPanel())
-		|| (GemFuseWidget && GemFuseWidget->IsCursorOverPanel())
-		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
-	if (!bNPCMenuOpen && !bCursorOverUI)
+	if (!bNPCMenuOpen && !IsCursorOverAnyPanel())
 	{
 		FHitResult Hit;
 		if (GetHitResultUnderCursor(ECC_Visibility, false, Hit))
@@ -2959,6 +3016,12 @@ void ALoAPlayerController::OnInteractKey()
 			if (It->TryJustGuard(Char, Aim))
 			{
 				CancelAutoMove();
+				// 판정 방향(커서)과 자세 방향을 맞춘다 — 뒤를 보고 있어도 커서 쪽으로 돌아서 막음
+				const FVector ToAim = (Aim - Char->GetActorLocation()).GetSafeNormal2D();
+				if (!ToAim.IsNearlyZero())
+				{
+					Char->SetActorRotation(FRotator(0.f, ToAim.Rotation().Yaw, 0.f));
+				}
 				Char->BeginJustGuardStance(It->StanceDuration);
 				return;
 			}

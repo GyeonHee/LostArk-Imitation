@@ -8,6 +8,7 @@
 #include "Stat/LoADamageLibrary.h"
 #include "UI/DamageNumberActor.h"
 #include "UObject/ConstructorHelpers.h"
+#include "TargetHighlightComponent.h"
 
 ATrainingDummy::ATrainingDummy()
 {
@@ -19,6 +20,8 @@ ATrainingDummy::ATrainingDummy()
 
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(Capsule);
+
+	Highlight = CreateDefaultSubobject<UTargetHighlightComponent>(TEXT("Highlight"));
 
 	HPWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("HPWidget"));
 	HPWidget->SetupAttachment(Capsule);
@@ -54,6 +57,7 @@ float ATrainingDummy::TakeDamage(float DamageAmount, const FDamageEvent& DamageE
 	ULoADamageLibrary::ReportDamageDealt(EventInstigator, this, DamageCauser, FinalDamage, bCritical, true);
 	ULoADamageLibrary::NotifyIdentityHit(EventInstigator, DamageCauser, DamageAmount);
 	SpawnDamageNumber(FinalDamage, bCritical);
+	if (Highlight && FinalDamage > 0.f) Highlight->PlayHitFlash();
 
 	if (!bInfiniteHP)
 	{

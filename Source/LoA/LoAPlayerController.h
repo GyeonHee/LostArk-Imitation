@@ -707,6 +707,12 @@ protected:
 
 	// 상점 NPC — 거리 안의 NPC에 [G] 대화하기 + 테두리, 커서를 올린 NPC도 테두리 (Tick)
 	void UpdateNPCInteraction();
+
+	/** 커서 아래 적(보스·허수아비) 주황 아웃라인 — UTargetHighlightComponent + 카메라 후처리 M_PP_TargetOutline */
+	void UpdateTargetHover();
+	bool IsCursorOverAnyPanel() const;
+	TWeakObjectPtr<class UTargetHighlightComponent> HoveredTarget;
+	TWeakObjectPtr<class UCameraComponent> OutlineCamera;   // 아웃라인 후처리를 붙인 카메라 (폰이 바뀌면 다시 붙임)
 	void OnInteractKey();
 
 	TWeakObjectPtr<class AInteractableNPCActor> InRangeNPC;   // 상호작용 거리 안 가장 가까운 NPC

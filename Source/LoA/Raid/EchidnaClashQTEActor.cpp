@@ -4,6 +4,7 @@
 #include "LoACharacter.h"
 #include "LoA.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/SpringArmComponent.h"
 
 namespace
 {
@@ -43,7 +44,85 @@ void AEchidnaClashQTEActor::Activate(ALoACharacter* InPlayer, AEchidnaBoss* InBo
 			UE_LOG(LogLoA, Warning, TEXT("[ClashQTE] 위젯 생성 실패"));
 		}
 	}
+	BeginCloseup();
 	UE_LOG(LogLoA, Log, TEXT("[ClashQTE] 시작 — 타이밍 %d단계 + 연타, 판정 ±%.0fms"), StageNoteCounts.Num(), HitWindow * 1000.f);
+}
+
+void AEchidnaClashQTEActor::BeginCloseup()
+{
+	ALoACharacter* Char = Player.Get();
+	AEchidnaBoss* B = Boss.Get();
+	if (!Char || !B) return;
+
+	// 플레이어 등 뒤에서 보스 쪽을 바라봄 — 붐은 초점에서 카메라 방향 반대로 뻗으므로 Yaw = 플레이어 → 보스
+	const FVector ToBoss = B->GetActorLocation() - Char->GetActorLocation();
+	const float Dist = ToBoss.Size2D();
+	const float CamYaw = ToBoss.GetSafeNormal2D().Rotation().Yaw;
+	Char->SetCameraRotationOverride(FRotator(CloseupCameraPitch, CamYaw, 0.f));
+
+	CloseupArm = FMath::Clamp(Dist * CloseupFocusTowardBoss + CloseupArmPadding, CloseupArmMin, CloseupArmMax);
+	Char->SetCameraZoomOverride(CloseupArm);
+
+	if (USpringArmComponent* Boom = Char->GetCameraBoom())
+	{
+		OriginalBoomTargetOffset = Boom->TargetOffset;
+	}
+	bCloseupActive = true;
+
+	// 플레이어는 결과가 날 때까지 저스트 가드 자세로 버팀
+	if (Char->JustGuardAnim)
+	{
+		Char->PlayStateAnim(Char->JustGuardAnim, true, 0.15f);
+		bPlayerGuardAnimPlaying = true;
+	}
+	UE_LOG(LogLoA, Log, TEXT("[ClashQTE] 클로즈업 — 거리 %.0f, 암 %.0f, Yaw %.0f"), Dist, CloseupArm, CamYaw);
+}
+
+void AEchidnaClashQTEActor::TickCloseup(float DeltaTime)
+{
+	if (!bCloseupActive) return;
+	ALoACharacter* Char = Player.Get();
+	AEchidnaBoss* B = Boss.Get();
+	USpringArmComponent* Boom = Char ? Char->GetCameraBoom() : nullptr;
+	if (!Boom || !B) return;
+
+	// TargetOffset은 월드 기준 — 플레이어에서 보스 쪽 초점까지 + 초점 높이
+	FVector Desired = (B->GetActorLocation() - Char->GetActorLocation()) * CloseupFocusTowardBoss;
+	Desired.Z = CloseupFocusHeight;
+	Boom->TargetOffset = FMath::VInterpTo(Boom->TargetOffset, Desired, DeltaTime, CloseupFocusInterpSpeed);
+}
+
+void AEchidnaClashQTEActor::EndCloseup()
+{
+	if (!bCloseupActive) return;
+	bCloseupActive = false;
+	if (ALoACharacter* Char = Player.Get())
+	{
+		if (USpringArmComponent* Boom = Char->GetCameraBoom())
+		{
+			Boom->TargetOffset = OriginalBoomTargetOffset;
+		}
+		Char->ClearCameraRotationOverride();
+		Char->ClearCameraZoomOverride();
+	}
+}
+
+void AEchidnaClashQTEActor::PlayBossClash(FName Key)
+{
+	if (AEchidnaBoss* B = Boss.Get())
+	{
+		B->PlayPatternAnim(Key, 0.15f);
+	}
+}
+
+void AEchidnaClashQTEActor::StopPlayerGuard()
+{
+	if (!bPlayerGuardAnimPlaying) return;
+	bPlayerGuardAnimPlaying = false;
+	if (ALoACharacter* Char = Player.Get())
+	{
+		Char->StopStateAnim(Char->JustGuardAnim);
+	}
 }
 
 FKey AEchidnaClashQTEActor::PickRandomKey(const FKey& Exclude) const
@@ -77,6 +156,8 @@ void AEchidnaClashQTEActor::BeginStage(int32 StageIndex)
 			Notes.Add(Note);
 			Keys.Add(Note.Key);
 		}
+		// 보스: 1단계 06→07 / 2단계 02→03 / 3단계 02→03(끝 동작 없이 연타로 이어짐)
+		PlayBossClash(FName(*FString::Printf(TEXT("Clash_%d"), FMath::Min(Stage + 1, 3))));
 		if (Widget)
 		{
 			Widget->SetStageText(FText::Format(NSLOCTEXT("ClashQTE", "Stage", "격돌 {0} / {1}"), Stage + 1, TotalStages));
@@ -91,6 +172,7 @@ void AEchidnaClashQTEActor::BeginStage(int32 StageIndex)
 		MashNext = 0;
 		MashGauge = MashStartGauge;
 		MashStart = Elapsed;
+		PlayBossClash(TEXT("Clash_Mash"));
 		if (Widget)
 		{
 			Widget->SetStageText(FText::Format(NSLOCTEXT("ClashQTE", "Mash", "격돌 {0} / {0} — 번갈아 연타!"), TotalStages));
@@ -105,6 +187,7 @@ void AEchidnaClashQTEActor::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	if (!bActive || bFinished) return;
 	Elapsed += DeltaTime;
+	TickCloseup(DeltaTime);
 
 	if (bResolved)
 	{
@@ -155,7 +238,18 @@ void AEchidnaClashQTEActor::TickTimingStage()
 	if (bAllDone)
 	{
 		bWaitingNextStage = true;
-		NextStageAt = Elapsed + StageGap;
+		float Gap = StageGap;
+		// 다음이 또 타이밍 단계면 보스가 이번 단계 끝 동작(08·09)을 다 하고 넘어감. 연타 직전(3단계)은 끝 동작 없이 03을 버팀
+		if (Stage + 1 < StageNoteCounts.Num())
+		{
+			const FName EndKey(*FString::Printf(TEXT("Clash_%d_End"), Stage + 1));
+			if (AEchidnaBoss* B = Boss.Get(); B && !B->GetPatternAnimSpec(EndKey).IsEmpty())
+			{
+				B->PlayPatternAnim(EndKey, 0.15f);
+				Gap = FMath::Max(Gap, B->GetPatternAnimLength(EndKey));
+			}
+		}
+		NextStageAt = Elapsed + Gap;
 	}
 }
 
@@ -165,9 +259,9 @@ void AEchidnaClashQTEActor::TickMashStage(float DeltaTime)
 	const float TimeLeft = MashTimeLimit - (Elapsed - MashStart);
 	if (Widget) Widget->SetMash(MashGauge, MashNext, TimeLeft);
 
-	if (ALoACharacter* Char = Player.Get())
+	if (ALoACharacter* Char = Player.Get(); Char && bCloseupActive)
 	{
-		Char->SetCameraZoomOverride(FMath::Lerp(MashCameraArmStart, MashCameraArmEnd, MashGauge));
+		Char->SetCameraZoomOverride(FMath::Lerp(CloseupArm, CloseupArm * MashCameraArmScaleEnd, MashGauge));
 	}
 	if (TimeLeft <= 0.f)
 	{
@@ -263,16 +357,28 @@ void AEchidnaClashQTEActor::Resolve(bool bInSuccess)
 		Widget->ShowJudge(bSuccess ? NSLOCTEXT("ClashQTE", "Win", "격돌 성공!") : NSLOCTEXT("ClashQTE", "Lose", "격돌 실패"),
 			bSuccess ? ClashQteGoldColor : ClashQteMissColor);
 	}
-	if (AEchidnaBoss* B = Boss.Get(); B && bSuccess)
+	if (AEchidnaBoss* B = Boss.Get())
 	{
-		B->SpawnLabelText(B->GetActorLocation() + FVector(0.f, 0.f, B->CounterTextHeight), FText::FromString(TEXT("Break!")),
-			ClashQteGoldColor, B->CounterTextScale * 1.3f);
+		if (bSuccess)
+		{
+			B->SpawnLabelText(B->GetActorLocation() + FVector(0.f, 0.f, B->CounterTextHeight), FText::FromString(TEXT("Break!")),
+				ClashQteGoldColor, B->CounterTextScale * 1.3f);
+			// 격돌에서 밀린 보스가 쓰러짐 — 처치 처리(HandleDefeated)는 이미 쓰러지는 중이면 다시 안 튼다
+			B->PlayPatternAnim(TEXT("Defeat"), 0.15f);
+		}
+		else
+		{
+			B->StopPatternAnim(0.3f);	// 버티던 동작을 풀고 대기 자세
+		}
 	}
+	StopPlayerGuard();
 	UE_LOG(LogLoA, Warning, TEXT("[ClashQTE] %s (단계 %d, 놓침 %d)"), bSuccess ? TEXT("성공") : TEXT("실패"), Stage + 1, Misses);
 }
 
 void AEchidnaClashQTEActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopPlayerGuard();
+	EndCloseup();
 	if (Widget)
 	{
 		Widget->RemoveFromParent();

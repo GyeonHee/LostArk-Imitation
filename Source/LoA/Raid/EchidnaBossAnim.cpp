@@ -83,6 +83,14 @@ namespace
 		{ TEXT("MirrorGroggy"),         TEXT("att_battle_25_05,att_battle_25_06*") },
 		{ TEXT("MirrorGroggy_End"),     TEXT("att_battle_25_07") },
 		{ TEXT("FinalPhase"),           TEXT("evt2_sden_change_01!") },
+		// 0줄 격돌 QTE (AEchidnaClashQTEActor) — 단계 시작에 Clash_N, 단계를 넘기면 _End(3단계는 _End 없이 바로 연타로 이어감)
+		// 성공 = Defeat(dead), 실패 = 대기
+		{ TEXT("Clash_1"),              TEXT("att_battle_24_06,att_battle_24_07*") },
+		{ TEXT("Clash_1_End"),          TEXT("att_battle_24_08") },
+		{ TEXT("Clash_2"),              TEXT("att_battle_24_02,att_battle_24_03*") },
+		{ TEXT("Clash_2_End"),          TEXT("att_battle_24_09") },
+		{ TEXT("Clash_3"),              TEXT("att_battle_24_02,att_battle_24_03*") },
+		{ TEXT("Clash_Mash"),           TEXT("att_battle_24_04,att_battle_24_05*") },
 	};
 
 	const TCHAR* const EchidnaAnimIdleName = TEXT("idle_battle_1");
