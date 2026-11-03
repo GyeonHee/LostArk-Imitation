@@ -1,4 +1,5 @@
 #include "Skill/InfernoZoneActor.h"
+#include "Skill/SkillSound.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -56,6 +57,7 @@ void AInfernoZoneActor::Explode()
     if (!World) return;
 
     const FVector ExplodePos = GetActorLocation();
+    LoASkillSound::PlayAt(this, TEXT("053"), ExplodePos);
 
     // 위로 솟구치는 폭발 VFX 1회 스폰
     if (ExplosionVFXSystem)

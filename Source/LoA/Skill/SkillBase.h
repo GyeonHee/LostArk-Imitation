@@ -122,4 +122,16 @@ private:
     bool bScaleCastToCastTime = false;
     int32 NextReleaseAnim = 0;
     uint64 LastReleaseAnimFrame = 0;
+
+    // ── 사운드 (표 = SkillBase.cpp의 SkillSound_Table, 마네킹이어도 재생) ──
+    /** 캐스팅·홀드 시작 — 취소하면 끊는다 */
+    void StartCastSounds(AActor* Owner);
+    /** 발동 순간(즉발은 누를 때, 캐스팅은 완료 때) — 지연 있는 것은 타이머(CC·사망이면 취소) */
+    void StartReleaseSounds(AActor* Owner);
+    void StopCastSounds(AActor* Owner, float FadeOut);
+    void ScheduleSkillSound(AActor* Owner, const TCHAR* Id, float Delay, bool bCastSound);
+    int32 SoundRowIndex = INDEX_NONE;
+    TArray<TWeakObjectPtr<class UAudioComponent>> CastSoundComps;
+    TArray<FTimerHandle> CastSoundTimers;
+    TArray<FTimerHandle> ReleaseSoundTimers;
 };

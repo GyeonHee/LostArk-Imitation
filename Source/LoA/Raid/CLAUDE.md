@@ -107,6 +107,14 @@
 - G 입력 순서(컨트롤러 `OnInteractKey`): 저스트 가드 장판 → 격돌 발판 → NPC. 저스트 가드는 장판이 **근처(반지름 + `RelevantDistance` 1500)거나 중심이 화면 안**일 때만 받고, 받으면 결과와 무관하게 **커서 쪽으로 돌아서**(판정 방향과 자세 방향 일치) `StanceDuration` 1.5초 제자리(`ALoACharacter::BeginJustGuardStance`) — 아무 데서나 G로 굳지 않게. 라벨("Just Guard!"·"Counter!")은 `AEchidnaBoss::SpawnLabelText`
 - 발악 중 플레이어가 죽으면 진행자는 멈추고 일반 사망 흐름
 
+## 배경음악 (`AEchidnaBoss::SetBattleMusicStage`, `Raid/EchidnaModling/sound/OST`)
+- 0 `Echidna`(보스 BeginPlay — 인트로부터) → 1 `Possessor_of_Desire`(거울 카운터 Task ExitState — 그로기까지 끝난 뒤, 발악 중이면 건너뜀) → 2 `Blossoming_Desire`(`BeginFinalPhase`). 앞으로만 진행, 2D, `MusicCrossfade` 2초 겹쳐 바뀜, 끝나면 `OnAudioFinished`로 다시 재생. 볼륨 `MusicVolume`(BP_Echidna). **음악 사운드는 `VirtualizationMode = PlayWhenSilent`로 바꿔 씀** — 기본 Restart면 음소거(볼륨 0) 중 가상화됐다가 풀 때 처음부터 나왔음
+- 대기 지역도 `Echidna`(컨트롤러 BeginPlay — 현재 레벨 이름 = `RaidReturnLevel`일 때, `LobbyMusicVolume`). 레벨 이동 페이드 때 같이 줄고, 레이드에선 보스가 처음부터 다시 튼다
+
+## 레이드 사운드 (`LoARaidSound` — `Raid/RaidSound.h`, 원본 `EchidnaModling/sound/<폴더>/`, 짝은 유저가 듣고 정함)
+- 2D, 볼륨 = 게임 설정 효과음. **같은 소리가 같은 프레임에 여러 번이면 한 번만**(4거울 4개 동시 등장·발사가 겹쳐 커지지 않게) — 반복용은 `bAutoDestroy=false` + Tick에서 `KeepLooping`
+- 거울(`EchidnasMirror_`): 4·8거울 등장 001(BeginPlay 다음 틱 — 유도 여부를 Task가 스폰 직후 넣어서) · 4거울 추적 중 013 반복 → 레이저 014 / 8거울(방향 고정 스포크) 레이저 016 · 유도 거울 따라다니는 동안 012 반복 · 거울 카운터 성공 = 줄 쓰러짐 028(`TryCounterHit`) · 거울잇기 거울 등장 025, 빛이 한 칸씩 갈 때마다 022
+
 ## 보스 맵 흐름 (컨트롤러 쪽은 `Source/LoA/CLAUDE.md`)
 - 인트로: 페이드 인 → `ACameraActor`가 보스 정면 높은 곳 → 얼굴 앞 ease-in-out → 레터박스·타이틀 → 플레이어 카메라 블렌드 → `StartCombat()`. 연출 중 붙잡힘(폰이 늦게 빙의될 수 있어 매 틱), HUD 숨김, 뷰 타깃 매 틱 재설정, 카메라는 `SetLifeSpan(0.5)`로 정리
 - 사망/클리어/중단 → 정비소 복귀. 레이드 보상은 `Source/LoA/Item/CLAUDE.md`

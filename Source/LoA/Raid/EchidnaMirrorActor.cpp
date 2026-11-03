@@ -14,6 +14,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "LoACharacter.h"
 #include "LoA.h"
+#include "Raid/RaidSound.h"
+#include "Components/AudioComponent.h"
 
 namespace
 {
@@ -106,10 +108,33 @@ void AEchidnaMirrorActor::BeginPlay()
 	{
 		ZoneMeshComp->SetVisibility(false);
 	}
+
+	// 거울이 나타나는 소리 001 — 유도 거울 여부(bSkyGuidedMode)는 스폰 직후 Task가 넣으므로 한 틱 뒤에 본다
+	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (!bSkyGuidedMode) LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), TEXT("EchidnasMirror_001"));
+	}));
+}
+
+void AEchidnaMirrorActor::StartMirrorLoopSound(const TCHAR* Name)
+{
+	StopMirrorLoopSound();
+	MirrorLoopSound = LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), Name, false);
+}
+
+void AEchidnaMirrorActor::StopMirrorLoopSound()
+{
+	if (UAudioComponent* Comp = MirrorLoopSound.Get())
+	{
+		LoARaidSound::Stop(Comp, 0.2f);
+		Comp->bAutoDestroy = true;
+	}
+	MirrorLoopSound.Reset();
 }
 
 void AEchidnaMirrorActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopMirrorLoopSound();
 	StopLaserBeam();
 	Super::EndPlay(EndPlayReason);
 }
@@ -143,6 +168,7 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 		}
 		StartLaserBeam();
 		UpdateMirrorBodyRotation();
+		StartMirrorLoopSound(TEXT("EchidnasMirror_012"));	// 플레이어를 쫓아다니는 거울
 
 		ApplyLaserDamageTick();
 		if (LaserDamageTickInterval > 0.f)
@@ -184,6 +210,8 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 	}
 
 	UpdateMirrorBodyRotation();
+	// 플레이어를 따라 도는 동안(4거울) 013 — 방향 고정 스포크(8거울)는 안 따라가니 없음
+	if (!bLockDirectionOnSpawn) StartMirrorLoopSound(TEXT("EchidnasMirror_013"));
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaMirror] Activate — Loc=%s TrackingDuration=%.1f FiringDuration=%.1f LockDirection=%s SkyGuided=%s"),
 		*GetActorLocation().ToString(), TrackingDuration, FiringDuration,
@@ -196,6 +224,7 @@ void AEchidnaMirrorActor::Tick(float DeltaTime)
 
 	// Activate()가 호출되기 전까지는(예: "8거울"에서 미리 스폰만 해두고 대기 중인 스포크) 아무 것도 진행하지 않음
 	if (!bActivated) return;
+	LoARaidSound::KeepLooping(MirrorLoopSound.Get());
 
 	// 하늘 유도 모드는 상시 발사 상태(Activate에서 바로 Firing으로 진입)라 아래 "Tracking 중에만" 게이트를
 	// 절대 안 타므로, 이동/조준/몸체회전을 전부 여기서 Phase와 무관하게 직접 처리함.
@@ -330,6 +359,9 @@ void AEchidnaMirrorActor::BeginFiring()
 		ZoneMeshComp->SetVisibility(false);
 	}
 	StartLaserBeam();
+	// 레이저 — 4거울(플레이어 추적) 014, 8거울(방향 고정 스포크) 016. 같은 프레임 여러 개는 한 번만
+	StopMirrorLoopSound();
+	LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), bLockDirectionOnSpawn ? TEXT("EchidnasMirror_016") : TEXT("EchidnasMirror_014"));
 
 	if (BeamStartVFXSystem)
 	{
@@ -445,6 +477,7 @@ void AEchidnaMirrorActor::FinishFiring()
 
 	Phase = EEchidnaMirrorPhase::Done;
 	StopLaserBeam();
+	StopMirrorLoopSound();
 
 	if (ZoneMeshComp)
 	{

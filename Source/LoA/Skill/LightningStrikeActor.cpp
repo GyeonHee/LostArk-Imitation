@@ -1,4 +1,5 @@
 #include "Skill/LightningStrikeActor.h"
+#include "Skill/SkillSound.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -48,6 +49,15 @@ void ALightningStrikeActor::Activate(const FVector& InTargetLocation, float InEx
     // CircleShowTime 후 번개 VFX + 데미지 타이머 시작
     if (World)
     {
+        // 174는 앞 0.15초가 무음이고 "쾅"이 0.3초 지점 — 그만큼 먼저 틀어 번개와 맞춘다
+        constexpr float StrikeSoundLead = 0.3f;
+        const FVector SoundLoc = TargetLocation;
+        FTimerHandle SoundHandle;
+        World->GetTimerManager().SetTimer(SoundHandle, FTimerDelegate::CreateWeakLambda(this, [this, SoundLoc]()
+        {
+            LoASkillSound::PlayAt(this, TEXT("174"), SoundLoc);
+        }), FMath::Max(0.01f, CircleShowTime - StrikeSoundLead), false);
+
         World->GetTimerManager().SetTimer(
             StrikeTimerHandle, this, &ALightningStrikeActor::Strike, CircleShowTime, false);
     }

@@ -187,6 +187,27 @@ public:
 	// 스킬 배치·레벨·포인트·클리어 기록을 디스크(SaveSlotName)에 쓴다
 	void SaveToDisk();
 
+	// ── 게임 설정 — 소리 (설정 창 `USettingsWidget`) ──
+	// 배경음 = 곡마다 정한 기본 볼륨 × 이 값(음소거면 0), 효과음(스킬) = 재생 때 × 이 값
+	UPROPERTY(Transient)
+	float MusicVolumeSetting = 1.f;
+
+	UPROPERTY(Transient)
+	bool bMusicMuted = false;
+
+	UPROPERTY(Transient)
+	float SfxVolumeSetting = 1.f;
+
+	/** 값을 바꾸고 OnAudioSettingsChanged — 재생 중인 배경음이 바로 따라간다. 디스크 저장은 bSave일 때만(슬라이더 끄는 중엔 안 씀) */
+	void SetAudioSettings(float InMusicVolume, bool bInMusicMuted, float InSfxVolume, bool bSave);
+
+	DECLARE_MULTICAST_DELEGATE(FOnAudioSettingsChanged);
+	FOnAudioSettingsChanged OnAudioSettingsChanged;
+
+	/** 게임 인스턴스가 없으면 1 */
+	static float GetMusicScale(const UObject* WorldContext);
+	static float GetSfxScale(const UObject* WorldContext);
+
 	static const FString SaveSlotName;
 
 private:

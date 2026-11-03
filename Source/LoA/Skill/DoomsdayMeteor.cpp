@@ -1,4 +1,5 @@
 #include "Skill/DoomsdayMeteor.h"
+#include "Skill/SkillSound.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -28,6 +29,9 @@ void ADoomsdayMeteor::Activate(const FVector& InTargetLocation, float InFallDela
     SetActorLocation(TargetLocation);
 
     UWorld* World = GetWorld();
+
+    // 장판이 깔릴 때 — 캐스팅부터 이어지는 068 위에 겹쳐 131
+    LoASkillSound::PlayAt(this, TEXT("131"), TargetLocation);
 
     // 범위 원 VFX 즉시 표시 — 이미터별 스케일 파라미터 일괄 설정
     if (CircleVFXSystem && World)

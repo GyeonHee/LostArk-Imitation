@@ -120,5 +120,7 @@ private:
 	TObjectPtr<UNiagaraComponent> MagickVFXComp;
 	uint8 MagickVFXState = 0;
 	FTimerHandle MagickReleaseTimer;
+	/** Z 소리(강화 006 / 해방 007) — 주먹 쥐기 전에 끊기면 같이 끊는다 */
+	TWeakObjectPtr<class UAudioComponent> IdentitySoundComp;
 	void FinishIdentityRelease();
 };

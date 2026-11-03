@@ -4667,6 +4667,8 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::ExitState(FStateTreeExecutionCo
 	if (AEchidnaBoss* Boss = InstanceData.Boss)
 	{
 		Boss->ClearActiveTimedPattern();
+		// 거울 카운터(그로기 포함)가 끝나면 0줄까지 Possessor_of_Desire — 도중에 0줄 발악으로 끊긴 거면 그쪽 곡이 이긴다
+		if (!Boss->IsFinalPhaseActive()) Boss->SetBattleMusicStage(1);
 	}
 	InstanceData.Arena = nullptr;
 }

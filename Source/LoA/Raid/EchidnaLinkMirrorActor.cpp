@@ -1,4 +1,5 @@
 #include "Raid/EchidnaLinkMirrorActor.h"
+#include "Raid/RaidSound.h"
 #include "Raid/EchidnaMirrorModel.h"
 #include "Raid/EchidnaBoss.h"
 #include "Raid/HexArena.h"
@@ -77,6 +78,8 @@ void AEchidnaLinkMirrorActor::BeginPlay()
 		OrbMID->SetVectorParameterValue(ColorParameterName, OrbColor);
 		OrbMeshComp->SetMaterial(0, OrbMID);
 	}
+
+	LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), TEXT("EchidnasMirror_025"));	// 거울잇기 거울 등장
 }
 
 void AEchidnaLinkMirrorActor::Activate(ALoACharacter* InPlayer, AHexArena* InArena, AActor* InBoss, const FIntPoint& InBossCoord)
@@ -163,6 +166,7 @@ void AEchidnaLinkMirrorActor::BeginFiring()
 	OrbMeshComp->SetWorldLocation(GetActorLocation() + FVector(0.f, 0.f, OrbHeight));
 	OrbMeshComp->SetVisibility(true);
 	OrbDirection = GetActorForwardVector().GetSafeNormal2D();
+	LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), TEXT("EchidnasMirror_022"));	// 빛이 첫 칸으로
 
 	AHexArena* HexArena = Arena.Get();
 	bPlayerCoordValid = Character && HexArena && HexArena->WorldToTileCoord(Character->GetActorLocation(), PlayerCoord);
@@ -269,6 +273,7 @@ void AEchidnaLinkMirrorActor::OnOrbArrived()
 		}
 
 		OrbHop = 1;
+		LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), TEXT("EchidnasMirror_022"));	// 빛이 다음 칸(보스)으로
 		Phase = EEchidnaLinkMirrorPhase::Linking;
 		PhaseElapsed = 0.f;
 		OrbTarget = BossActor->GetActorLocation();

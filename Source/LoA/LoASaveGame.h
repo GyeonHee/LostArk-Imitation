@@ -151,4 +151,14 @@ public:
 	// 첫 클리어 보너스(기본 보상 ×3)를 받았는지 (버전 2~)
 	UPROPERTY()
 	bool bFirstClearRewarded = false;
+
+	// 게임 설정 — 소리 (없던 저장 파일은 기본값)
+	UPROPERTY()
+	float MusicVolumeSetting = 1.f;
+
+	UPROPERTY()
+	bool bMusicMuted = false;
+
+	UPROPERTY()
+	float SfxVolumeSetting = 1.f;
 };

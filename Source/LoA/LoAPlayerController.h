@@ -660,6 +660,21 @@ public:
 
 	virtual void BeginPlay() override;
 
+	/** 대기 지역(RaidReturnLevel) 배경음악 — 보스 맵 첫 곡과 같은 Echidna. 레이드에 들어가면 보스가 처음부터 다시 튼다 */
+	UPROPERTY(EditDefaultsOnly, Category="Music")
+	float LobbyMusicVolume = 0.5f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UAudioComponent> LobbyMusicComp;
+
+	UFUNCTION()
+	void OnLobbyMusicFinished();
+	void ApplyLobbyMusicVolume();
+
+	/** 우측 맨 아래 게임 설정(소리) — C++ 트리 위젯, 에디터 할당 불필요 */
+	UPROPERTY(Transient)
+	TObjectPtr<class USettingsWidget> SettingsWidget;
+
 	virtual void Tick(float DeltaSeconds) override;
 
 	virtual void OnPossess(APawn* InPawn) override;

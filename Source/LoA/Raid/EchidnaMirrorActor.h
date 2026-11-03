@@ -270,6 +270,11 @@ private:
 	FTimerHandle DamageTimerHandle;
 	FTimerHandle StopFiringTimerHandle;
 
+	// 따라다니는 동안 반복하는 소리 — 추적 013(4거울), 유도 거울 012. 끝나면 Tick이 다시 튼다
+	TWeakObjectPtr<class UAudioComponent> MirrorLoopSound;
+	void StartMirrorLoopSound(const TCHAR* Name);
+	void StopMirrorLoopSound();
+
 	float GetEffectiveBeamRange() const { return bSkyGuidedMode ? SkyGuidedBeamRange : MaxRange; }
 	// 지금 살아 있는 줄기들 — 매 틱 위치·방향을 맞추고, 끝난 것은 정리
 	UPROPERTY(Transient)

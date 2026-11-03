@@ -1,4 +1,5 @@
 #include "Raid/EchidnaMirrorWallActor.h"
+#include "Raid/RaidSound.h"
 #include "Raid/EchidnaMirrorModel.h"
 #include "Stat/EngravingComponent.h"
 #include "Raid/EchidnaBoss.h"
@@ -498,6 +499,7 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 	}
 	StopRow();
 	Phase = EEchidnaMirrorWallPhase::Falling;
+	LoARaidSound::PlayAttached(this, TEXT("EchidnasMirror"), TEXT("EchidnasMirror_028"));	// 카운터 + 줄이 쓰러짐
 	// 거울이 쓰러지면 불길도 꺼진다 (이미 깔린 이펙트는 약 1초 뒤 스스로 사라짐)
 	FireMesh->ClearAllMeshSections();
 

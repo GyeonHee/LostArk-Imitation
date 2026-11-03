@@ -65,6 +65,9 @@ void ULoAGameInstance::LoadFromDisk()
 	bHasStarterBraceletStone = Save->bHasStarterBraceletStone;
 	PendingRewards = Save->PendingRewards;
 	bFirstClearRewarded = Save->bFirstClearRewarded;
+	MusicVolumeSetting = FMath::Clamp(Save->MusicVolumeSetting, 0.f, 1.f);
+	bMusicMuted = Save->bMusicMuted;
+	SfxVolumeSetting = FMath::Clamp(Save->SfxVolumeSetting, 0.f, 1.f);
 	if (Save->SaveVersion < CurrentSaveVersion)
 	{
 		// 0 → 1: 장비 필드가 생김. 옮길 데이터는 없고 bHasStarterGear=false라 시작 장비가 한 번 지급된다
@@ -124,6 +127,9 @@ void ULoAGameInstance::SaveToDisk()
 	Save->bHasStarterBraceletStone = bHasStarterBraceletStone;
 	Save->PendingRewards = PendingRewards;
 	Save->bFirstClearRewarded = bFirstClearRewarded;
+	Save->MusicVolumeSetting = MusicVolumeSetting;
+	Save->bMusicMuted = bMusicMuted;
+	Save->SfxVolumeSetting = SfxVolumeSetting;
 
 	if (!UGameplayStatics::SaveGameToSlot(Save, SaveSlotName, 0))
 	{
@@ -172,4 +178,28 @@ bool ULoAGameInstance::RecordClear(float ClearSeconds)
 	}
 	SaveToDisk();
 	return bNewRecord;
+}
+
+void ULoAGameInstance::SetAudioSettings(float InMusicVolume, bool bInMusicMuted, float InSfxVolume, bool bSave)
+{
+	MusicVolumeSetting = FMath::Clamp(InMusicVolume, 0.f, 1.f);
+	bMusicMuted = bInMusicMuted;
+	SfxVolumeSetting = FMath::Clamp(InSfxVolume, 0.f, 1.f);
+	OnAudioSettingsChanged.Broadcast();
+	if (bSave) SaveToDisk();
+}
+
+float ULoAGameInstance::GetMusicScale(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const ULoAGameInstance* GI = World ? World->GetGameInstance<ULoAGameInstance>() : nullptr;
+	if (!GI) return 1.f;
+	return GI->bMusicMuted ? 0.f : GI->MusicVolumeSetting;
+}
+
+float ULoAGameInstance::GetSfxScale(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const ULoAGameInstance* GI = World ? World->GetGameInstance<ULoAGameInstance>() : nullptr;
+	return GI ? GI->SfxVolumeSetting : 1.f;
 }

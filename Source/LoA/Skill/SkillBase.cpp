@@ -13,6 +13,8 @@
 #include "NiagaraFunctionLibrary.h"
 #include "Character/MageCharacter.h"
 #include "Character/SorceressIdentityComponent.h"
+#include "Skill/SkillSound.h"
+#include "Components/AudioComponent.h"
 
 namespace
 {
@@ -46,6 +48,41 @@ namespace
           TEXT("/Game/LostArk/Character/Magician/Sorceress/VFX/NS_SorceressBasicAttackMist.NS_SorceressBasicAttackMist") },
     };
 
+    /** 스킬 → 소서리스 원본 사운드 번호(SORCERESS_F_<번호>). 키는 SkillAnim_Table과 같다. 짝은 유저가 원본을 듣고 정함.
+     *  Delay = 시작 시점부터 초. SkillSound_AfterCastAnim = 캐스팅(홀드) 시작 애니메이션이 끝날 때(혹한 반복 구간) */
+    constexpr float SkillSound_AfterCastAnim = -1.f;
+    struct FSkillSoundCue
+    {
+        const TCHAR* Id;
+        float Delay;
+    };
+    struct FSkillSoundRow
+    {
+        const TCHAR* Key;
+        FSkillSoundCue Cast[2];     // 캐스팅·홀드 시작 — 취소·홀드 종료면 끊음
+        FSkillSoundCue Release[5];  // 발동 순간
+        bool bRandomRelease;        // Release 중 하나만 무작위(기본공격)
+        bool bStopCastOnRelease;    // 발동하면 캐스팅 소리를 끊음(차징음 → 발사음). false면 끝까지(종말의 날 068)
+    };
+
+    const FSkillSoundRow SkillSound_Table[] = {
+        // 종말의 날: 068 캐스팅부터 낙하까지 이어짐 + 장판이 깔릴 때 131(DoomsdayMeteor)
+        { TEXT("SkillDoomsday"),  { { TEXT("068"), 0.12f } }, {}, false, false },  // 소리가 운석보다 살짝 빨라 늦춤(유저 PIE)
+        // 천벌: 173 캐스팅, 174 내리칠 때(LightningStrikeActor)
+        { TEXT("SkillCheonbeol"), { { TEXT("173"), 0.f } }, {}, false, true },
+        // 익스플로전: 170 차징, 171 발사
+        { TEXT("SkillExplosion"), { { TEXT("170"), 0.f } }, { { TEXT("171"), 0.f } }, false, true },
+        { TEXT("SkillBlaze"),     {}, { { TEXT("044"), 0.f } }, false, false },
+        // 인페르노: 049 바로 뒤 050(거의 동시), 053 폭발(InfernoZoneActor)
+        { TEXT("SkillInferno"),   {}, { { TEXT("049"), 0.f }, { TEXT("050"), 0.15f } }, false, false },
+        { TEXT("SkillIceArrow"),  {}, { { TEXT("074"), 0.f } }, false, false },
+        // 돌풍: 227 기 모을 때(동작 시작), 229 장풍 발사(ExecuteDelay 0.47과 같게)
+        { TEXT("SkillGust"),      {}, { { TEXT("227"), 0.f }, { TEXT("229"), 0.47f } }, false, false },
+        // 혹한의 부름: 023 누를 때, 026 반복 구간부터 — 떼면 둘 다 끊음
+        { TEXT("SkillFrostCall"), { { TEXT("023"), 0.f }, { TEXT("026"), SkillSound_AfterCastAnim } }, {}, false, false },
+        { TEXT("BasicAttack"),    {}, { { TEXT("001"), 0.f }, { TEXT("002"), 0.f }, { TEXT("003"), 0.f }, { TEXT("004"), 0.f }, { TEXT("005"), 0.f } }, true, false },
+    };
+
     UAnimSequence* SkillAnim_Load(const TCHAR* Name)
     {
         if (!Name) return nullptr;
@@ -74,6 +111,10 @@ void USkillBase::ResolveSkillAnims()
             if (Key != TEXT("BasicAttack")) Key = Class->GetName();
             break;
         }
+    }
+    for (int32 i = 0; i < UE_ARRAY_COUNT(SkillSound_Table); ++i)
+    {
+        if (Key == SkillSound_Table[i].Key) { SoundRowIndex = i; break; }
     }
     for (const FSkillAnimRow& Row : SkillAnim_Table)
     {
@@ -193,10 +234,105 @@ void USkillBase::FaceCursor(AActor* Owner)
     if (PC && PC->GetCursorAimLocation(Aim)) FaceSkillTarget(Owner, Aim);
 }
 
+void USkillBase::ScheduleSkillSound(AActor* Owner, const TCHAR* Id, float Delay, bool bCastSound)
+{
+    if (!Id || !IsValid(Owner)) return;
+    auto Play = [this, Owner, Id, bCastSound]()
+    {
+        UAudioComponent* Comp = LoASkillSound::PlayAttached(Owner, Id);
+        if (Comp && bCastSound) CastSoundComps.Add(Comp);
+    };
+    UWorld* World = Owner->GetWorld();
+    if (Delay <= 0.f || !World)
+    {
+        Play();
+        return;
+    }
+    FTimerHandle& Handle = (bCastSound ? CastSoundTimers : ReleaseSoundTimers).AddDefaulted_GetRef();
+    TWeakObjectPtr<USkillBase> WeakThis(this);
+    TWeakObjectPtr<AActor> WeakOwner(Owner);
+    World->GetTimerManager().SetTimer(Handle, FTimerDelegate::CreateWeakLambda(this, [WeakThis, WeakOwner, Id, bCastSound]()
+    {
+        if (USkillBase* Self = WeakThis.Get())
+        {
+            if (AActor* O = WeakOwner.Get()) Self->ScheduleSkillSound(O, Id, 0.f, bCastSound);
+        }
+    }), Delay, false);
+}
+
+void USkillBase::StartCastSounds(AActor* Owner)
+{
+    ResolveSkillAnims();
+    StopCastSounds(Owner, 0.1f);  // 앞 캐스팅 소리가 남아 있으면(연속 시전) 정리
+    if (SoundRowIndex == INDEX_NONE) return;
+    for (const FSkillSoundCue& Cue : SkillSound_Table[SoundRowIndex].Cast)
+    {
+        if (!Cue.Id) continue;
+        float Delay = Cue.Delay;
+        // 시작 동작이 끝나고 반복 구간에 들어갈 때 — 애니메이션이 없으면(마네킹) 0.5초
+        if (Delay == SkillSound_AfterCastAnim) Delay = CastAnim ? CastAnim->GetPlayLength() : 0.5f;
+        ScheduleSkillSound(Owner, Cue.Id, Delay, true);
+    }
+}
+
+void USkillBase::StartReleaseSounds(AActor* Owner)
+{
+    ResolveSkillAnims();
+    if (SoundRowIndex == INDEX_NONE) return;
+    const FSkillSoundRow& Row = SkillSound_Table[SoundRowIndex];
+
+    // 캐스팅이 끝났다 — 차징음은 끊고, 이어지는 소리(종말의 날)는 더는 취소 대상이 아니다(낙하 중 CC여도 계속)
+    if (Row.bStopCastOnRelease)
+    {
+        StopCastSounds(Owner, 0.25f);
+    }
+    else
+    {
+        if (UWorld* World = Owner ? Owner->GetWorld() : nullptr)
+        {
+            for (FTimerHandle& Handle : CastSoundTimers) World->GetTimerManager().ClearTimer(Handle);
+        }
+        CastSoundTimers.Reset();
+        CastSoundComps.Reset();
+    }
+
+    TArray<const FSkillSoundCue*, TInlineAllocator<5>> Cues;
+    for (const FSkillSoundCue& Cue : Row.Release)
+    {
+        if (Cue.Id) Cues.Add(&Cue);
+    }
+    if (Cues.Num() == 0) return;
+    if (Row.bRandomRelease)
+    {
+        const FSkillSoundCue* Pick = Cues[FMath::RandRange(0, Cues.Num() - 1)];
+        ScheduleSkillSound(Owner, Pick->Id, Pick->Delay, false);
+        return;
+    }
+    for (const FSkillSoundCue* Cue : Cues) ScheduleSkillSound(Owner, Cue->Id, Cue->Delay, false);
+}
+
+void USkillBase::StopCastSounds(AActor* Owner, float FadeOut)
+{
+    UWorld* World = Owner ? Owner->GetWorld() : GetWorld();
+    for (const TWeakObjectPtr<UAudioComponent>& Comp : CastSoundComps)
+    {
+        if (!Comp.IsValid()) continue;
+        if (!World) World = Comp->GetWorld();
+        Comp->FadeOut(FadeOut, 0.f);
+    }
+    CastSoundComps.Reset();
+    if (World)
+    {
+        for (FTimerHandle& Handle : CastSoundTimers) World->GetTimerManager().ClearTimer(Handle);
+    }
+    CastSoundTimers.Reset();
+}
+
 void USkillBase::PlaySkillCastAnim(AActor* Owner)
 {
     FaceCursor(Owner);
     ResolveSkillAnims();
+    StartCastSounds(Owner);
     ULoACharacterAnimInstance* Anim = SkillAnim_GetAnim(Owner);
     if (!Anim || !CastAnim) return;
     FLoAAnimStep Step;
@@ -230,6 +366,7 @@ void USkillBase::PlaySkillReleaseAnim(AActor* Owner, bool bFaceCursor)
     // 즉발은 OnKeyDown과 Execute 양쪽에서 부를 수 있다 — 같은 프레임 두 번째는 무시(먼저 온 쪽의 방향이 맞다)
     if (LastReleaseAnimFrame == GFrameCounter) return;
     LastReleaseAnimFrame = GFrameCounter;
+    StartReleaseSounds(Owner);
     if (bFaceCursor) FaceCursor(Owner);
 
     ResolveSkillAnims();
@@ -249,6 +386,7 @@ void USkillBase::PlaySkillReleaseAnim(AActor* Owner, bool bFaceCursor)
 
 void USkillBase::StopSkillCastAnim(AActor* Owner)
 {
+    StopCastSounds(Owner, 0.2f);
     ULoACharacterAnimInstance* Anim = SkillAnim_GetAnim(Owner);
     if (!Anim) return;
     const UAnimSequence* Current = Anim->GetCurrentActionSequence();
@@ -288,7 +426,10 @@ void USkillBase::ForceCancel(AActor* Owner)
     if (UWorld* World = Owner ? Owner->GetWorld() : nullptr)
     {
         World->GetTimerManager().ClearTimer(DeferredExecuteHandle);
+        // 아직 안 나온 발동 소리(돌풍 229 등)도 — 효과가 취소됐다
+        for (FTimerHandle& Handle : ReleaseSoundTimers) World->GetTimerManager().ClearTimer(Handle);
     }
+    ReleaseSoundTimers.Reset();
 }
 
 void USkillBase::Execute_Implementation(AActor* Owner)

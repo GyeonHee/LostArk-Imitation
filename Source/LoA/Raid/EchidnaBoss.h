@@ -61,6 +61,16 @@ public:
 
 	virtual void BeginPlay() override;
 
+	/** 배경음악 단계 — 0 Echidna(입장), 1 Possessor_of_Desire(거울 카운터가 끝난 뒤~), 2 Blossoming_Desire(0줄 발악~).
+	 *  앞으로만 진행(같거나 이전 단계는 무시), 이전 곡은 MusicCrossfade 동안 겹쳐 바뀐다 */
+	void SetBattleMusicStage(int32 Stage);
+
+	UPROPERTY(EditDefaultsOnly, Category="Music")
+	float MusicVolume = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Music")
+	float MusicCrossfade = 2.f;
+
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
 		AController* EventInstigator, AActor* DamageCauser) override;
 
@@ -520,6 +530,15 @@ private:
 	TObjectPtr<class AEchidnaFinalPhaseActor> FinalPhaseActor;
 
 	void BeginFinalPhase();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UAudioComponent> MusicComp;
+	int32 MusicStage = -1;
+	/** 곡이 끝나면 처음부터 다시(에셋 루프가 꺼져 있어도 반복되게) */
+	UFUNCTION()
+	void OnBattleMusicFinished();
+	/** 게임 설정(배경음 볼륨·음소거)을 지금 곡에 반영 */
+	void ApplyBattleMusicVolume();
 
 	// 광폭화 타이머를 지금 남은 시간에서 멈춘다 (처치·발악 진입)
 	void FreezeEnrageTimer();

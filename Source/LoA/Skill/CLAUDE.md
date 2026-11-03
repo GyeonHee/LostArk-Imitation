@@ -45,6 +45,11 @@
 - **방향**: 캐스팅·홀드는 시작 때, 즉발·기본공격은 발동 때 커서 쪽으로 즉시 회전(`FaceCursor` — 마네킹이어도). 캐스팅 완료 때는 다시 안 돎(시작 방향 유지), 사거리 이동 뒤 발동하는 인페르노·아이스 에로우는 커서 대신 `PendingTarget` 쪽. 블레이즈·돌풍은 원래 Execute에서 스스로 회전
 - 점화(아이덴티티) 변형 `*_identity1`, 트라이포드 변형 `*_custom_N`은 아직 안 씀. 쿡: `Model/Anims` 폴더 `DirectoriesToAlwaysCook`
 
+## 사운드 (원본 `Sorceress/Sound/SORCERESS_F_<번호>`, 2D)
+- 짝은 유저가 원본을 듣고 정함 → `SkillBase.cpp`의 `SkillSound_Table`(키 = 애니메이션 표와 같음). Cast 열 = 캐스팅·홀드 시작(취소·홀드 종료면 페이드), Release 열 = 발동 순간(지연은 타이머, `ForceCancel`이면 취소). 도우미 `Skill/SkillSound.h`
+- 기본공격 001~005 랜덤 · 블레이즈 044 · 아이스 에로우 074 · 인페르노 049→050(+0.15), 폭발 053(`InfernoZoneActor`) · 돌풍 227→229(+0.47 = 발사) · 혹한 023, 반복 구간부터 026 · 익스플로전 차징 170→발사 171 · 천벌 캐스팅 173, 낙뢰 174(`LightningStrikeActor` — 파일 앞 0.3초가 "쾅"까지라 번개보다 0.3초 먼저) · 종말의 날 068(캐스팅 시작 +0.12, 발동해도 안 끊음) + 장판 131(`DoomsdayMeteor`) · Z 강화 006/해방 007 · X 022 · 대시 137(`ASorceress`)
+- 함정: 068은 캐스팅 시작 기준이라 아이덴티티·신속으로 캐스팅이 짧아지면 운석보다 늦게 들림(미해결)
+
 ## 스킬 잠금
 - `IsSkillLocked()` = 어느 슬롯이든 Active/MovingToRange/PostDelay. 잠금 중 입력은 `QueuedSkillSlot` 1개(덮어쓰기) → `OnSkillLockReleased`에서 발동
 - Instant·Cast·Charge 완료/취소 → `SkillPostDelay`(실제 값은 `BP_Sorceress` SkillManager **0.1초**, C++ 기본값과 다름) 후 해제. Hold 완료/취소·사거리 이동 취소 → 즉시. Hold 활성 중엔 다른 키 완전히 씹힘

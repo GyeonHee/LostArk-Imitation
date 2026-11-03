@@ -16,6 +16,10 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/Engine.h"
 #include "LoA.h"
+#include "Components/AudioComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "LoAGameInstance.h"
 
 AEchidnaBoss::AEchidnaBoss()
 {
@@ -62,6 +66,11 @@ void AEchidnaBoss::BeginPlay()
 	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
 
 	SetupAnimation();
+	SetBattleMusicStage(0);  // 보스 맵에 들어오자마자(인트로부터)
+	if (ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>())
+	{
+		GI->OnAudioSettingsChanged.AddUObject(this, &AEchidnaBoss::ApplyBattleMusicVolume);
+	}
 
 	if (bWaitForIntro)
 	{
@@ -337,6 +346,51 @@ void AEchidnaBoss::FreezeEnrageTimer()
 	GetWorldTimerManager().ClearTimer(EnrageTimerHandle);
 }
 
+void AEchidnaBoss::SetBattleMusicStage(int32 Stage)
+{
+	static const TCHAR* const Tracks[] = { TEXT("Echidna"), TEXT("Possessor_of_Desire"), TEXT("Blossoming_Desire") };
+	if (Stage <= MusicStage || Stage < 0 || Stage >= UE_ARRAY_COUNT(Tracks)) return;
+	MusicStage = Stage;
+
+	const FString Path = FString::Printf(TEXT("/Game/LostArk/Raid/EchidnaModling/sound/OST/%s.%s"), Tracks[Stage], Tracks[Stage]);
+	USoundBase* Sound = LoadObject<USoundBase>(nullptr, *Path);
+	if (!Sound)
+	{
+		UE_LOG(LogLoA, Warning, TEXT("[Echidna] 배경음악 없음: %s"), *Path);
+		return;
+	}
+	// 음소거(볼륨 0) 동안에도 계속 흘러가게 — 기본(Restart)이면 소리가 0일 때 가상화됐다가 풀 때 처음부터 다시 나왔다
+	Sound->VirtualizationMode = EVirtualizationMode::PlayWhenSilent;
+
+	// 이전 곡은 페이드 아웃 후 스스로 사라지게 — 끝 알림은 끊어 다시 틀지 않게
+	if (UAudioComponent* Old = MusicComp.Get())
+	{
+		Old->OnAudioFinished.RemoveAll(this);
+		Old->bAutoDestroy = true;
+		Old->FadeOut(MusicCrossfade, 0.f);
+	}
+
+	// 2D — 보스가 숨거나 움직여도 그대로. 레벨을 떠나면 같이 사라진다
+	MusicComp = UGameplayStatics::CreateSound2D(this, Sound, 1.f, 1.f, 0.f, nullptr, false, false);
+	if (UAudioComponent* Comp = MusicComp.Get())
+	{
+		Comp->SetVolumeMultiplier(MusicVolume * ULoAGameInstance::GetMusicScale(this));
+		Comp->OnAudioFinished.AddDynamic(this, &AEchidnaBoss::OnBattleMusicFinished);
+		Comp->FadeIn(Stage == 0 ? 1.f : MusicCrossfade, 1.f);
+	}
+	UE_LOG(LogLoA, Log, TEXT("[Echidna] 배경음악 → %s"), Tracks[Stage]);
+}
+
+void AEchidnaBoss::ApplyBattleMusicVolume()
+{
+	if (UAudioComponent* Comp = MusicComp.Get()) Comp->SetVolumeMultiplier(MusicVolume * ULoAGameInstance::GetMusicScale(this));
+}
+
+void AEchidnaBoss::OnBattleMusicFinished()
+{
+	if (UAudioComponent* Comp = MusicComp.Get()) Comp->Play(0.f);
+}
+
 void AEchidnaBoss::BeginFinalPhase()
 {
 	if (bFinalPhaseActive || bDefeated) return;
@@ -355,6 +409,7 @@ void AEchidnaBoss::BeginFinalPhase()
 	OnSettlementGaugeChanged.Broadcast(SettlementGauge);  // 정산 UI 흑백(IsSettlementPaused)
 
 	UE_LOG(LogLoA, Warning, TEXT("[Echidna] 0줄 발악 진입 — HP 고정, AI 정지"));
+	SetBattleMusicStage(2);
 	EndGroggy();
 	PlayPatternAnim(TEXT("FinalPhase"));
 	OnFinalPhaseVisual();

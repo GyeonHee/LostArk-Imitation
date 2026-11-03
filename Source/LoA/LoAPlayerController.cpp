@@ -11,6 +11,7 @@
 #include "UI/DefeatWidget.h"
 #include "UI/ClearWidget.h"
 #include "UI/AbandonRaidWidget.h"
+#include "UI/SettingsWidget.h"
 #include "LoAGameInstance.h"
 #include "Lobby/RepairStationActor.h"
 #include "Lobby/ShopNPCActor.h"
@@ -60,6 +61,8 @@
 #include "Raid/EchidnaClashQTEActor.h"
 #include "InputKeyEventArgs.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundBase.h"
 #include "UI/BossHPWidget.h"
 #include "UI/CastBarWidget.h"
 #include "UI/HUD_ViewModel.h"
@@ -129,6 +132,42 @@ void ALoAPlayerController::BeginPlay()
 
 	HUDViewModel = NewObject<UHUD_ViewModel>(this);
 	SkillTreeViewModel = NewObject<USkillTree_ViewModel>(this);
+
+	// 대기 지역이면 Echidna 배경음악(2D, 끝나면 다시) — 보스 맵은 AEchidnaBoss가 단계별로 튼다
+	if (IsLocalController() && UGameplayStatics::GetCurrentLevelName(this, true) == RaidReturnLevel.GetAssetName())
+	{
+		if (USoundBase* Music = LoadObject<USoundBase>(nullptr, TEXT("/Game/LostArk/Raid/EchidnaModling/sound/OST/Echidna.Echidna")))
+		{
+			// 음소거(볼륨 0) 동안에도 계속 흘러가게 — 기본(Restart)이면 소리가 0일 때 가상화됐다가 풀 때 처음부터 다시 나왔다
+			Music->VirtualizationMode = EVirtualizationMode::PlayWhenSilent;
+			LobbyMusicComp = UGameplayStatics::CreateSound2D(this, Music, 1.f, 1.f, 0.f, nullptr, false, false);
+			if (LobbyMusicComp)
+			{
+				LobbyMusicComp->SetVolumeMultiplier(LobbyMusicVolume * ULoAGameInstance::GetMusicScale(this));
+				LobbyMusicComp->OnAudioFinished.AddDynamic(this, &ALoAPlayerController::OnLobbyMusicFinished);
+				LobbyMusicComp->FadeIn(1.f, 1.f);
+				if (ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>())
+				{
+					GI->OnAudioSettingsChanged.AddUObject(this, &ALoAPlayerController::ApplyLobbyMusicVolume);
+				}
+			}
+		}
+	}
+
+	// 게임 설정 버튼(우측 맨 아래) + 창 — 모든 맵
+	if (IsLocalController())
+	{
+		SettingsWidget = CreateWidget<USettingsWidget>(this, USettingsWidget::StaticClass());
+		if (SettingsWidget)
+		{
+			SettingsWidget->AddToViewport(9);
+			UE_LOG(LogTemp, Log, TEXT("[Settings] 위젯 생성 완료"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Settings] 위젯 생성 실패"));
+		}
+	}
 
 	// 소서리스 아이덴티티 (스킬 칸과 아이템 칸 사이 장식 틀) — HUD와 같은 ZOrder 0으로 HUD보다 먼저 넣어 날개 장식이 슬롯 밑에 깔리게.
 	// 폰이 소서리스가 아니면 위젯이 스스로 숨는다
@@ -408,6 +447,13 @@ void ALoAPlayerController::TravelToLevelWithFade(const TSoftObjectPtr<UWorld>& L
 		GI->bFadeInOnArrive = true;
 	}
 
+	// 화면과 같이 대기 지역 음악도 줄인다(레이드에서는 처음부터 다시)
+	if (LobbyMusicComp)
+	{
+		LobbyMusicComp->OnAudioFinished.RemoveAll(this);
+		LobbyMusicComp->FadeOut(FMath::Max(0.1f, TravelFadeOutTime), 0.f);
+	}
+
 	if (PlayerCameraManager && TravelFadeOutTime > 0.f)
 	{
 		// 검게 덮은 채로 유지(bHoldWhenFinished) — 레벨이 바뀌면 새 카메라 매니저가 새로 시작한다
@@ -421,6 +467,16 @@ void ALoAPlayerController::TravelToLevelWithFade(const TSoftObjectPtr<UWorld>& L
 	{
 		UGameplayStatics::OpenLevelBySoftObjectPtr(this, PendingTravelLevel);
 	}
+}
+
+void ALoAPlayerController::OnLobbyMusicFinished()
+{
+	if (LobbyMusicComp) LobbyMusicComp->Play(0.f);
+}
+
+void ALoAPlayerController::ApplyLobbyMusicVolume()
+{
+	if (LobbyMusicComp && !bLevelTravelPending) LobbyMusicComp->SetVolumeMultiplier(LobbyMusicVolume * ULoAGameInstance::GetMusicScale(this));
 }
 
 void ALoAPlayerController::AbandonRaid()
@@ -886,7 +942,7 @@ void ALoAPlayerController::BeginRaidIntro(AEchidnaBoss* Boss)
 	// 연출 중엔 전투 UI를 숨긴다 (원래 Visibility를 기억했다가 되돌림). 캐스팅 바는 원래 숨어 있으니 제외
 	IntroHiddenWidgets.Reset();
 	IntroHiddenVisibilities.Reset();
-	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), ResourceBarWidget.Get(), IdentityGaugeWidget.Get(), AbandonWidget.Get() })
+	for (UUserWidget* Widget : TArray<UUserWidget*>{ HUDWidget.Get(), BossHPWidget.Get(), MinimapWidget.Get(), ResourceBarWidget.Get(), IdentityGaugeWidget.Get(), AbandonWidget.Get(), SettingsWidget.Get() })
 	{
 		if (!Widget) continue;
 		IntroHiddenWidgets.Add(Widget);
@@ -2179,6 +2235,7 @@ bool ALoAPlayerController::ConsumeHUDSlotPress()
 	if (ArkPassiveWidget && ArkPassiveWidget->IsCursorOverPanel()) return true;
 	if (GemFuseWidget && GemFuseWidget->IsCursorOverPanel()) return true;
 	if (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel()) return true;
+	if (SettingsWidget && SettingsWidget->IsCursorOverPanel()) return true;
 
 	int32 Group = -1, Index = -1;
 	if (!FindHUDSlotUnderCursor(Group, Index)) return false;
@@ -2894,7 +2951,8 @@ bool ALoAPlayerController::IsCursorOverAnyPanel() const
 		|| (EngravingSetupWidget && EngravingSetupWidget->IsCursorOverPanel())
 		|| (ArkPassiveWidget && ArkPassiveWidget->IsCursorOverPanel())
 		|| (GemFuseWidget && GemFuseWidget->IsCursorOverPanel())
-		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel());
+		|| (DamageMeterWidget && DamageMeterWidget->IsCursorOverPanel())
+		|| (SettingsWidget && SettingsWidget->IsCursorOverPanel());
 }
 
 void ALoAPlayerController::UpdateTargetHover()

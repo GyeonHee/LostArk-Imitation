@@ -14,6 +14,8 @@
 #include "NiagaraSystem.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "Skill/SkillSound.h"
+#include "Components/AudioComponent.h"
 
 namespace
 {
@@ -91,6 +93,7 @@ void ASorceress::ExecuteDash_Implementation(const FVector& TargetLocation)
 
 	const FSkillData DashData = SkillManager->GetSlotSkillData(USkillManagerComponent::DashSlotIndex);
 	SetActorRotation(Dir.Rotation());
+	LoASkillSound::PlayAttached(this, TEXT("137"));
 	if (DashAnim && GetLoAAnim())
 	{
 		StartAnimMove(DashAnim, Dir, DashData.DashImpulse, true, DashHideStartProgress, DashShowProgress);
@@ -274,6 +277,7 @@ bool ASorceress::BlinkTo(const FVector& TargetLocation)
 	}
 
 	SetActorRotation(Dir.Rotation());
+	LoASkillSound::PlayAttached(this, TEXT("022"));
 	UE_LOG(LogTemp, Log, TEXT("[Blink] 커서 거리 %.1fm → 이동 %.1fm (최대 %.0fm)"),
 		Delta.Size() / 100.f, FVector::Dist2D(Start, Dest) / 100.f, LoASorceressIdentity::BlinkDistance / 100.f);
 	if (BlinkAnim && GetLoAAnim())
@@ -315,6 +319,9 @@ bool ASorceress::TryActivateIdentity(FText& OutFailReason)
 	// 이동 중이어도 멈춰 서서 동작 — 걷는 속도가 남아 있으면 애니메이션이 바로 끊긴다
 	GetCharacterMovement()->StopMovementImmediately();
 	PlayStateAnim(IdentityReleaseAnim, false, 0.08f, true);
+	// 게이지 100%면 마력 해방(007), 아니면 마력 강화(006) — CanRelease가 통과했으니 이대로 방출된다
+	IdentitySoundComp = LoASkillSound::PlayAttached(this,
+		Identity->GetGauge() >= LoASorceressIdentity::MaxGauge ? TEXT("007") : TEXT("006"));
 	// 동작이 끝날 때까지 클릭 이동 금지 — 안 막으면 걸으면서 Z가 나가고 동작이 바로 끊겼다(즉발 스킬과 같은 잠금)
 	LockMoveForSkillAnim(IdentityReleaseAnim ? IdentityReleaseAnim->GetPlayLength() : MagickReleaseDelay);
 	if (MagickReleaseDelay <= 0.f)
@@ -334,7 +341,13 @@ bool ASorceress::IsIdentityReleasePending() const
 void ASorceress::FinishIdentityRelease()
 {
 	// 주먹을 쥐기 전에 넉다운·기절·사망 등으로 끊겼으면 취소 — 게이지는 그대로
-	if (!Identity || IsActionLocked()) return;
+	if (!Identity || IsActionLocked())
+	{
+		if (UAudioComponent* Sound = IdentitySoundComp.Get()) Sound->FadeOut(0.2f, 0.f);
+		IdentitySoundComp.Reset();
+		return;
+	}
+	IdentitySoundComp.Reset();
 	FText Reason;
 	if (Identity->TryRelease(Reason)) UpdateMagickVFX();	// 다음 틱을 기다리지 않고 바로
 }
