@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Raid/RaidSound.h"
 #include "EchidnaFanZoneActor.generated.h"
 
 class UProceduralMeshComponent;
@@ -147,6 +148,9 @@ public:
 	// RingVFX가 비어 있으면 아무것도 안 보이게 되므로 그땐 메시를 자동으로 보여준다
 	UPROPERTY(EditDefaultsOnly, Category = "VFX")
 	bool bShowHitMesh = false;
+
+	// 예고가 끝나 터지는 순간의 소리(고리가 여러 개여도 처음 한 번) — Task가 넣는다. 비면 무음
+	FRaidCue ExplodeSound;
 
 	// StateTree Task가 "예고가 끝나고 실제 판정이 시작됐는지"(보스 후방 홉 타이밍) 폴링할 때 사용
 	bool HasStartedExploding() const { return bStartedExploding; }

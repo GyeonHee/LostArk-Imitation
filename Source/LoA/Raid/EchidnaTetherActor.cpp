@@ -81,6 +81,8 @@ void AEchidnaTetherActor::Activate(const FVector& InPullTarget, float InPullStre
 
 void AEchidnaTetherActor::PerformSnap()
 {
+	LoARaidSound::Play(this, StrikeSound);
+
 	// 판정이 실제로 발동하는 순간 — 예고 장판은 숨기고 핑크 줄기가 판정 길이만큼 뻗어 나간다
 	if (ZoneMeshComp)
 	{

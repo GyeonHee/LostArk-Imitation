@@ -16,6 +16,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/Engine.h"
 #include "LoA.h"
+#include "Raid/RaidSound.h"
 #include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
@@ -641,6 +642,7 @@ void AEchidnaBoss::StartGroggy(float Duration)
 	if (!bWasGroggy)
 	{
 		PlayGroggyAnim(TEXT("Groggy"));
+		LoARaidSound::Play(this, RaidCue::Groggy);
 		OnGroggyVisualChanged(true);
 	}
 }

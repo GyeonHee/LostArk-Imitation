@@ -112,7 +112,9 @@
 - 대기 지역도 `Echidna`(컨트롤러 BeginPlay — 현재 레벨 이름 = `RaidReturnLevel`일 때, `LobbyMusicVolume`). 레벨 이동 페이드 때 같이 줄고, 레이드에선 보스가 처음부터 다시 튼다
 
 ## 레이드 사운드 (`LoARaidSound` — `Raid/RaidSound.h`, 원본 `EchidnaModling/sound/<폴더>/`, 짝은 유저가 듣고 정함)
-- 2D, 볼륨 = 게임 설정 효과음. **같은 소리가 같은 프레임에 여러 번이면 한 번만**(4거울 4개 동시 등장·발사가 겹쳐 커지지 않게) — 반복용은 `bAutoDestroy=false` + Tick에서 `KeepLooping`
+- 볼륨 = 게임 설정 효과음 × 배율. 거울은 `LoA.RaidSound.Gain`(2.5 — 원본이 스킬 사운드보다 작게 들림, 엔진 상한 4), 패턴 소리(`Play`)는 `LoA.RaidSound.PatternGain`(1 — 거울 배율을 같이 쓰면 너무 큼). **같은 소리가 같은 프레임에 여러 번이면 한 번만**(4거울 4개 동시 등장·발사가 겹쳐 커지지 않게) — 반복용은 `bAutoDestroy=false` + Tick에서 `KeepLooping`
+- **패턴 소리 번호 표는 `RaidSound.h`의 `RaidCue` 하나** — 소리를 바꿀 땐 여기만. `LoARaidSound::Play`는 액터에 안 붙어(`PlaySound2D`) 장판·리본이 먼저 사라져도 끝까지 나오고, 번호 범위면 무작위. 판정 순간에 맞출 소리는 `AEchidnaFanZoneActor::ExplodeSound`(고리가 여러 개여도 처음 한 번)·`AEchidnaTetherActor::StrikeSound`에 넣음 — Task에 상태를 안 두어 StateTree 인스턴스 데이터가 안 바뀜. 원본은 대부분 시작 0.3초 안에 타격음이 있어 판정 순간에 틀면 맞음. 리본 적중 뒤 원형 장판은 소리 미지정
+- `FRaidCue::Voice`: 같은 Voice는 동시에 하나(새 소리가 앞 소리를 끊음, 같은 소리 0.2초 안 재호출 무시) — 연꽃 182·189(한 패턴에 6~15개가 시간차로 피고 터져 겹쳤음). 끊거나 반복할 소리는 `LoARaidSound::Spawn` → `Stop`/`KeepLooping`: 8거울 따라오는 거울 1.502, 스왑 1.093(12초짜리라 다음 스왑·카운터 대기에서 끊음), 카운터 대기 1.085(2.7초짜리를 대기 동안 반복, `SetAllMirrorsAcceptCounter`가 시작·정지), 격돌 진행 1.396·연타 1.167(결과에서 끊음). `Bank` 101 = BigEchidna1. 진행자·QTE 액터는 루트가 없어 `PlayAttached` 불가
 - 거울(`EchidnasMirror_`): 4·8거울 등장 001(BeginPlay 다음 틱 — 유도 여부를 Task가 스폰 직후 넣어서) · 4거울 추적 중 013 반복 → 레이저 014 / 8거울(방향 고정 스포크) 레이저 016 · 유도 거울 따라다니는 동안 012 반복 · 거울 카운터 성공 = 줄 쓰러짐 028(`TryCounterHit`) · 거울잇기 거울 등장 025, 빛이 한 칸씩 갈 때마다 022
 
 ## 보스 맵 흐름 (컨트롤러 쪽은 `Source/LoA/CLAUDE.md`)

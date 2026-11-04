@@ -1,5 +1,6 @@
 #include "Raid/EchidnaPoopBeamActor.h"
 #include "Raid/PatternVFXUtil.h"
+#include "Raid/RaidSound.h"
 #include "NiagaraSystem.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoACharacter.h"
@@ -175,6 +176,7 @@ void AEchidnaPoopBeamActor::ExplodeCircle()
 {
 	if (CircleRadius <= 0.f) return;
 
+	LoARaidSound::Play(this, RaidCue::PoopCircle);
 	PatternVFX::SpawnFanArea(this, ExplodeVFX, GetActorTransform(), 0.f, CircleRadius, 180.f, ExplodeVFXSpacing, ExplodeVFXScale, ExplodeVFXMaxCount);
 
 	const FVector Center = GetActorLocation();
@@ -190,6 +192,8 @@ void AEchidnaPoopBeamActor::ExplodeCircle()
 
 void AEchidnaPoopBeamActor::ExplodeSegment(int32 SegmentIndex)
 {
+	LoARaidSound::Play(this, RaidCue::PoopSegment);
+
 	const int32 Count = FMath::Max(1, ExplosionSegmentCount);
 	const float SegLen = BeamLength / Count;
 	const float Start = SegLen * SegmentIndex;

@@ -240,15 +240,19 @@ void USettingsWidget::RefreshFromSettings()
 {
 	const ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>();
 	if (!GI || !MuteCheck || !MusicSlider || !SfxSlider) return;
-	// SetValue·SetIsChecked는 OnValueChanged를 부르지 않는다 — 되먹임 없음
+	// USlider::SetValue는 값이 바뀌면 OnValueChanged를 쏜다 — 막지 않으면 배경음 슬라이더를 넣는 순간
+	// 아직 0인 효과음 슬라이더 값이 설정에 덮어써진다(새 레벨마다 위젯을 만들 때 효과음이 0이 됐음)
+	bRefreshingFromSettings = true;
 	MuteCheck->SetIsChecked(GI->bMusicMuted);
 	MusicSlider->SetValue(GI->MusicVolumeSetting);
 	SfxSlider->SetValue(GI->SfxVolumeSetting);
+	bRefreshingFromSettings = false;
 	UpdatePercentTexts();
 }
 
 void USettingsWidget::ApplyToSettings(bool bSave)
 {
+	if (bRefreshingFromSettings) return;
 	ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>();
 	if (!GI || !MuteCheck || !MusicSlider || !SfxSlider) return;
 	GI->SetAudioSettings(MusicSlider->GetValue(), MuteCheck->IsChecked(), SfxSlider->GetValue(), bSave);

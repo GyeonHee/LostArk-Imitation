@@ -77,6 +77,11 @@ void ULoAGameInstance::LoadFromDisk()
 			UE_LOG(LogTemp, Log, TEXT("[Save] 실링 %lld → %lld (저장 버전 2 조정)"), Silling, SillingCapOnMigrate);
 			Silling = SillingCapOnMigrate;
 		}
+		// 2 → 3: 설정 창 버그로 효과음 0이 저장됐을 수 있어 한 번 100%로 되돌림
+		if (Save->SaveVersion < 3)
+		{
+			SfxVolumeSetting = 1.f;
+		}
 		UE_LOG(LogTemp, Log, TEXT("[Save] 저장 버전 %d → %d"), Save->SaveVersion, CurrentSaveVersion);
 	}
 	UE_LOG(LogTemp, Log, TEXT("[Save] 불러옴 — 스킬 배치 %s, 최고 기록 %.1f초, 클리어 %d회"),

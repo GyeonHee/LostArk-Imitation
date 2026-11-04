@@ -149,8 +149,8 @@ public:
 	bool bHasStarterBraceletStone = false;
 
 	// 현재 저장 구조 버전 — ULoASaveGame::SaveVersion
-	// 1 = 장비, 2 = 레이드 보상(대기 보상·첫 클리어) + 실링 상한 조정 + 골드
-	static constexpr int32 CurrentSaveVersion = 2;
+	// 1 = 장비, 2 = 레이드 보상(대기 보상·첫 클리어) + 실링 상한 조정 + 골드, 3 = 효과음 볼륨 100%로 1회 복구
+	static constexpr int32 CurrentSaveVersion = 3;
 
 	// 버전 1 이하 저장 파일의 실링을 이 값으로 낮춘다 — 시작 실링 1억이면 숨결(실링 구매)을 무한정 사서 재련 확률을 올릴 수 있어서
 	static constexpr int64 SillingCapOnMigrate = 2000000;

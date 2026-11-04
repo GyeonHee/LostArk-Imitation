@@ -41,7 +41,7 @@
 - 블레이즈 VFX `/Game/Free_Magic/VFX_Niagara/NS_Blaze`: 불길을 끌고 가는 `REF` 이미터의 Collision(WorldDynamic 레이 트레이스)·KillParticles를 **껐음** — 켜져 있으면 앞에 보스·액터가 있을 때 REF가 죽어 불길이 중간에 끊겼다
 - 재생 지점: 캐스팅 `USkillCast::OnKeyDown`(캐스팅 애니메이션 반복) → 완료 시 발동 애니메이션, 취소(`OnKeyUp`)·`ForceCancel`이면 끊음 / 즉발은 각 스킬 `Execute_Implementation` 첫 줄(사거리 이동 뒤 발동도 잡힘) + 기본공격용 `USkillInstant::OnKeyDown` — 같은 프레임 두 번은 무시 / 홀드는 누를 때 시작, 장판이 꺼질 때 끊음. 발동 애니메이션은 움직이면 바로 끊긴다(`bStopOnMove`)
 - **선딜 = 무조건 실행(유저가 로아에서 확인)**: 즉발 스킬은 효과가 나올 때(`ExecuteDelay`)까지 스킬 잠금 — `ReleaseSkillLock`이 후딜(0.1초)과 `GetMaxPendingExecuteRemaining()` 중 긴 쪽으로 잠금. 그사이 누른 스킬은 `QueuedSkillSlot`(덮어쓰기 1개)에 들어갔다가 효과 직후 나감(스킬별 선딜이 달라 잠금도 스킬별). 선딜 중엔 대시·점멸·마력 방출도 불가(`IsExecutePending`). 대기 중 CC·사망이면 대기 입력 버림. 효과가 나온 뒤(후딜)는 다른 스킬·대시로 끊을 수 있음
-- **즉발 스킬 발동 애니메이션 동안 클릭 이동 금지**(`BeginSkillExecute` → `ALoACharacter::LockMoveForSkillAnim(남은 애니메이션 길이)`, 컨트롤러 이동 입력 3곳이 `IsSkillAnimMoveLocked` 확인) — 스킬을 쓰고 바로 다른 쪽을 클릭하면 캐릭터가 돌아서 미뤄진 효과(블레이즈·돌풍 = 액터 정면)가 그쪽으로 나갔음. 다른 스킬·대시는 됨, 기본공격은 제외, `ForceCancel`이면 풀림
+- **즉발 스킬 발동 애니메이션 동안 클릭 이동 금지**(`BeginSkillExecute` → `ALoACharacter::LockMoveForSkillAnim(남은 애니메이션 길이)`, 컨트롤러 이동 입력 3곳이 `IsSkillAnimMoveLocked` 확인) — 스킬을 쓰고 바로 다른 쪽을 클릭하면 캐릭터가 돌아서 미뤄진 효과(블레이즈·돌풍 = 액터 정면)가 그쪽으로 나갔음. 기본공격도 동일(유저 요청), 다른 스킬·대시는 됨, `ForceCancel`이면 풀림
 - **방향**: 캐스팅·홀드는 시작 때, 즉발·기본공격은 발동 때 커서 쪽으로 즉시 회전(`FaceCursor` — 마네킹이어도). 캐스팅 완료 때는 다시 안 돎(시작 방향 유지), 사거리 이동 뒤 발동하는 인페르노·아이스 에로우는 커서 대신 `PendingTarget` 쪽. 블레이즈·돌풍은 원래 Execute에서 스스로 회전
 - 점화(아이덴티티) 변형 `*_identity1`, 트라이포드 변형 `*_custom_N`은 아직 안 씀. 쿡: `Model/Anims` 폴더 `DirectoriesToAlwaysCook`
 

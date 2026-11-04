@@ -13,6 +13,7 @@ class AEchidnaClashQTEActor;
 class AHexArena;
 class ALoACharacter;
 class UTexture2D;
+class UAudioComponent;
 
 UENUM(BlueprintType)
 enum class EEchidnaFinalPhaseStep : uint8
@@ -264,6 +265,9 @@ private:
 	int32 CounterSuccesses = 0;
 	int32 EmergeMirrorIndex = INDEX_NONE;
 	FIntPoint LastSwapPair = FIntPoint(INDEX_NONE, INDEX_NONE);
+
+	TWeakObjectPtr<UAudioComponent> SwapSound;
+	TWeakObjectPtr<UAudioComponent> CounterWaitSound;
 
 	bool bPlayerHeld = false;
 	bool bCameraOverridden = false;

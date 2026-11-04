@@ -8,6 +8,7 @@
 class ALoACharacter;
 class AEchidnaBoss;
 class UClashQTEWidget;
+class UAudioComponent;
 
 /**
  * 0줄 발악 격돌 QTE — AEchidnaFinalPhaseActor가 Clash 단계에서 스폰하고 IsFinished/WasSuccess를 폴링한다.
@@ -155,6 +156,10 @@ private:
 	void EndCloseup();
 	void PlayBossClash(FName Key);
 	void StopPlayerGuard();
+	void StopClashSounds();
+
+	TWeakObjectPtr<UAudioComponent> ClashLoopSound;
+	TWeakObjectPtr<UAudioComponent> MashSound;
 
 	TWeakObjectPtr<ALoACharacter> Player;
 	TWeakObjectPtr<AEchidnaBoss> Boss;

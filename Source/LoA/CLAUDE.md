@@ -23,7 +23,7 @@
 | 넉다운 | `ApplyKnockdown(Source, HopScale=1)` | 반대 방향 Launch(`HopScale`로 수평 힘 배율, 위로 뜨는 힘·정착 시간은 √배 — 장풍) → `KnockdownHopSettleTime`(0.4초) 뒤 정착(맞을 때마다 타이머 재시작 — 착지 폴링은 여러 Launch가 겹치면 실패해서 폐기) → 3초 누움. 스페이스 = 즉시 기상(슬롯 19, 15초 쿨, 완전히 누운 뒤만). 넉다운 중 `bConstrainToPlane` 임시 해제. 발사 전 `StopActiveMovement` + `CancelAutoMove` — 클릭 이동 요청 속도가 남아 있으면 낙하 중 다시 적용돼 튕김이 상쇄됨 |
 | 기절 | `ApplyStun(Duration)` | 제자리 정지, 지속시간은 호출마다 |
 | 경직 | `ApplyStagger()` | 기절과 같은 방식, `StaggerDuration` 0.3초 고정 |
-| 끌려감 | `ApplyPull` | 정지 `PullHoldDuration` → Tick에서 `AddActorWorldOffset(sweep)`로 목표까지(속도 = StateTree `PullStrength` cm/s) → **패턴이 `ReleasePull()` 할 때까지 묶임**, 안전장치 `PullMaxHoldTime` 8초 |
+| 끌려감 | `ApplyPull`(기절 동작 — Tick이 스킬 잔여 동작 등에 덮이면 되돌림) | 정지 `PullHoldDuration` → Tick에서 `AddActorWorldOffset(sweep)`로 목표까지(속도 = StateTree `PullStrength` cm/s) → **패턴이 `ReleasePull()` 할 때까지 묶임**, 안전장치 `PullMaxHoldTime` 8초 |
 | 붙잡힘 | `SetHeldByPattern(bool, bShowStunAnim=true)` | 시간 제한 없음 — 건 쪽이 반드시 해제(ExitState). **조작만 막는 용도(입장 이동·레이드 인트로·NPC 메뉴·중단·패턴 실패·발악 연출/격돌)는 `false`** — 로비 → 보스맵에서 기절 모션이 나왔던 원인. 기절 모션은 실제로 잡히는 패턴(파리지옥)만 — 거울잇기 발사 순간은 조작만 막음(유저 요청) |
 - 넉다운이 더 강해서 경직·기절은 넉다운 중 무시. 모든 CC는 캐스팅·사거리이동 취소 + 정지. BP 훅 `On*VisualChanged`
 - 사망 `Die()`: `OnDied`, 매혹 해제, 이후 데미지·CC 무시
@@ -56,7 +56,7 @@
 
 ## 저장 `ULoAGameInstance` + `ULoASaveGame`
 - `DefaultEngine.ini` `GameInstanceClass=/Script/LoA.LoAGameInstance`. 슬롯 `LoA` = `Saved/SaveGames/LoA.sav`(지우면 초기 상태)
-- 스킬 배치·레벨·포인트, 소지품·화폐·장비·보석·각인·아크 패시브, 최고 기록·클리어 횟수, 대기 보상, 각종 1회 지급 플래그. `CurrentSaveVersion` 2
+- 스킬 배치·레벨·포인트, 소지품·화폐·장비·보석·각인·아크 패시브, 최고 기록·클리어 횟수, 대기 보상, 각종 1회 지급 플래그. `CurrentSaveVersion` 3
 - 테스트 명령(`LoAKillBoss`, `LoAKillSelf`, `LoAGiveItem` 등) 쓴 판은 최고 기록·첫 클리어 제외. 전체 목록 `Docs/테스트_명령어.txt`
 
 ## 데미지 / HP 밸런스

@@ -25,6 +25,8 @@
 #include "Item/GemComponent.h"
 #include "Stat/EngravingComponent.h"
 #include "Stat/ArkPassiveComponent.h"
+#include "Raid/RaidSound.h"
+#include "LoA.h"
 
 ALoACharacter::ALoACharacter()
 {
@@ -249,6 +251,15 @@ void ALoACharacter::Tick(float DeltaSeconds)
 		if (ULoACharacterAnimInstance* Anim = GetLoAAnim(); Anim && !Anim->GetCurrentActionSequence())
 		{
 			PlayStateAnim(CharmAnim, true, 0.1f);
+		}
+	}
+
+	// 기절·끌려감 동안은 기절 동작 유지 — 다른 동작(스킬 잔여·경직이 끝난 뒤 빈 액션 등)이 덮어도 되돌린다. 경직은 짧아서 끝날 때까지 둠
+	if (StunAnim && (bIsStunned || bIsPulled) && !bIsKnockedDown && !bIsDead && !bIsStaggered && !bInJustGuardStance)
+	{
+		if (ULoACharacterAnimInstance* Anim = GetLoAAnim(); Anim && Anim->GetCurrentActionSequence() != StunAnim)
+		{
+			PlayStateAnim(StunAnim, true, 0.1f);
 		}
 	}
 
@@ -560,6 +571,7 @@ void ALoACharacter::AddCharmGauge(int32 Amount)
 	if (CharmGauge != OldGauge)
 	{
 		OnCharmGaugeChanged.Broadcast(CharmGauge);
+		LoARaidSound::Play(this, RaidCue::PlayerCharm);
 
 		// 매혹 스택이 쌓이면 보스 정산 게이지도 같이 오른다 (3스택 도달 시 추가 보너스)
 		AEchidnaBoss::NotifyCharmStackGained(this, CharmGauge >= MaxCharmGauge);
@@ -763,6 +775,7 @@ void ALoACharacter::ApplyPull(const FVector& TargetLocation, float PullSpeed)
 
 	if (bFirstHit)
 	{
+		PlayStateAnim(StunAnim, true);	// 리본에 걸려 멈춘 순간부터 풀릴 때까지 기절 동작
 		OnPullVisualChanged(true);
 	}
 }
@@ -817,6 +830,7 @@ void ALoACharacter::ReleasePull()
 	GetWorldTimerManager().ClearTimer(PullSafetyTimerHandle);
 	bIsPulled = false;
 	bPullDragging = false;
+	if (!bIsStunned && !bIsHeld) StopStateAnim(StunAnim);
 	OnPullVisualChanged(false);
 }
 
@@ -1031,6 +1045,7 @@ void ALoACharacter::ApplyStun(float Duration)
 	// 기절 중 재히트하면 타이머가 갱신되어 계속 기절 유지
 	GetWorldTimerManager().SetTimer(StunTimerHandle, this, &ALoACharacter::EndStun, Duration, false);
 
+	UE_LOG(LogLoA, Log, TEXT("[Stun] 기절 %.1f초 — 첫 타 %d, StunAnim %s"), Duration, bFirstHit ? 1 : 0, *GetNameSafe(StunAnim));
 	if (bFirstHit)
 	{
 		PlayStateAnim(StunAnim, true);
@@ -1043,7 +1058,7 @@ void ALoACharacter::EndStun()
 	if (!bIsStunned) return;
 
 	bIsStunned = false;
-	if (!bIsHeld) StopStateAnim(StunAnim);
+	if (!bIsHeld && !bIsPulled) StopStateAnim(StunAnim);
 	OnStunVisualChanged(false);
 }
 

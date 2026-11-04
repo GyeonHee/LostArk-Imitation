@@ -111,6 +111,7 @@ void AEchidnaFanZoneActor::Activate(float InDamage, AController* InInstigator)
 void AEchidnaFanZoneActor::BeginRingExpansion()
 {
 	bStartedExploding = true;
+	LoARaidSound::Play(this, ExplodeSound);
 
 	// 판정 단계는 Niagara로만 표현 — 예고 메시는 여기서 숨긴다 (이펙트가 없으면 예전처럼 색 메시로 대체)
 	bHitMeshVisible = bShowHitMesh || !RingVFX;

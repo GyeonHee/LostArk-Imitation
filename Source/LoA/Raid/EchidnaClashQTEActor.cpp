@@ -1,5 +1,6 @@
 #include "Raid/EchidnaClashQTEActor.h"
 #include "Raid/EchidnaBoss.h"
+#include "Raid/RaidSound.h"
 #include "UI/ClashQTEWidget.h"
 #include "LoACharacter.h"
 #include "LoA.h"
@@ -45,6 +46,8 @@ void AEchidnaClashQTEActor::Activate(ALoACharacter* InPlayer, AEchidnaBoss* InBo
 		}
 	}
 	BeginCloseup();
+	LoARaidSound::Play(this, RaidCue::ClashGrab);
+	ClashLoopSound = LoARaidSound::Spawn(this, RaidCue::ClashLoop);
 	UE_LOG(LogLoA, Log, TEXT("[ClashQTE] 시작 — 타이밍 %d단계 + 연타, 판정 ±%.0fms"), StageNoteCounts.Num(), HitWindow * 1000.f);
 }
 
@@ -173,6 +176,7 @@ void AEchidnaClashQTEActor::BeginStage(int32 StageIndex)
 		MashGauge = MashStartGauge;
 		MashStart = Elapsed;
 		PlayBossClash(TEXT("Clash_Mash"));
+		MashSound = LoARaidSound::Spawn(this, RaidCue::ClashMash);
 		if (Widget)
 		{
 			Widget->SetStageText(FText::Format(NSLOCTEXT("ClashQTE", "Mash", "격돌 {0} / {0} — 번갈아 연타!"), TotalStages));
@@ -329,6 +333,7 @@ void AEchidnaClashQTEActor::ResolveNote(int32 Index, int32 Result)
 	Notes[Index].Result = Result;
 	if (Widget) Widget->SetNoteResult(Index, Result);
 	ShowJudge(Result);
+	LoARaidSound::Play(this, Result == 3 ? RaidCue::ClashBad : RaidCue::ClashNoteHit);
 
 	if (Result == 3 && ++Misses > MaxMisses)
 	{
@@ -351,6 +356,17 @@ void AEchidnaClashQTEActor::Resolve(bool bInSuccess)
 	bResolved = true;
 	bSuccess = bInSuccess;
 	ResolvedAt = Elapsed;
+
+	StopClashSounds();
+	if (bSuccess)
+	{
+		LoARaidSound::Play(this, RaidCue::ClashWin);
+		LoARaidSound::Play(this, RaidCue::ClashBossDeath);
+	}
+	else
+	{
+		LoARaidSound::Play(this, RaidCue::ClashBad);	// 연타 시간 초과도 — 노트 MISS로 끝났으면 같은 프레임이라 한 번만 난다
+	}
 
 	if (Widget)
 	{
@@ -375,8 +391,17 @@ void AEchidnaClashQTEActor::Resolve(bool bInSuccess)
 	UE_LOG(LogLoA, Warning, TEXT("[ClashQTE] %s (단계 %d, 놓침 %d)"), bSuccess ? TEXT("성공") : TEXT("실패"), Stage + 1, Misses);
 }
 
+void AEchidnaClashQTEActor::StopClashSounds()
+{
+	LoARaidSound::Stop(ClashLoopSound.Get());
+	ClashLoopSound.Reset();
+	LoARaidSound::Stop(MashSound.Get());
+	MashSound.Reset();
+}
+
 void AEchidnaClashQTEActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopClashSounds();
 	StopPlayerGuard();
 	EndCloseup();
 	if (Widget)

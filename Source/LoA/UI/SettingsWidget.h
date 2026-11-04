@@ -56,6 +56,9 @@ private:
 	void ApplyToSettings(bool bSave);
 	void UpdatePercentTexts();
 
+	/** RefreshFromSettings가 슬라이더에 값을 넣는 중 — USlider::SetValue가 OnValueChanged를 쏘므로 되먹임을 막는다 */
+	bool bRefreshingFromSettings = false;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UButton> ToggleButton;
 

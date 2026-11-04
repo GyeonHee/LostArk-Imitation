@@ -20,6 +20,7 @@
 #include "EchidnaMirrorWallActor.h"
 #include "EchidnaGaugeRectActor.h"
 #include "EchidnaBarrierActor.h"
+#include "Raid/RaidSound.h"
 #include "HexTile.h"
 #include "LoAPlayerController.h"
 #include "Camera/CameraActor.h"
@@ -278,6 +279,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaPoopPattern::EnterState(FStateTreeExec
 	}
 	Boss->GetCharacterMovement()->StopMovementImmediately();
 	Boss->PlayPatternAnim(TEXT("Poop"));
+	LoARaidSound::Play(Boss, RaidCue::PoopStart);
 
 	// 2) 오염 장판 전부 활성화
 	AHexArena* Arena = nullptr;
@@ -499,6 +501,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaRandomGrabPattern::EnterState(FStateTr
 
 	// 시작 대사 — FogDelay 뒤 연기가 깔릴 때 내린다
 	ShowPatternDialogue(InstanceData.Player.Get(), InstanceData.DialogueSpeaker, InstanceData.DialogueLine, InstanceData.DialoguePortrait);
+	LoARaidSound::Play(InstanceData.Boss, RaidCue::RandomGrabLine);
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaRandomGrab] 패턴 시작 — Arena:%s Player:%s"),
 		InstanceData.Arena ? TEXT("O") : TEXT("X"), InstanceData.Player.IsValid() ? TEXT("O") : TEXT("X"));
@@ -732,7 +735,9 @@ void FStateTreeTask_EchidnaRandomGrabPattern::SpawnLotusAt(FInstanceDataType& In
 	Zone->CharmGaugePerHit = 1;
 	Zone->bHitTouchingBody = true;	// 작은 원이라 몸에 닿기만 해도 맞게
 	Zone->FinishSpawning(Xform);
+	Zone->ExplodeSound = RaidCue::LotusBurst;
 	Zone->Activate(InstanceData.LotusDamage, Boss->GetController());
+	LoARaidSound::Play(Boss, RaidCue::LotusBloom);
 
 	InstanceData.LotusFlowers.Add(Flower);
 	InstanceData.LotusZones.Add(Zone);
@@ -863,6 +868,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaMirrorLinkPattern::EnterState(FStateTr
 	}
 	Boss->GetCharacterMovement()->StopMovementImmediately();
 	SetBossVanished(Boss, true);
+	LoARaidSound::Play(Boss, RaidCue::MirrorLink);
 
 	// 시작 연출 — 대사창 + 시점을 넓힘. 거울은 대사가 끝난 뒤(Tick의 Vanished 단계) 등장
 	if (ALoACharacter* Player = InstanceData.Player.Get())
@@ -1124,6 +1130,8 @@ EStateTreeRunStatus FStateTreeTask_EchidnaSwingPattern::EnterState(FStateTreeExe
 		InstanceData.AIController->StopMovement();
 	}
 	Boss->GetCharacterMovement()->StopMovementImmediately();
+
+	LoARaidSound::Play(Boss, RaidCue::Swing);
 
 	// 시작 대사 — DialogueDuration 동안 보스는 그 자리에 가만히, 끝나면(Tick) 사라지며 패턴 진행
 	InstanceData.bIntroDone = false;
@@ -1904,6 +1912,7 @@ AEchidnaFanZoneActor* FStateTreeTask_EchidnaRetreatFanPattern::SpawnFan(FInstanc
 		Fan->FanRange = Fan->FanRange * InstanceData.FanRangeScale + ExtraRange;
 		if (InstanceData.FanAngle > 0.f) Fan->FanAngle = InstanceData.FanAngle;
 		if (TelegraphOverride > 0.f) Fan->TelegraphDuration = TelegraphOverride;
+		Fan->ExplodeSound = RaidCue::RetreatFanBurst;
 
 		Fan->Activate(InstanceData.Damage, BossController);
 	}
@@ -2112,6 +2121,7 @@ void FStateTreeTask_EchidnaDragFanPattern::SpawnTethers(FInstanceDataType& Insta
 			// 13_02에서 잡아당기는 순간 판정 — Activate가 이 값으로 타이머를 건다
 			Tether->SnapDelay = FMath::Max(0.1f, InstanceData.Boss->GetPatternAnimStepStart(DragFanAnimKey, 1) + DragFanPullTime
 				- InstanceData.Boss->GetPatternAnimTime());
+			Tether->StrikeSound = RaidCue::DragFanTether;
 			Tether->Activate(PullTarget, InstanceData.PullStrength, BossController);
 			InstanceData.SpawnedTethers.Add(Tether);
 		}
@@ -2291,6 +2301,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDragFanPattern::Tick(FStateTreeExecuti
 		{
 			return EStateTreeRunStatus::Failed;
 		}
+		InstanceData.CurrentFan->ExplodeSound = RaidCue::DragFanFirst;
 		InstanceData.Phase = EEchidnaDragFanPhase::Casting1;
 		return EStateTreeRunStatus::Running;
 	}
@@ -2308,6 +2319,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDragFanPattern::Tick(FStateTreeExecuti
 		{
 			return EStateTreeRunStatus::Failed;
 		}
+		InstanceData.CurrentFan->ExplodeSound = RaidCue::DragFanSecond;
 		InstanceData.Phase = EEchidnaDragFanPhase::Casting2;
 		return EStateTreeRunStatus::Running;
 	}
@@ -2486,6 +2498,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::EnterState(FStateTr
 		return EStateTreeRunStatus::Failed;
 	}
 
+	InstanceData.CurrentFan->ExplodeSound = RaidCue::DonutSlash1;
 	InstanceData.Phase = EEchidnaDonutSlashPhase::Slash1;
 	return EStateTreeRunStatus::Running;
 }
@@ -2525,6 +2538,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 		{
 			return EStateTreeRunStatus::Failed;
 		}
+		InstanceData.CurrentFan->ExplodeSound = RaidCue::DonutSlash2;
 		InstanceData.Phase = EEchidnaDonutSlashPhase::Slash2;
 		return EStateTreeRunStatus::Running;
 	}
@@ -2544,6 +2558,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 			return EStateTreeRunStatus::Failed;
 		}
 
+		InstanceData.InnerDonut->ExplodeSound = RaidCue::DonutSmall;
 		InstanceData.Phase = EEchidnaDonutSlashPhase::InnerDonutTelegraph;
 		return EStateTreeRunStatus::Running;
 	}
@@ -2562,6 +2577,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 			return EStateTreeRunStatus::Failed;
 		}
 
+		InstanceData.AirborneZone->ExplodeSound = RaidCue::DonutRise;
 		InstanceData.Phase = EEchidnaDonutSlashPhase::AirborneTelegraph;
 		return EStateTreeRunStatus::Running;
 	}
@@ -2588,6 +2604,8 @@ EStateTreeRunStatus FStateTreeTask_EchidnaDonutSlashPattern::Tick(FStateTreeExec
 		{
 			return EStateTreeRunStatus::Failed;
 		}
+		InstanceData.OuterDonut->ExplodeSound = RaidCue::DonutOuter;
+		LoARaidSound::Play(Boss, RaidCue::DonutFall);
 		InstanceData.Phase = EEchidnaDonutSlashPhase::FallAndOuterDonut;
 		return EStateTreeRunStatus::Running;
 	}
@@ -2640,6 +2658,7 @@ void FStateTreeTask_EchidnaHeartBurstPattern::FireRandomWave(FInstanceDataType& 
 	const int32 MinCount = FMath::Max(InstanceData.MinHeartsPerWave, 1);
 	const int32 MaxCount = FMath::Max(InstanceData.MaxHeartsPerWave, MinCount);
 	const int32 Count = FMath::RandRange(MinCount, MaxCount);
+	LoARaidSound::Play(InstanceData.Boss, RaidCue::HeartFire);
 
 	AController* BossController = InstanceData.Boss->GetController();
 
@@ -2930,6 +2949,7 @@ void FStateTreeTask_EchidnaBackstepHeartPattern::SpawnBlast(FInstanceDataType& I
 		Fan->FanInnerRadius = 0.f;
 		Fan->RingCount = 1;
 		Fan->TelegraphDuration = FMath::Max(0.1f, InstanceData.BlastTelegraph);
+		Fan->ExplodeSound = RaidCue::BackstepHeartFan;
 		Fan->Activate(InstanceData.BlastDamage, BossController);
 		InstanceData.BlastFan = Fan;
 	}
@@ -2990,6 +3010,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaBackstepHeartPattern::Tick(FStateTreeE
 		if (AnimTime >= BackstepHeartFireTime)
 		{
 			FireFan(InstanceData);
+			LoARaidSound::Play(InstanceData.Boss, RaidCue::HeartFire);
 			InstanceData.Phase = EEchidnaBackstepHeartPhase::Fire;
 		}
 		return EStateTreeRunStatus::Running;
@@ -3179,6 +3200,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaReturningOrbPattern::Tick(FStateTreeEx
 		if (AnimTime >= ReturningOrbThrow1)
 		{
 			ThrowOrb(InstanceData, Aim.Yaw);
+			LoARaidSound::Play(Boss, RaidCue::OrbThrow);
 			InstanceData.Phase = EEchidnaReturningOrbPhase::Throw2;
 		}
 		return EStateTreeRunStatus::Running;
@@ -3195,6 +3217,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaReturningOrbPattern::Tick(FStateTreeEx
 		if (AnimTime >= Boss->GetPatternAnimStepStart(ReturningOrbAnimKey, 1) + ReturningOrbThrow2)
 		{
 			ThrowOrb(InstanceData, Aim.Yaw);
+			LoARaidSound::Play(Boss, RaidCue::OrbThrow);
 			// 30_03 — 플레이어 반대쪽으로 애니메이션 이동 곡선대로(약 4m)
 			Boss->StartPatternAnimMove(ReturningOrbAnimKey, 2, -Aim.Vector());
 			InstanceData.Phase = EEchidnaReturningOrbPhase::Backstep;
@@ -3210,6 +3233,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaReturningOrbPattern::Tick(FStateTreeEx
 		if (AnimTime >= Boss->GetPatternAnimStepStart(ReturningOrbAnimKey, 3) + ReturningOrbFanThrow)
 		{
 			ThrowFan(InstanceData);
+			LoARaidSound::Play(Boss, RaidCue::OrbFan);
 			InstanceData.Phase = EEchidnaReturningOrbPhase::WaitReturn;
 			InstanceData.PhaseElapsed = 0.f;
 		}
@@ -3349,6 +3373,7 @@ void FStateTreeTask_EchidnaRibbonPattern::SpawnRibbons(FInstanceDataType& Instan
 
 			// PullTarget은 bApplyPullOnHit=false인 리본 설정에서는 쓰이지 않지만, 같은 액터를
 			// 끌기 용도로도 쓸 수 있으므로 일단 보스 위치를 넘겨둔다
+			Ribbon->StrikeSound = RaidCue::RibbonThrow;
 			Ribbon->Activate(InstanceData.Boss->GetActorLocation(), 0.f, BossController);
 			InstanceData.SpawnedRibbons.Add(Ribbon);
 			LongestRange = FMath::Max(LongestRange, Ribbon->TetherRange);
@@ -3444,6 +3469,7 @@ void FStateTreeTask_EchidnaRibbonPattern::SpawnArcZone(FInstanceDataType& Instan
 	}
 
 	// ArcInnerRadius > 0이라 중심에서 뻗는 부채꼴이 아니라 호 끝부분만 타격하는 얇은 고리가 된다
+	Zone->ExplodeSound = RaidCue::RibbonArc;
 	Zone->FanAngle = InstanceData.ArcAngle;
 	Zone->FanInnerRadius = InstanceData.ArcInnerRadius;
 	Zone->FanRange = InstanceData.ArcRange;
@@ -3508,6 +3534,7 @@ void FStateTreeTask_EchidnaRibbonPattern::StartAfterRibbon(FInstanceDataType& In
 		FVector ToEnd = InstanceData.RibbonEndLocation - GetBossFeetLocation(Boss);
 		ToEnd.Z = 0.f;
 		Boss->PlayPatternAnim(RibbonLeapAnimKey);
+		LoARaidSound::Play(Boss, RaidCue::RibbonLeap);
 		Boss->StartPatternAnimMove(RibbonLeapAnimKey, 0, ToEnd, static_cast<float>(ToEnd.Size()));
 		InstanceData.Phase = EEchidnaRibbonPhase::MoveToEnd;
 		return;
@@ -3820,6 +3847,7 @@ void FStateTreeTask_EchidnaCounterPattern::StartSplit(FInstanceDataType& Instanc
 
 	// 분신은 본체 포즈를 따라가므로 본체에 도약 동작
 	Boss->PlayPatternAnim(CounterSplitAnimKey, 0.1f);
+	LoARaidSound::Play(Boss, RaidCue::CounterSplit);
 
 	// 본체는 숨기고 충돌을 끈 채 중심에 둔다 — 충돌을 끄면 Walking은 바닥을 뚫고 떨어지므로 Flying
 	Boss->SetActorHiddenInGame(true);
@@ -4070,6 +4098,7 @@ EStateTreeRunStatus FStateTreeTask_EchidnaCounterPattern::Tick(FStateTreeExecuti
 			InstanceData.Elapsed = 0.f;
 			InstanceData.Phase = EEchidnaCounterPhase::ReturnDash;
 			Boss->PlayPatternAnim(CounterDashAnimKey, 0.1f);
+			LoARaidSound::Play(Boss, RaidCue::CounterReturn);
 		}
 		return EStateTreeRunStatus::Running;
 
@@ -4525,6 +4554,7 @@ void FStateTreeTask_EchidnaMirrorCounterPattern::StartIntro(FInstanceDataType& I
 
 	InstanceData.IntroStep = 0;
 	InstanceData.IntroElapsed = 0.f;
+	LoARaidSound::Play(Boss, RaidCue::MirrorCounterIntro);
 }
 
 bool FStateTreeTask_EchidnaMirrorCounterPattern::TickIntro(FInstanceDataType& InstanceData, float DeltaTime) const
@@ -4835,6 +4865,7 @@ bool FStateTreeTask_EchidnaRetreatLotusPattern::StartCycle(FInstanceDataType& In
 		Fan->bApplyCharmGaugeOnHit = true;
 		Fan->CharmGaugePerHit = 1;
 	}
+	Fan->ExplodeSound = RaidCue::RetreatLotusFan;
 	Fan->Activate(InstanceData.FanDamage, Boss->GetController());
 	InstanceData.CurrentFan = Fan;
 
@@ -4853,6 +4884,7 @@ bool FStateTreeTask_EchidnaRetreatLotusPattern::StartCycle(FInstanceDataType& In
 	InstanceData.LotusSpawnedThisCycle = 0;
 	InstanceData.Phase = EEchidnaRetreatLotusPhase::Sliding;
 	Boss->PlayPatternAnim(RetreatLotusAnimKey);
+	LoARaidSound::Play(Boss, RaidCue::RetreatLotusJump);
 
 	UE_LOG(LogLoA, Log, TEXT("[EchidnaRetreatLotus] %d번째 사이클 — Yaw=%.0f 슬라이드 %.0fcm"),
 		InstanceData.CycleIndex + 1, InstanceData.CycleYaw, Distance);
@@ -4916,7 +4948,9 @@ void FStateTreeTask_EchidnaRetreatLotusPattern::SpawnLotusNearBoss(FInstanceData
 	Zone->CharmGaugePerHit = 1;
 	Zone->bHitTouchingBody = true;	// 작은 원이라 몸에 닿기만 해도 맞게
 	Zone->FinishSpawning(Xform);
+	Zone->ExplodeSound = RaidCue::LotusBurst;
 	Zone->Activate(InstanceData.LotusDamage, Boss->GetController());
+	LoARaidSound::Play(Boss, RaidCue::LotusBloom);
 
 	InstanceData.LotusFlowers.Add(Flower);
 	InstanceData.LotusZones.Add(Zone);
@@ -5132,7 +5166,7 @@ FText FStateTreeTask_EchidnaRetreatLotusPattern::GetDescription(const FGuid& ID,
 // ── 육각 리본 ──────────────────────────────────────────────
 
 void FStateTreeTask_EchidnaHexRibbonPattern::SpawnRibbon(FInstanceDataType& InstanceData, const FVector& Start, const FVector& Direction, float Length,
-	float Telegraph, float Damage, bool bKnockdown) const
+	float Telegraph, float Damage, bool bKnockdown, const FRaidCue& StrikeSound) const
 {
 	AEchidnaBoss* Boss = InstanceData.Boss;
 	UWorld* World = Boss ? Boss->GetWorld() : nullptr;
@@ -5160,6 +5194,7 @@ void FStateTreeTask_EchidnaHexRibbonPattern::SpawnRibbon(FInstanceDataType& Inst
 	Ribbon->bApplyKnockdownOnHit = bKnockdown;
 	Ribbon->bApplyStaggerOnHit = !bKnockdown;
 	Ribbon->StrikeVFX = InstanceData.StrikeVFX;
+	Ribbon->StrikeSound = StrikeSound;
 	Ribbon->Activate(Boss->GetActorLocation(), 0.f, Boss->GetController());
 	InstanceData.Ribbons.Add(Ribbon);
 }
@@ -5177,13 +5212,13 @@ void FStateTreeTask_EchidnaHexRibbonPattern::SpawnStep(FInstanceDataType& Instan
 	if (Step == 0)
 	{
 		// 1번 — 손에서 정면으로 세로
-		SpawnRibbon(InstanceData, Hand, Forward, InstanceData.Line1Length, InstanceData.LineTelegraph, InstanceData.LineDamage, false);
+		SpawnRibbon(InstanceData, Hand, Forward, InstanceData.Line1Length, InstanceData.LineTelegraph, InstanceData.LineDamage, false, RaidCue::HexVertical);
 		return;
 	}
 	if (Step == 1)
 	{
 		// 2번 — 손에서 반대쪽으로 보스 앞을 가로
-		SpawnRibbon(InstanceData, Hand, -Right, InstanceData.Line2Length, InstanceData.LineTelegraph, InstanceData.LineDamage, false);
+		SpawnRibbon(InstanceData, Hand, -Right, InstanceData.Line2Length, InstanceData.LineTelegraph, InstanceData.LineDamage, false, RaidCue::HexHorizontal);
 		return;
 	}
 
@@ -5197,7 +5232,7 @@ void FStateTreeTask_EchidnaHexRibbonPattern::SpawnStep(FInstanceDataType& Instan
 	const FVector EndDir = VertexDir(Edge + 1);
 	const FVector To = InstanceData.Center + EndDir * InstanceData.HexRadius;
 
-	SpawnRibbon(InstanceData, From, To - From, FVector::Dist2D(From, To), InstanceData.HexTelegraph, InstanceData.HexDamage, true);
+	SpawnRibbon(InstanceData, From, To - From, FVector::Dist2D(From, To), InstanceData.HexTelegraph, InstanceData.HexDamage, true, RaidCue::HexEdge);
 	SpawnRibbon(InstanceData, To, EndDir, InstanceData.SpikeLength, InstanceData.HexTelegraph, InstanceData.HexDamage, true);
 }
 
@@ -5402,6 +5437,8 @@ void FStateTreeTask_EchidnaPalmBlastPattern::Fire(FInstanceDataType& InstanceDat
 		Origin.Z -= Capsule->GetScaledCapsuleHalfHeight();
 	}
 	const FVector Start = Origin + Forward * InstanceData.BlastStartOffset;
+
+	LoARaidSound::Play(Boss, RaidCue::PalmBlast);
 
 	if (InstanceData.BlastVFX)
 	{

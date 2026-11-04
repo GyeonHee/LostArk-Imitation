@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "StateTreeConditionBase.h"
 #include "StateTreeTaskBase.h"
+#include "Raid/RaidSound.h"
 
 #include "EchidnaBossStateTreeUtility.generated.h"
 
@@ -2254,7 +2255,7 @@ struct FStateTreeTask_EchidnaHexRibbonPattern : public FStateTreeTaskCommonBase
 private:
 	// Start에서 Direction 방향으로 Length만큼 뻗는 리본 1개
 	void SpawnRibbon(FInstanceDataType& InstanceData, const FVector& Start, const FVector& Direction, float Length,
-		float Telegraph, float Damage, bool bKnockdown) const;
+		float Telegraph, float Damage, bool bKnockdown, const FRaidCue& StrikeSound = FRaidCue()) const;
 	void SpawnStep(FInstanceDataType& InstanceData, int32 Step) const;
 	// 육각형 꼭짓점 Index(0 = 왼쪽, 시계 반대로 왼쪽 뒤·오른쪽 뒤·오른쪽·오른쪽 앞·왼쪽 앞)의 정면 기준 Yaw
 	static float GetHexVertexYaw(int32 Index) { return -90.f - 60.f * Index; }

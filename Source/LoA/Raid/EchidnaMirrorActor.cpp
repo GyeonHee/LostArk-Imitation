@@ -127,7 +127,6 @@ void AEchidnaMirrorActor::StopMirrorLoopSound()
 	if (UAudioComponent* Comp = MirrorLoopSound.Get())
 	{
 		LoARaidSound::Stop(Comp, 0.2f);
-		Comp->bAutoDestroy = true;
 	}
 	MirrorLoopSound.Reset();
 }
@@ -168,7 +167,8 @@ void AEchidnaMirrorActor::Activate(float InTickDamage, AController* InInstigator
 		}
 		StartLaserBeam();
 		UpdateMirrorBodyRotation();
-		StartMirrorLoopSound(TEXT("EchidnasMirror_012"));	// 플레이어를 쫓아다니는 거울
+		StopMirrorLoopSound();
+		MirrorLoopSound = LoARaidSound::Spawn(this, RaidCue::SkyMirrorFollow, false);	// 플레이어를 쫓아다니는 거울
 
 		ApplyLaserDamageTick();
 		if (LaserDamageTickInterval > 0.f)

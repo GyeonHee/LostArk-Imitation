@@ -6,6 +6,7 @@
 #include "Raid/EchidnaBarrierActor.h"
 #include "Raid/EchidnaClashQTEActor.h"
 #include "Raid/HexArena.h"
+#include "Raid/RaidSound.h"
 #include "Skill/SkillManagerComponent.h"
 #include "LoACharacter.h"
 #include "LoAPlayerController.h"
@@ -200,6 +201,7 @@ void AEchidnaFinalPhaseActor::BeginShuffle()
 		OuterMirrors.Add(Mirror);
 	}
 	SpawnRingBarriers();
+	LoARaidSound::Play(this, RaidCue::FinalMirrorAppear);
 
 	CounterSuccesses = 0;
 	ShowStepMessage(TEXT("[발악] 빨간 거울의 위치를 기억하세요"));
@@ -239,6 +241,7 @@ void AEchidnaFinalPhaseActor::TickShuffle(float DeltaTime)
 		if (ShuffleElapsed >= RevealDelay)
 		{
 			if (RedMirror) RedMirror->SetRedGlow(true);
+			LoARaidSound::Play(this, RaidCue::FinalRedGlow);
 			SetShuffle(EShuffle::Reveal);
 		}
 		break;
@@ -250,6 +253,8 @@ void AEchidnaFinalPhaseActor::TickShuffle(float DeltaTime)
 			PassesDone = 0;
 			PassNet = 0;
 			PassLog.Reset();
+			// 순서: 빨간 거울 → 이 소리 → PortraitPassDelay 뒤 초상화
+			if (PortraitPassCount > 0) LoARaidSound::Play(this, RaidCue::FinalPortraitStart);
 			SetShuffle(PortraitPassCount > 0 ? EShuffle::PrePass : EShuffle::PreSwap);
 		}
 		break;
@@ -309,6 +314,7 @@ void AEchidnaFinalPhaseActor::TickShuffle(float DeltaTime)
 		break;
 
 	case EShuffle::AwaitCounter:
+		LoARaidSound::KeepLooping(CounterWaitSound.Get());
 		if (CounterTimeLimit > 0.f && CenterMirror)
 		{
 			const int32 Seconds = FMath::Max(0, FMath::CeilToInt(CounterTimeLimit - ShuffleElapsed));
@@ -371,6 +377,8 @@ void AEchidnaFinalPhaseActor::DoSwap()
 
 	if (OuterMirrors[A]) OuterMirrors[A]->PlayDip(SwapDipDuration);
 	if (OuterMirrors[B]) OuterMirrors[B]->PlayDip(SwapDipDuration);
+	LoARaidSound::Stop(SwapSound.Get(), 0.15f);
+	SwapSound = LoARaidSound::Spawn(this, RaidCue::FinalSwap);
 	// 거울은 제자리 — 빨간 거울이 둘 중 하나였으면 다른 쪽으로 옮겨 간다
 	if (RedIndex == A) RedIndex = B;
 	else if (RedIndex == B) RedIndex = A;
@@ -526,6 +534,14 @@ void AEchidnaFinalPhaseActor::SetAllMirrorsAcceptCounter(bool bAccept)
 		Mirror->SetAcceptCounter(bAccept);
 		Mirror->SetCounterReady(bAccept);
 	}
+	LoARaidSound::Stop(CounterWaitSound.Get());
+	CounterWaitSound.Reset();
+	if (bAccept)
+	{
+		LoARaidSound::Stop(SwapSound.Get());
+		SwapSound.Reset();
+		CounterWaitSound = LoARaidSound::Spawn(this, RaidCue::FinalCounterWait, false);
+	}
 	ShownCountdown = -1;
 	if (CenterMirror)
 	{
@@ -535,6 +551,11 @@ void AEchidnaFinalPhaseActor::SetAllMirrorsAcceptCounter(bool bAccept)
 
 void AEchidnaFinalPhaseActor::ClearMirrors(bool bAnimate)
 {
+	LoARaidSound::Stop(SwapSound.Get());
+	SwapSound.Reset();
+	LoARaidSound::Stop(CounterWaitSound.Get());
+	CounterWaitSound.Reset();
+
 	auto ClearOne = [this, bAnimate](AEchidnaShuffleMirrorActor* Mirror)
 	{
 		if (!IsValid(Mirror)) return;

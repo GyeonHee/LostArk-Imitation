@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Raid/RaidSound.h"
 #include "EchidnaTetherActor.generated.h"
 
 class UStaticMeshComponent;
@@ -137,6 +138,9 @@ public:
 	// 부채꼴 장판과 같은 연출). 비우면 줄기 연출
 	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike")
 	TObjectPtr<UNiagaraSystem> StrikeVFX;
+
+	// 판정 순간(줄기가 뻗을 때)의 소리 — Task가 넣는다. 비면 무음
+	FRaidCue StrikeSound;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Tether|Strike")
 	float StrikeVFXSpacing = 200.f;

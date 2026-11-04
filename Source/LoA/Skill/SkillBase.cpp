@@ -172,8 +172,8 @@ bool USkillBase::BeginSkillExecute(AActor* Owner, const FVector* FaceTarget)
         PlaySkillReleaseAnim(Owner, true);
     }
 
-    // 즉발 스킬 — 발동 애니메이션이 끝날 때까지 클릭 이동 금지(기본공격은 연타·이동 끊기가 자연스러워서 제외)
-    if (ALoACharacter* Character = Cast<ALoACharacter>(Owner); Character && SkillRowName != TEXT("BasicAttack"))
+    // 즉발 스킬·기본공격 — 발동 애니메이션이 끝날 때까지 클릭 이동 금지
+    if (ALoACharacter* Character = Cast<ALoACharacter>(Owner))
     {
         Character->LockMoveForSkillAnim(LastReleaseAnimRemaining);
     }
