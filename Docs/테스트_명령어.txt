@@ -1,8 +1,11 @@
 LoA 테스트 콘솔 명령어 모음 (2026-10-23)
 ====================================================
-PIE 중 ` (또는 ~) 키로 콘솔을 열고 입력. 대소문자는 상관없음.
+게임 중 ` (또는 ~) 키로 콘솔을 열고 입력. 대소문자는 상관없음.
 치트를 쓴 판(LoAKillBoss 등)은 최고 클리어 기록·첫 클리어 보상에 안 남는다.
-초기 상태로 처음부터 테스트하려면 PIE를 끄고 Saved/SaveGames/LoA.sav 를 지울 것.
+초기 상태로 처음부터 테스트하려면 게임을 끄고 저장 파일 LoA.sav 를 지울 것.
+  패키지 실행 파일: LoA\Saved\SaveGames\LoA.sav  /  에디터(PIE): Saved\SaveGames\LoA.sav
+결과가 로그로 나오는 명령어(LoAStats, LoADpsTest 등)는
+  패키지 실행 파일: LoA\Saved\Logs\LoA.log (또는 LoA.exe -log 로 실행)  /  에디터(PIE): Output Log 에서 확인.
 
 
 ■ 레이드

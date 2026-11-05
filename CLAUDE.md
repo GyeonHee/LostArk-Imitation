@@ -72,6 +72,7 @@
 - Bash에선 경로 공백 때문에 실패 → PowerShell에서 `&`로
 - **새 UCLASS/USTRUCT/UENUM·StateTree Task 추가, UPROPERTY 타입 변경, StateTree 인스턴스 데이터 레이아웃 변경은 Live Coding 말고 에디터 닫고 풀 빌드**
 - 패키징: 레벨·코드 전용 에셋은 소프트 참조라 쿡이 못 따라감 → `DefaultGame.ini`의 `+MapsToCook`(새 레벨 추가 시), `+DirectoriesToAlwaysCook`(`/Game/LostArk/UI`, 패턴 VFX 폴더, Free_Magic VFX 등). 점검: `Source/LoA`의 `TEXT("/Game/...")` 경로를 `Saved/Cooked/Windows/LoA/Metadata/ReferencedSet.txt`와 대조
+- 패키징 실행: `Tools/Package.ps1`(에디터 닫고, Development — 콘솔 명령어를 평가관이 쓰도록 Shipping 안 씀. 결과 `Saved/Packaged/Windows`). 테스트 후 압축 전 `-PrepareOnly`로 패키지 안 저장 제거 — Development는 저장이 패키지 폴더에 생김
 - 시작 시 "GameFeatureData" Asset Manager 에러는 MCP `AllToolsets` 플러그인 때문 — `DefaultGame.ini`에 스캔 항목을 넣어 해결함
 
 ## 남은 할 일
