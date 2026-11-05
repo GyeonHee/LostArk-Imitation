@@ -1,4 +1,5 @@
 #include "EchidnaBoss.h"
+#include "LoAPlayerController.h"
 #include "Stat/EngravingComponent.h"
 #include "BossDirectionIndicatorComponent.h"
 #include "EchidnaBossAIController.h"
@@ -604,9 +605,9 @@ bool AEchidnaBoss::TryCounter(AActor* Attacker)
 	if (!IsHeadAttackPosition(Attacker->GetActorLocation()))
 	{
 		UE_LOG(LogLoA, Log, TEXT("[Counter] 실패 — 정면(헤드어택) 위치가 아님"));
-		if (GEngine)
+		if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(GetWorld()->GetFirstPlayerController()))
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Silver, TEXT("[카운터] 정면이 아님"));
+			PC->ShowTimedNotice(NSLOCTEXT("Counter", "NotFront", "정면에서 카운터를 써야 합니다"), FText::GetEmpty(), 1.5f);
 		}
 		return false;
 	}

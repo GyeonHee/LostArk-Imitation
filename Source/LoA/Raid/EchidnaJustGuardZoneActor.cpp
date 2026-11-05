@@ -1,4 +1,5 @@
 #include "Raid/EchidnaJustGuardZoneActor.h"
+#include "LoAPlayerController.h"
 #include "Raid/EchidnaBoss.h"
 #include "LoACharacter.h"
 #include "LoA.h"
@@ -167,10 +168,10 @@ bool AEchidnaJustGuardZoneActor::TryJustGuard(APawn* Pawn, const FVector& AimLoc
 		bPressSuccess = true;
 		Resolve(true);
 	}
-	else if (GEngine)
+	else if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(GetWorld()->GetFirstPlayerController()))
 	{
-		const FString Why = !bTimingOk ? (Delta < 0.f ? TEXT("너무 일찍") : TEXT("너무 늦게")) : TEXT("방향이 다름");
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Silver, FString::Printf(TEXT("[저스트 가드] %s"), *Why));
+		const TCHAR* Why = !bTimingOk ? (Delta < 0.f ? TEXT("너무 일찍 눌렀습니다") : TEXT("너무 늦게 눌렀습니다")) : TEXT("가운데 거울 쪽을 가리켜야 합니다");
+		PC->ShowTimedNotice(FText::FromString(Why), FText::GetEmpty(), 1.5f);
 	}
 	return true;
 }

@@ -26,8 +26,6 @@ void USkillInferno::OnKeyDown(AActor* Owner)
     {
         bMovingToRange = true;
         PC->ForceMoveTo(PendingTarget);
-        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
-            TEXT("[인페르노] 사거리 초과 — 이동 중..."));
     }
 }
 

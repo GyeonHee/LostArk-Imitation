@@ -27,8 +27,6 @@ void USkillCheonbeol::OnKeyDown(AActor* Owner)
     {
         bMovingToRange = true;
         PC->ForceMoveTo(PendingCastTarget);
-        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
-            TEXT("[천벌] 사거리 초과 — 이동 중..."));
     }
 }
 

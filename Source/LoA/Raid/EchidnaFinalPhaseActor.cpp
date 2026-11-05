@@ -11,6 +11,7 @@
 #include "LoACharacter.h"
 #include "LoAPlayerController.h"
 #include "LoA.h"
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/Texture2D.h"
@@ -56,7 +57,7 @@ void AEchidnaFinalPhaseActor::EnterStep(EEchidnaFinalPhaseStep NewStep)
 	switch (Step)
 	{
 	case EEchidnaFinalPhaseStep::Cutscene:
-		// TODO(연출 미정): 지금은 붙잡힘 + 무적 + 줌인 + 대사만. 남아 있던 장판에 맞지 않게 무적
+		// 붙잡힘 + 무적 + 줌인 + 대사. 남아 있던 장판에 맞지 않게 무적
 		if (Char)
 		{
 			Char->SetInvulnerable(true);
@@ -68,7 +69,6 @@ void AEchidnaFinalPhaseActor::EnterStep(EEchidnaFinalPhaseStep NewStep)
 		{
 			PC->ShowBossDialogue(DialogueSpeaker, DialogueLine, DialoguePortrait.LoadSynchronous());
 		}
-		ShowStepMessage(TEXT("[발악] 진입 연출 (미정)"));
 		break;
 
 	case EEchidnaFinalPhaseStep::MirrorShuffle:
@@ -79,7 +79,7 @@ void AEchidnaFinalPhaseActor::EnterStep(EEchidnaFinalPhaseStep NewStep)
 		break;
 
 	case EEchidnaFinalPhaseStep::Platform:
-		ShowStepMessage(TEXT("[발악] 격돌 발판에 올라 G"));
+		ShowStepMessage(TEXT("격돌 발판에 올라 G"));
 		break;
 
 	case EEchidnaFinalPhaseStep::Clash:
@@ -204,7 +204,7 @@ void AEchidnaFinalPhaseActor::BeginShuffle()
 	LoARaidSound::Play(this, RaidCue::FinalMirrorAppear);
 
 	CounterSuccesses = 0;
-	ShowStepMessage(TEXT("[발악] 빨간 거울의 위치를 기억하세요"));
+	ShowStepMessage(TEXT("빨간 거울의 위치를 기억하세요"));
 	StartRound();
 }
 
@@ -304,7 +304,7 @@ void AEchidnaFinalPhaseActor::TickShuffle(float DeltaTime)
 			{
 				SetAllMirrorsAcceptCounter(true);
 				SetShuffle(EShuffle::AwaitCounter);
-				ShowStepMessage(FString::Printf(TEXT("[발악] 빨간 거울에 카운터! (%.0f초)"), CounterTimeLimit));
+				ShowStepMessage(FString::Printf(TEXT("빨간 거울에 카운터! (%.0f초)"), CounterTimeLimit));
 			}
 		}
 		break;
@@ -432,7 +432,7 @@ void AEchidnaFinalPhaseActor::OnMirrorCountered(AEchidnaShuffleMirrorActor* Mirr
 	}
 	else
 	{
-		ShowStepMessage(FString::Printf(TEXT("[발악] 카운터 성공 %d/%d"), CounterSuccesses, RequiredCounterSuccesses));
+		ShowStepMessage(FString::Printf(TEXT("카운터 성공 %d/%d"), CounterSuccesses, RequiredCounterSuccesses));
 		SetShuffle(EShuffle::RoundRest);
 	}
 }
@@ -458,7 +458,7 @@ void AEchidnaFinalPhaseActor::StartJustGuard()
 		// 파동은 가운데 거울 유리 중심(배율 1.55 → 바닥에서 약 180)의 한 점에서 퍼진다
 		JustGuardZone->Activate(Player.Get(), Boss.Get(), OuterRingRadius, CenterMirror, 180.f);
 	}
-	ShowStepMessage(TEXT("[발악] 게이지가 다 차는 순간 가운데 거울 쪽을 가리키고 G — 저스트 가드!"));
+	ShowStepMessage(TEXT("게이지가 다 차는 순간 가운데 거울 쪽을 가리키고 G — 저스트 가드!"));
 	SetShuffle(EShuffle::JustGuard);
 }
 
@@ -801,9 +801,10 @@ void AEchidnaFinalPhaseActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void AEchidnaFinalPhaseActor::ShowStepMessage(const FString& Message, float Duration) const
 {
-	UE_LOG(LogLoA, Log, TEXT("%s"), *Message);
-	if (GEngine)
+	UE_LOG(LogLoA, Log, TEXT("[발악] %s"), *Message);
+	const ALoACharacter* Char = Player.Get();
+	if (ALoAPlayerController* PC = Char ? Cast<ALoAPlayerController>(Char->GetController()) : nullptr)
 	{
-		GEngine->AddOnScreenDebugMessage(-1, Duration, FColor::Orange, Message);
+		PC->ShowTimedNotice(FText::FromString(Message), FText::GetEmpty(), Duration);
 	}
 }

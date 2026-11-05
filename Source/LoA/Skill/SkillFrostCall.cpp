@@ -109,8 +109,6 @@ void USkillFrostCall::Execute_Implementation(AActor* Owner)
         const float TickDamage = TotalDamage / Ticks;
         Zone->Activate(TickDamage, Character ? Character->GetController() : nullptr);
 
-        GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan,
-            FString::Printf(TEXT("[혹한의 부름] 발동 — 틱당 %.0f 데미지"), TickDamage));
     }
 }
 

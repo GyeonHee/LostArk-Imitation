@@ -26,8 +26,6 @@ void USkillIceArrow::OnKeyDown(AActor* Owner)
     {
         bMovingToRange = true;
         PC->ForceMoveTo(PendingTarget);
-        GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Cyan,
-            TEXT("[아이스 에로우] 사거리 초과 — 이동 중..."));
     }
 }
 
@@ -112,8 +110,6 @@ void USkillIceArrow::Execute_Implementation(AActor* Owner)
 
         Zone->Activate(TickDmg, Character ? Character->GetController() : nullptr, IcicleRot);
 
-        GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Blue,
-            FString::Printf(TEXT("[아이스 에로우] 발동 — 틱당 %.0f 데미지 × %d회"), TickDmg, Ticks));
     }
 
     PendingTarget = FVector::ZeroVector;

@@ -820,17 +820,6 @@ void USkillManagerComponent::HandleComboInput(int32 SlotIndex)
 
 void USkillManagerComponent::ResetCombo()
 {
-    if (ComboSlotIndex != -1 && ComboStep > 0)
-    {
-        FString Label = TEXT("콤보");
-        if (SlotInstances.IsValidIndex(ComboSlotIndex) && SlotInstances[ComboSlotIndex])
-        {
-            const FText& Name = SlotInstances[ComboSlotIndex]->SkillData.SkillName;
-            if (!Name.IsEmpty()) Label = Name.ToString();
-        }
-        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red,
-            FString::Printf(TEXT("[%s] 시간 초과 — %d단계에서 리셋"), *Label, ComboStep));
-    }
     ComboSlotIndex = -1;
     ComboStep = 0;
 }

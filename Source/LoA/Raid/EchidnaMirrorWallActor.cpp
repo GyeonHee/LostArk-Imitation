@@ -1,4 +1,5 @@
 #include "Raid/EchidnaMirrorWallActor.h"
+#include "LoAPlayerController.h"
 #include "Raid/RaidSound.h"
 #include "Raid/EchidnaMirrorModel.h"
 #include "Stat/EngravingComponent.h"
@@ -485,9 +486,9 @@ bool AEchidnaMirrorWallActor::TryCounterHit(AActor* Attacker, UPrimitiveComponen
 		: static_cast<float>(FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(ToAttacker.GetSafeNormal().X, -1.0, 1.0))));
 	if (AngleDeg > CounterHalfAngle)
 	{
-		if (GEngine)
+		if (ALoAPlayerController* PC = Cast<ALoAPlayerController>(GetWorld()->GetFirstPlayerController()))
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Silver, TEXT("[카운터] 정면이 아님"));
+			PC->ShowTimedNotice(NSLOCTEXT("Counter", "NotFront", "정면에서 카운터를 써야 합니다"), FText::GetEmpty(), 1.5f);
 		}
 		return false;
 	}

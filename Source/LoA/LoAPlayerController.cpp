@@ -189,8 +189,10 @@ void ALoAPlayerController::BeginPlay()
 			BuildBattleItemHUD();
 			if (UMVVMView* View = HUDWidget->GetExtension<UMVVMView>())
 			{
-				bool bOk = View->SetViewModel(FName("HUD_ViewModel"), HUDViewModel);
-				UE_LOG(LogTemp, Warning, TEXT("[HUD] SetViewModel: %s"), bOk ? TEXT("성공") : TEXT("실패 - 이름 불일치?"));
+				if (!View->SetViewModel(FName("HUD_ViewModel"), HUDViewModel))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[HUD] SetViewModel 실패 - 이름 불일치?"));
+				}
 			}
 			else
 			{

@@ -38,7 +38,7 @@ enum class EEchidnaFinalPhaseStep : uint8
  * 거울 섞기 동안 외곽 거울 원을 따라 투명 벽 — 원 밖으로 못 나간다.
  * 성공이 RequiredCounterSuccesses에 닿으면 보스가 마지막 정답 거울 자리에서 나온다.
  *
- * 진입 연출은 아직 시간만 흐르는 자리표시. 보스가 광폭화 중이어도 이 액터는 실시간(광폭화 타이머는 페이즈 진입 때 멈춤)
+ * 보스가 광폭화 중이어도 이 액터는 실시간(광폭화 타이머는 페이즈 진입 때 멈춤)
  */
 UCLASS(Blueprintable)
 class LOA_API AEchidnaFinalPhaseActor : public AActor

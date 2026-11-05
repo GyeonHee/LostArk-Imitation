@@ -3,6 +3,7 @@
 ## 공통 규칙
 - **새 UI는 C++ `BindWidget` 상속 WBP 또는 C++ 트리 위젯**으로 — MVVM은 바인딩을 에디터에서 손으로 걸어야 해서 MCP로 끝까지 못 만든다(MVVM은 `WBP_HUD`·`WBP_SkillTree`만)
 - `BindWidget` 이름을 바꾸면 컴파일 에러, `BindWidgetOptional`은 없으면 그 기능만 안 보임
+- **플레이어 안내는 `ALoAPlayerController::ShowTimedNotice`로** — `GEngine->AddOnScreenDebugMessage`는 Development 패키지(평가용)에도 그대로 나온다. 콘솔 명령 결과(`LoAStats`)에만 쓴다
 - **HUD 루트는 `HitTestInvisible`**(클릭 이동 게임). 창은 루트 `SelfHitTestInvisible` + 패널만 Visible
 - **C++ 트리 위젯은 `RebuildWidget`에서 트리가 생긴다** — 값을 넣는 함수는 트리가 없으면 `TakeWidget()`부터(AddToViewport 전 글자가 조용히 버려진 전례 2건)
 - **클릭을 먹는 C++ 위젯은 `NativeOnMouseButtonDoubleClick`도 Handled**(빠른 두 번째 클릭이 DoubleClick으로 와서 맵 이동으로 샜음)
@@ -16,10 +17,12 @@
 - 쿨타임 UI는 재사용 함수가 아니라 **슬롯마다 Event Tick에 하드코딩된 노드 뭉치** — 새 슬롯은 대시 체인을 복사해 슬롯 번호만 바꾸는 게 기존 패턴. `RefreshingSlot`/`Slot Images`는 Q~F 아이콘 갱신용 별개 시스템(Construct의 Delay 뒤 채워짐 → BeginPlay 시점에 슬롯 이벤트를 쏘면 Accessed None)
 - 대시/기상 칸은 HorizontalBox + Size To Content + Alignment 0.5 — **Collapsed**여야 자리가 빠져 남은 칸이 중앙. 칸 크기는 SizeBox로 고정(Auto면 텍스처 원본 크기)
 - Construct의 Branch는 True/False가 모두 같은 Delay로 합류해야 함(True 미연결로 Q~F 아이콘 전체가 흰 박스였던 전례)
+- `SlotOverlays` 등 슬롯 배열은 Construct의 0.2초 Delay 뒤에 채워져서 Tick 맨 앞에서 `SlotOverlays` IsNotEmpty를 검사한다(빈 배열 접근 경고 방지)
 - 배틀아이템 칸은 `BuildBattleItemHUD()`가 `Border_N` 안을 C++로 바꿔 끼움(원형 쿨타임 `M_CooldownRadial` `CooldownRatio`)
 
 ## WBP_SkillTree (K키, MVVM `SkillTree_ViewModel`/`SkillTreeEntry_ViewModel`)
-- 루트 Canvas **Visible**(입력 차단), `SkillTreeBG` 좌상단 앵커 + 명시적 Position, 마우스 드래그 이동
+- 루트 Canvas **Visible**(입력 차단), `SkillTreeBG` 좌상단 앵커 + 명시적 Position. 창 이동은 `HeaderBox`를 끌 때만(BP 그래프 — `FLoAWindowDrag`와 같은 규칙: 시작 위치 + 마우스 이동량, 화면 밖 클램프, 마우스 캡처). 창 위치를 마우스 좌표로 바로 넣으면 왼쪽 위 모서리가 커서로 튐
+- 창 크기 384×616 = 스킬 8줄(줄당 70)이 스크롤 없이 들어가는 높이 — 스킬 행을 늘리면 높이도 같이. 줄의 +/- 버튼은 뺌(스킬 레벨 안 씀, `USkillTreeEntry_ViewModel::LevelUp/LevelDown` C++만 남음)
 - On Mouse Move는 **항상 Handled**(Unhandled면 Enhanced Input이 K를 재평가해 토글이 두 번)
 - 컨트롤러의 `SkillTree_ViewModel`·`HUDWidget`은 `BlueprintReadOnly` — OnDrop에서 HUD 슬롯을 참조할 때 씀
 - 드랍은 HUD가 아니라 SkillTree의 OnDrop에서 처리(Z순서) — `SkillDragDropOperation`의 `SkillRowName`을 직접 참조(EntryViewModel 경유 시 null), `SkillSlotBorders` 히트 판정 → `AssignSkillToSlot`

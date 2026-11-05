@@ -11,8 +11,6 @@ void USkillCast::OnKeyDown(AActor* Owner)
     ElapsedTime = 0.0f;
     CurrentCastTime = GetEffectiveCastTime(Owner);
     PlaySkillCastAnim(Owner);
-    GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow,
-        FString::Printf(TEXT("[캐스팅] 시작 (%.1f초)"), CurrentCastTime));
 }
 
 void USkillCast::OnKeyHeld(AActor* Owner, float DeltaTime)
@@ -22,14 +20,10 @@ void USkillCast::OnKeyHeld(AActor* Owner, float DeltaTime)
     // 신속의 공격(캐스팅) 속도만큼 빨리 찬다
     ElapsedTime += DeltaTime * UStatComponent::GetCastSpeedMultiplierOf(Owner);
 
-    // 키 1번을 고정 슬롯으로 사용 → 매 프레임 덮어써서 한 줄만 유지
-    GEngine->AddOnScreenDebugMessage(1, 0.1f, FColor::Yellow,
-        FString::Printf(TEXT("[캐스팅] 진행 중 %.1f / %.1f초"), ElapsedTime, CurrentCastTime));
 
     if (ElapsedTime >= CurrentCastTime)
     {
         bIsActive = false;
-        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("[캐스팅] 성공!"));
         PlaySkillReleaseAnim(Owner, false);  // 방향은 캐스팅 시작 때 정했다
         if (IsValid(Owner)) Execute(Owner);
     }
@@ -52,5 +46,4 @@ void USkillCast::OnKeyUp(AActor* Owner)
     bIsActive = false;
     ElapsedTime = 0.0f;
     StopSkillCastAnim(Owner);
-    GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, TEXT("[캐스팅] 취소"));
 }
