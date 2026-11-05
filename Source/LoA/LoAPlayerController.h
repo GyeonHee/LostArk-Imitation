@@ -741,6 +741,7 @@ protected:
 	TWeakObjectPtr<class AInteractableNPCActor> ActiveNPC;    // 메뉴를 연 NPC
 	bool bNPCMenuOpen = false;
 	uint8 HUDVisibilityBeforeNPCMenu = 0;  // ESlateVisibility (헤더에 UMG 타입 include 안 하려고 정수로)
+	uint8 IdentityGaugeVisibilityBeforeNPCMenu = 0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UShopWidget> ShopWidget;

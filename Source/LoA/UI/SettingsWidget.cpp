@@ -15,6 +15,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/TextBlock.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 namespace
 {
@@ -165,6 +166,21 @@ TSharedRef<SWidget> USettingsWidget::RebuildWidget()
 		MusicSlider->OnMouseCaptureEnd.AddDynamic(this, &USettingsWidget::HandleSliderReleased);
 		SfxSlider->OnMouseCaptureEnd.AddDynamic(this, &USettingsWidget::HandleSliderReleased);
 
+		// 게임 종료
+		UButton* Quit = MakeSettingsButton(WidgetTree, TEXT("SettingsQuit"), FText::GetEmpty(), FLinearColor(0.45f, 0.14f, 0.12f, 1.f));
+		QuitLabel = Cast<UTextBlock>(Quit->GetContent());
+		// 포커스를 잡지 않아야 키 입력이 게임으로 가고 제자리 두 번 클릭도 들어온다. 설정 함수가 protected라 트리 생성 전 직접 지정
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		Quit->IsFocusable = false;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		Quit->OnClicked.AddDynamic(this, &USettingsWidget::HandleQuitClicked);
+		if (UVerticalBoxSlot* S = Lines->AddChildToVerticalBox(Quit))
+		{
+			S->SetPadding(FMargin(0.f, 10.f, 0.f, 0.f));
+			S->SetHorizontalAlignment(HAlign_Fill);
+		}
+		SetQuitArmed(false);
+
 		RefreshFromSettings();
 	}
 
@@ -194,6 +210,7 @@ void USettingsWidget::SetPanelOpen(bool bOpen)
 	if (!Panel) TakeWidget();
 	if (!Panel) return;
 	if (bOpen) RefreshFromSettings();
+	SetQuitArmed(false);
 	Panel->SetVisibility(bOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 }
 
@@ -212,6 +229,27 @@ void USettingsWidget::HandleCloseClicked()
 {
 	SetPanelOpen(false);
 	SettingsReturnFocus();
+}
+
+void USettingsWidget::HandleQuitClicked()
+{
+	if (!bQuitArmed)
+	{
+		SetQuitArmed(true);
+		return;
+	}
+	UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
+}
+
+void USettingsWidget::SetQuitArmed(bool bArmed)
+{
+	bQuitArmed = bArmed;
+	if (QuitLabel)
+	{
+		QuitLabel->SetText(bArmed
+			? NSLOCTEXT("Settings", "QuitConfirm", "한 번 더 누르면 종료합니다")
+			: NSLOCTEXT("Settings", "Quit", "게임 종료"));
+	}
 }
 
 void USettingsWidget::HandleMuteChanged(bool bIsChecked)

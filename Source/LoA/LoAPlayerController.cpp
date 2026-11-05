@@ -3172,6 +3172,18 @@ void ALoAPlayerController::OpenNPCMenu(AInteractableNPCActor* NPC)
 	{
 		SkillTreeWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
+	// [설정] 버튼이 대화창의 나가기 버튼과 겹쳐서 대화 동안 숨긴다
+	if (SettingsWidget)
+	{
+		SettingsWidget->SetPanelOpen(false);
+		SettingsWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	// HUD 아래에 따로 있는 아이덴티티 틀도 대사창과 겹쳐서 같이 숨긴다
+	if (IdentityGaugeWidget)
+	{
+		IdentityGaugeVisibilityBeforeNPCMenu = static_cast<uint8>(IdentityGaugeWidget->GetVisibility());
+		IdentityGaugeWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 	// 하단 대화창
 	if (!ShopDialogueWidget)
@@ -3300,6 +3312,14 @@ void ALoAPlayerController::CloseNPCMenu()
 	if (HUDWidget)
 	{
 		HUDWidget->SetVisibility(static_cast<ESlateVisibility>(HUDVisibilityBeforeNPCMenu));
+	}
+	if (SettingsWidget)
+	{
+		SettingsWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	if (IdentityGaugeWidget)
+	{
+		IdentityGaugeWidget->SetVisibility(static_cast<ESlateVisibility>(IdentityGaugeVisibilityBeforeNPCMenu));
 	}
 	if (ShopWidget)
 	{

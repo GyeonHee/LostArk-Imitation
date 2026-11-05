@@ -38,6 +38,12 @@ private:
 	UFUNCTION()
 	void HandleCloseClicked();
 
+	/** 잘못 눌러 꺼지지 않게 한 번 더 눌러야 종료한다 */
+	UFUNCTION()
+	void HandleQuitClicked();
+
+	void SetQuitArmed(bool bArmed);
+
 	UFUNCTION()
 	void HandleMuteChanged(bool bIsChecked);
 
@@ -59,6 +65,8 @@ private:
 	/** RefreshFromSettings가 슬라이더에 값을 넣는 중 — USlider::SetValue가 OnValueChanged를 쏘므로 되먹임을 막는다 */
 	bool bRefreshingFromSettings = false;
 
+	bool bQuitArmed = false;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UButton> ToggleButton;
 
@@ -79,4 +87,7 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> SfxPercentText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> QuitLabel;
 };
