@@ -68,6 +68,8 @@ void AEchidnaBoss::BeginPlay()
 	OnSettlementGaugeChanged.Broadcast(SettlementGauge);
 
 	SetupAnimation();
+	PreloadRaidAssets();
+	ADamageNumberActor::PrewarmPool(GetWorld(), DamageNumberClass, DamageNumberPrewarmCount, this);
 	SetBattleMusicStage(0);  // 보스 맵에 들어오자마자(인트로부터)
 	if (ULoAGameInstance* GI = GetGameInstance<ULoAGameInstance>())
 	{
@@ -495,12 +497,7 @@ void AEchidnaBoss::SpawnDamageNumber(float DamageAmount, bool bCritical)
 		FMath::FRandRange(-DamageNumberJitter, DamageNumberJitter),
 		FMath::FRandRange(-DamageNumberJitter * 0.5f, DamageNumberJitter * 0.5f));
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = this;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	if (ADamageNumberActor* Number = World->SpawnActor<ADamageNumberActor>(
-		DamageNumberClass, SpawnLocation, FRotator::ZeroRotator, SpawnParams))
+	if (ADamageNumberActor* Number = ADamageNumberActor::Show(World, DamageNumberClass, SpawnLocation, this))
 	{
 		// 카운터가 계속 커지므로 나중에 맞은 숫자일수록 앞에 그려진다
 		// "Counter!"와 같은 라벨 경로로 색·크기를 정해 띄운다 — 일반은 흰색, 치명타만 노랗고 크게
@@ -682,12 +679,7 @@ void AEchidnaBoss::SpawnLabelText(const FVector& Location, const FText& Text, co
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = this;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	if (ADamageNumberActor* Label = World->SpawnActor<ADamageNumberActor>(
-		DamageNumberClass, Location, FRotator::ZeroRotator, SpawnParams))
+	if (ADamageNumberActor* Label = ADamageNumberActor::Show(World, DamageNumberClass, Location, this))
 	{
 		// 같은 타격의 데미지 숫자가 바로 뒤에 스폰되며 카운터를 올리므로, 큰 값을 더해 항상 숫자들보다 앞에 그린다
 		Label->ActivateLabel(Text, Color, Scale, ++DamageNumberCounter + 1000000);

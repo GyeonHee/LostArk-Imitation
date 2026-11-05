@@ -97,6 +97,24 @@ namespace
     }
 }
 
+void USkillBase::PreloadAssets()
+{
+    ResolveSkillAnims();
+    if (SoundRowIndex == INDEX_NONE) return;
+
+    const FSkillSoundRow& Row = SkillSound_Table[SoundRowIndex];
+    const auto AddCues = [this](const FSkillSoundCue* Cues, int32 Count)
+    {
+        for (int32 i = 0; i < Count; ++i)
+        {
+            if (!Cues[i].Id) continue;
+            if (USoundBase* Sound = LoASkillSound::Load(Cues[i].Id)) PreloadedSounds.AddUnique(Sound);
+        }
+    };
+    AddCues(Row.Cast, UE_ARRAY_COUNT(Row.Cast));
+    AddCues(Row.Release, UE_ARRAY_COUNT(Row.Release));
+}
+
 void USkillBase::ResolveSkillAnims()
 {
     if (bSkillAnimsResolved) return;

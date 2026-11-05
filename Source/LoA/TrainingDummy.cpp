@@ -78,11 +78,7 @@ void ATrainingDummy::SpawnDamageNumber(float DamageAmount, bool bCritical)
 		FMath::FRandRange(-DamageNumberJitter, DamageNumberJitter),
 		FMath::FRandRange(-DamageNumberJitter * 0.5f, DamageNumberJitter * 0.5f));
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = this;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	if (ADamageNumberActor* Number = World->SpawnActor<ADamageNumberActor>(DamageNumberClass, SpawnLocation, FRotator::ZeroRotator, SpawnParams))
+	if (ADamageNumberActor* Number = ADamageNumberActor::Show(World, DamageNumberClass, SpawnLocation, this))
 	{
 		// 보스와 같은 표기 — 일반 흰색, 치명타 노랗고 크게. 나중에 맞은 숫자일수록 앞
 		const FText Text = FText::FromString(FString::FormatAsNumber(FMath::RoundToInt(DamageAmount)));

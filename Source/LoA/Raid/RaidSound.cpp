@@ -17,6 +17,19 @@ namespace
 		TEXT("LoA.RaidSound.PatternGain"), 1.f,
 		TEXT("보스 패턴 사운드(RaidCue) 볼륨 배율 — 거울 배율을 그대로 쓰면 너무 커서 따로 둠. 다음 재생부터 적용"));
 
+	TAutoConsoleVariable<int32> CVarRaidPreload(
+		TEXT("LoA.Raid.Preload"), 1,
+		TEXT("레이드 애셋 사전 로드 — 1 레벨 로딩 때 읽음(기본) / 0 처음 쓸 때 동기 로드(성능 비교용, 실행 인자로 지정)"));
+
+	void RaidSound_CueAsset(int32 BankIndex, int32 Number, FString& OutFolder, FString& OutName)
+	{
+		const FString Bank = BankIndex > 100
+			? FString::Printf(TEXT("WwiseDefaultBank_S_Mob_G_BigEchidna%d"), BankIndex - 100)
+			: FString::Printf(TEXT("WwiseDefaultBank_S_Mob_G_Echidna%d"), BankIndex);
+		OutFolder = FString::Printf(TEXT("KR/%s"), *Bank);
+		OutName = FString::Printf(TEXT("%s_%03d"), *Bank, Number);
+	}
+
 	/** 게임 설정 효과음 × 거울 배율 */
 	float RaidSound_GetVolume(const UObject* WorldContext)
 	{
@@ -56,6 +69,33 @@ namespace LoARaidSound
 		return Sound;
 	}
 
+	bool IsPreloadEnabled()
+	{
+		return CVarRaidPreload.GetValueOnGameThread() != 0;
+	}
+
+	void PreloadAll(TArray<TObjectPtr<UObject>>& Out)
+	{
+		for (const FRaidCue& Cue : RaidCue::All)
+		{
+			for (int32 Number = Cue.First; Number <= FMath::Max(Cue.First, Cue.Last); ++Number)
+			{
+				FString Folder, Name;
+				RaidSound_CueAsset(Cue.Bank, Number, Folder, Name);
+				if (USoundBase* Sound = Load(*Folder, *Name)) Out.AddUnique(Sound);
+			}
+		}
+		// 거울 소리는 RaidCue 표 밖에서 번호로 직접 튼다(Raid/CLAUDE.md "레이드 사운드")
+		static const TCHAR* const MirrorSounds[] = {
+			TEXT("EchidnasMirror_001"), TEXT("EchidnasMirror_012"), TEXT("EchidnasMirror_013"), TEXT("EchidnasMirror_014"),
+			TEXT("EchidnasMirror_016"), TEXT("EchidnasMirror_022"), TEXT("EchidnasMirror_025"), TEXT("EchidnasMirror_028"),
+		};
+		for (const TCHAR* Name : MirrorSounds)
+		{
+			if (USoundBase* Sound = Load(TEXT("EchidnasMirror"), Name)) Out.AddUnique(Sound);
+		}
+	}
+
 	void Play(const UObject* WorldContext, const FRaidCue& Cue)
 	{
 		Spawn(WorldContext, Cue);
@@ -68,11 +108,8 @@ namespace LoARaidSound
 		if (Volume <= 0.f) return nullptr;
 
 		const int32 Number = FMath::RandRange(Cue.First, FMath::Max(Cue.First, Cue.Last));
-		const FString Bank = Cue.Bank > 100
-			? FString::Printf(TEXT("WwiseDefaultBank_S_Mob_G_BigEchidna%d"), Cue.Bank - 100)
-			: FString::Printf(TEXT("WwiseDefaultBank_S_Mob_G_Echidna%d"), Cue.Bank);
-		const FString Folder = FString::Printf(TEXT("KR/%s"), *Bank);
-		const FString Name = FString::Printf(TEXT("%s_%03d"), *Bank, Number);
+		FString Folder, Name;
+		RaidSound_CueAsset(Cue.Bank, Number, Folder, Name);
 		if (RaidSound_PlayedThisFrame(*Folder, *Name)) return nullptr;
 
 		static TMap<int32, FRaidVoiceState> Voices;

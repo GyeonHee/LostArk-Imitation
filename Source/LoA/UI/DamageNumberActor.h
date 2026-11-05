@@ -27,6 +27,12 @@ public:
 
 	virtual void Tick(float DeltaTime) override;
 
+	/** 숫자 하나를 띄운다 — `LoA.DamageNumber.Pool`이 켜져 있으면 풀에서 꺼내고, 꺼져 있으면 새로 스폰한다 */
+	static ADamageNumberActor* Show(UWorld* World, TSubclassOf<ADamageNumberActor> Class, const FVector& Location, AActor* Owner);
+
+	/** 풀을 켠 경우 레벨 로딩 중에 미리 만들어 둔다 */
+	static void PrewarmPool(UWorld* World, TSubclassOf<ADamageNumberActor> Class, int32 Count, AActor* Owner);
+
 	/** 스폰 직후 1회 호출 — 숫자를 채우고 겹침 순서를 정한다. SortPriority가 클수록 앞에 그려진다 */
 	void Activate(float Damage, int32 SortPriority);
 
@@ -52,5 +58,16 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
+	friend class UDamageNumberPool;
+
+	/** 풀에서 꺼낼 때 — 위치·시간·투명도를 처음 상태로 되돌리고 보이게 한다 */
+	void BeginUse(const FVector& Location, AActor* NewOwner);
+
+	/** 풀로 돌아갈 때 — 숨기고 Tick을 멈춘다 */
+	void EndUse();
+
 	float Elapsed = 0.f;
+
+	// 풀 소속이면 수명이 끝나도 파괴하지 않고 풀로 돌아간다
+	bool bPooled = false;
 };

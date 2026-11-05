@@ -2857,6 +2857,34 @@ void ALoAPlayerController::LoAStats()
 	}
 }
 
+void ALoAPlayerController::LoADamageNumberStress(float PerSecond, float Seconds)
+{
+	TWeakObjectPtr<AEchidnaBoss> Boss = Cast<AEchidnaBoss>(UGameplayStatics::GetActorOfClass(this, AEchidnaBoss::StaticClass()));
+	if (!Boss.IsValid() || PerSecond <= 0.f || Seconds <= 0.f) return;
+
+	constexpr float Interval = 1.f / 30.f;
+	TSharedRef<float> Remaining = MakeShared<float>(Seconds);
+	TSharedRef<float> Carry = MakeShared<float>(0.f);
+	GetWorldTimerManager().SetTimer(DamageNumberStressTimer, FTimerDelegate::CreateWeakLambda(this, [this, Boss, PerSecond, Remaining, Carry]()
+	{
+		*Remaining -= Interval;
+		if (*Remaining <= 0.f || !Boss.IsValid())
+		{
+			GetWorldTimerManager().ClearTimer(DamageNumberStressTimer);
+			UE_LOG(LogTemp, Log, TEXT("[Stress] 데미지 숫자 부하 끝"));
+			return;
+		}
+		*Carry += PerSecond * Interval;
+		const int32 Count = FMath::FloorToInt(*Carry);
+		*Carry -= Count;
+		for (int32 i = 0; i < Count; ++i)
+		{
+			Boss->SpawnDamageNumberForTest(FMath::FRandRange(100000.f, 2000000.f), FMath::FRand() < 0.5f);
+		}
+	}), Interval, true);
+	UE_LOG(LogTemp, Log, TEXT("[Stress] 데미지 숫자 초당 %.0f개, %.0f초"), PerSecond, Seconds);
+}
+
 void ALoAPlayerController::LoASetStat(const FString& Target, double Value)
 {
 	ALoACharacter* Char = GetPawn<ALoACharacter>();

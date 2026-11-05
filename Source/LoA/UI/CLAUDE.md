@@ -33,6 +33,8 @@
 - **`ADamageNumberActor`** + `WBP_DamageNumber`: 월드 액터 + WidgetComponent(Screen). 지터, 카운터가 SortPriority(최신이 앞, `Counter!`는 +1000000), 페이드는 **안의 UserWidget `SetRenderOpacity`**(컴포넌트로는 Screen 스페이스에서 안 먹음). `ActivateLabel`로 글자 표시 재사용
 - `UBossDialogueWidget`(대사창), `UScreenFogWidget`(연기 — 출처별 `ScreenFogSources`, `T_PinkFog`), `UCinematicOverlayWidget`(인트로), `UDefeatWidget`/`UClearWidget`(ZOrder 30, 클리어 루트 SelfHitTestInvisible), `UAbandonRaidWidget`(중단하기)
 
+- **데미지 숫자 풀** `UDamageNumberPool`(월드 서브시스템): 숫자는 `ADamageNumberActor::Show`로만 띄운다. 수명이 끝나면 파괴하지 않고 위젯까지 접어 숨긴다(Screen 스페이스 위젯은 화면 레이어에 남아 액터 숨김만으론 계속 그려짐). 재사용 때 투명도·시간을 `BeginUse`가 되돌리고, 글자 크기는 위젯이 WBP 원본 크기 기준으로 계산한다(안 그러면 치명타 크기가 다음 숫자에 남음). 보스 맵 로딩 때 32개 미리 생성. 비교용 `LoA.DamageNumber.Pool 0`
+
 ## 공용 HUD
 - **`UMinimapWidget`**(C++만, 모든 맵): `NativePaint`에서 Slate 커스텀 버텍스로 직접 그림. 방향은 플레이어 **기본** 카메라 Yaw(`GetDefaultCameraRotation`)로 고정 — NPC 대화·패턴 카메라 회전에 안 돎. 보스 맵 = 타일·보스(숨김이면 숨김)·플레이어, 로비 = 바닥 사각형·구역·NPC(`MinimapIcon`, 비면 노란 점). `UUserWidget::Padding`과 이름이 겹쳐 `MapPadding`
 - **`UIdentityGaugeWidget`**(C++만, 하단 가운데 = 스킬 칸 Q~F와 아이템 칸 사이): 유저 캡처를 두 층으로 — `/Game/LostArk/UI/Identity/T_IdentityArt`(틀·Z·X 아이콘, 바 안쪽 비움, 배경 완전 투명) + `T_IdentityGlow`(푸른 불빛)를 `M_IdentityGlow`(UI 머티리얼: 노이즈로 UV 흔들기·밝기 일렁임, 파라미터 `Strength`·`Tint`·`Tint2`(노이즈로 섞는 둘째 색)·`OpacityScale`)로 틀 아래에. 평소 불투명, 100%면 맥동 + Z 테두리 빛 고리(98%와 구분 — 해방은 정확히 100%), 해방은 흰빛+보랏빛. 나머지는 NativePaint — 게이지 채움, 해방 중 Z 테두리 반시계 빛 두 줄기, 환류면 Z 자물쇠, 점멸 쿨 초. **좌표는 텍스처 픽셀 기준 상수(`IdFrame_*`) — 텍스처를 바꾸면 같이**(두 층 분리 스크립트는 남기지 않음 — 캡처를 바꾸면 새로 만들 것). HUD보다 먼저 ZOrder 0으로 넣어 날개가 슬롯 밑에 깔림. CVar `LoA.Identity.OffsetY`·`LoA.Identity.Scale`

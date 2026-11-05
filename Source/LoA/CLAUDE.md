@@ -56,6 +56,7 @@
 
 ## 저장 `ULoAGameInstance` + `ULoASaveGame`
 - `DefaultEngine.ini` `GameInstanceClass=/Script/LoA.LoAGameInstance`. 슬롯 `LoA` = `Saved/SaveGames/LoA.sav`(지우면 초기 상태)
+- 저장이 없는 첫 실행은 `RestoreLoadoutFromGameInstance`가 Q~F 기본 배치를 넣는다(BP 기본 배치가 비어 있어 스킬을 못 쓰던 문제) — 행 이름이 바뀌면 함께 수정
 - 스킬 배치·레벨·포인트, 소지품·화폐·장비·보석·각인·아크 패시브, 최고 기록·클리어 횟수, 대기 보상, 각종 1회 지급 플래그. `CurrentSaveVersion` 3
 - 테스트 명령(`LoAKillBoss`, `LoAKillSelf`, `LoAGiveItem` 등) 쓴 판은 최고 기록·첫 클리어 제외. 전체 목록 `Docs/테스트_명령어.txt`
 

@@ -28,4 +28,8 @@ public:
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "DamageNumber", meta = (BindWidget))
 	TObjectPtr<UTextBlock> DamageText;
+
+private:
+	// WBP에 잡힌 원래 글자 크기 — 재사용할 때 이전 치명타 배율이 남거나 곱해지지 않게 여기서 계산한다
+	float BaseFontSize = 0.f;
 };

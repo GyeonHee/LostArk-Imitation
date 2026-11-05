@@ -89,6 +89,8 @@ LoASetStat <대상> <값>          스탯 임시 가산 (같은 대상은 덮어
                                   MoveSpeedToDamage DamagePenaltyChance
 LoADpsTest <초>                 데미지 미터를 비우고 N초 뒤 결과를 로그(CSV)로 — 허수아비 앞에서
                                 예) LoADpsTest 60
+LoADamageNumberStress <초당개수> <초>  피해 없이 보스 위에 데미지 숫자만 띄워 성능 부하 확인 (레이드 안에서)
+                                예) LoADamageNumberStress 200 30   /   LoA.DamageNumber.Pool 0 이면 풀 끄고 비교
 
 
 ■ 화면 · 미리보기 (콘솔 변수)

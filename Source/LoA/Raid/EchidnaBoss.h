@@ -390,6 +390,9 @@ public:
 	/** 데미지 폰트로 글자 하나를 Location에 띄운다 — "Counter!"·"Just Guard!" 등 공용. 숫자들보다 항상 앞에 그린다 */
 	void SpawnLabelText(const FVector& Location, const FText& Text, const FLinearColor& Color, float Scale);
 
+	/** 성능 측정용 — 피해 없이 데미지 숫자만 띄운다(LoADamageNumberStress) */
+	void SpawnDamageNumberForTest(float DamageAmount, bool bCritical) { SpawnDamageNumber(DamageAmount, bCritical); }
+
 	UFUNCTION(BlueprintPure, Category = "Counter")
 	bool IsGroggy() const { return bGroggy; }
 
@@ -477,8 +480,18 @@ private:
 	bool BuildSteps(const FString& Spec, TArray<FLoAAnimStep>& OutSteps);
 	void TickPatternAnimMove();
 
+	/** 패턴에서 처음 쓸 때 동기 로드로 끊기지 않게 레벨 로딩 중에 애니메이션·소리·VFX를 미리 읽는다 */
+	void PreloadRaidAssets();
+
 	UPROPERTY(Transient)
 	TMap<FName, TObjectPtr<UAnimSequence>> AnimCache;
+
+	// 미리 읽은 소리·VFX — 참조를 들고 있어야 GC로 내려가 다시 동기 로드되는 일이 없다
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UObject>> PreloadedAssets;
+
+	// 레벨 로딩 중에 미리 만들어 둘 데미지 숫자 개수
+	static constexpr int32 DamageNumberPrewarmCount = 32;
 
 	TMap<FName, FString> AnimOverrides;
 	FName GroggyAnimKey = TEXT("Groggy");

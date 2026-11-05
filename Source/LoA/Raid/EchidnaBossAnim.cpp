@@ -11,6 +11,8 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "LoA.h"
+#include "Raid/RaidSound.h"
+#include "HAL/PlatformTime.h"
 
 namespace
 {
@@ -173,6 +175,62 @@ bool AEchidnaBoss::BuildSteps(const FString& Spec, TArray<FLoAAnimStep>& OutStep
 		}
 	}
 	return OutSteps.Num() > 0;
+}
+
+void AEchidnaBoss::PreloadRaidAssets()
+{
+	if (!LoARaidSound::IsPreloadEnabled())
+	{
+		UE_LOG(LogLoA, Log, TEXT("[Preload] 꺼짐"));
+		return;
+	}
+	const double StartTime = FPlatformTime::Seconds();
+
+	// 표의 애니메이션 전부 — 표기 "a,b*,c!|d"에서 이름만 뽑는다. FindEchidnaAnim이 AnimCache에 보관한다
+	for (const FEchidnaAnimRow& Row : GEchidnaAnimTable)
+	{
+		TArray<FString> Tokens;
+		FString(Row.Spec).ParseIntoArray(Tokens, TEXT(","), true);
+		for (const FString& Token : Tokens)
+		{
+			TArray<FString> Choices;
+			Token.ParseIntoArray(Choices, TEXT("|"), true);
+			for (FString Choice : Choices)
+			{
+				Choice.TrimStartAndEndInline();
+				Choice.RemoveFromEnd(TEXT("*"));
+				Choice.RemoveFromEnd(TEXT("!"));
+				if (!Choice.IsEmpty()) FindEchidnaAnim(Choice);
+			}
+		}
+	}
+	const int32 AnimCount = AnimCache.Num();
+
+	LoARaidSound::PreloadAll(PreloadedAssets);
+	const int32 SoundCount = PreloadedAssets.Num();
+
+	// 패턴 Task·액터가 코드로 읽는 VFX·초상화·머티리얼
+	static const TCHAR* const OtherAssets[] = {
+		TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaRetreatFan.NS_EchidnaRetreatFan"),
+		TEXT("/Game/LostArk/Raid/Echidna/Pattern/VFX/NS_EchidnaBackWallRays.NS_EchidnaBackWallRays"),
+		TEXT("/Game/Free_Magic/VFX_Niagara/NS_Gust.NS_Gust"),
+		TEXT("/Game/LostArk/UI/T_EchidnaPortrait.T_EchidnaPortrait"),
+		TEXT("/Game/Free_Magic/Demo/LevelPrototyping/Materials/M_MirrorLaser.M_MirrorLaser"),
+	};
+	for (const TCHAR* Path : OtherAssets)
+	{
+		if (UObject* Asset = FSoftObjectPath(Path).TryLoad())
+		{
+			PreloadedAssets.AddUnique(Asset);
+		}
+		else
+		{
+			UE_LOG(LogLoA, Warning, TEXT("[Preload] 없음: %s"), Path);
+		}
+	}
+
+	UE_LOG(LogLoA, Log, TEXT("[Preload] 애니메이션 %d, 소리 %d, 기타 %d — %.0fms"), AnimCount, SoundCount,
+		PreloadedAssets.Num() - SoundCount, (FPlatformTime::Seconds() - StartTime) * 1000.0);
 }
 
 void AEchidnaBoss::SetupAnimation()

@@ -17,10 +17,15 @@ void UDamageNumberWidget::SetLabel(const FText& Label, FLinearColor Color, float
 	DamageText->SetColorAndOpacity(FSlateColor(Color));
 
 	// WBP에서 잡은 폰트(패밀리·아웃라인)는 유지하고 크기만 배율로 키운다
-	if (!FMath::IsNearlyEqual(FontSizeScale, 1.f))
+	FSlateFontInfo Font = DamageText->GetFont();
+	if (BaseFontSize <= 0.f)
 	{
-		FSlateFontInfo Font = DamageText->GetFont();
-		Font.Size = FMath::Max(1.f, Font.Size * FontSizeScale);
+		BaseFontSize = Font.Size;
+	}
+	const float NewSize = FMath::Max(1.f, BaseFontSize * FontSizeScale);
+	if (!FMath::IsNearlyEqual(Font.Size, NewSize))
+	{
+		Font.Size = NewSize;
 		DamageText->SetFont(Font);
 	}
 }

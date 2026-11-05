@@ -1,6 +1,43 @@
 #include "DamageNumberActor.h"
 #include "DamageNumberWidget.h"
+#include "UI/DamageNumberPool.h"
 #include "Components/WidgetComponent.h"
+#include "Engine/World.h"
+#include "HAL/IConsoleManager.h"
+
+namespace
+{
+	TAutoConsoleVariable<int32> CVarDamageNumberPool(
+		TEXT("LoA.DamageNumber.Pool"), 1,
+		TEXT("데미지 숫자 재사용 — 1 풀 사용(기본) / 0 타격마다 스폰·파괴(성능 비교용)"));
+}
+
+ADamageNumberActor* ADamageNumberActor::Show(UWorld* World, TSubclassOf<ADamageNumberActor> Class, const FVector& Location, AActor* Owner)
+{
+	if (!World || !Class) return nullptr;
+
+	if (CVarDamageNumberPool.GetValueOnGameThread() != 0)
+	{
+		if (UDamageNumberPool* Pool = World->GetSubsystem<UDamageNumberPool>())
+		{
+			return Pool->Acquire(Class, Location, Owner);
+		}
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Owner;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	return World->SpawnActor<ADamageNumberActor>(Class, Location, FRotator::ZeroRotator, SpawnParams);
+}
+
+void ADamageNumberActor::PrewarmPool(UWorld* World, TSubclassOf<ADamageNumberActor> Class, int32 Count, AActor* Owner)
+{
+	if (!World || !Class || CVarDamageNumberPool.GetValueOnGameThread() == 0) return;
+	if (UDamageNumberPool* Pool = World->GetSubsystem<UDamageNumberPool>())
+	{
+		Pool->Prewarm(Class, Count, Owner);
+	}
+}
 
 ADamageNumberActor::ADamageNumberActor()
 {
@@ -24,7 +61,44 @@ void ADamageNumberActor::BeginPlay()
 	Super::BeginPlay();
 
 	// 수명이 다하면 확실히 정리 — Tick에서도 Destroy하지만 Tick이 멈춘 경우를 대비한 이중 안전장치
-	SetLifeSpan(Lifetime);
+	// 풀 소속은 파괴하지 않고 Tick에서 풀로 돌아간다
+	if (!bPooled)
+	{
+		SetLifeSpan(Lifetime);
+	}
+}
+
+void ADamageNumberActor::BeginUse(const FVector& Location, AActor* NewOwner)
+{
+	Elapsed = 0.f;
+	SetOwner(NewOwner);
+	SetActorLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+	SetActorHiddenInGame(false);
+	SetActorTickEnabled(true);
+	if (DamageWidgetComponent)
+	{
+		DamageWidgetComponent->SetComponentTickEnabled(true);
+		if (UUserWidget* Widget = DamageWidgetComponent->GetUserWidgetObject())
+		{
+			Widget->SetRenderOpacity(1.f);
+			Widget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
+}
+
+void ADamageNumberActor::EndUse()
+{
+	SetActorHiddenInGame(true);
+	SetActorTickEnabled(false);
+	if (DamageWidgetComponent)
+	{
+		// Screen 스페이스 위젯은 화면 레이어에 그대로 남아 있으므로 위젯 자체를 접어야 안 그려진다
+		if (UUserWidget* Widget = DamageWidgetComponent->GetUserWidgetObject())
+		{
+			Widget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		DamageWidgetComponent->SetComponentTickEnabled(false);
+	}
 }
 
 void ADamageNumberActor::Activate(float Damage, int32 SortPriority)
@@ -79,6 +153,14 @@ void ADamageNumberActor::Tick(float DeltaTime)
 
 	if (Elapsed >= Lifetime)
 	{
+		if (bPooled)
+		{
+			if (UDamageNumberPool* Pool = GetWorld() ? GetWorld()->GetSubsystem<UDamageNumberPool>() : nullptr)
+			{
+				Pool->Release(this);
+				return;
+			}
+		}
 		Destroy();
 	}
 }

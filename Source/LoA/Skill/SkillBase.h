@@ -51,6 +51,9 @@ public:
      *  즉발·홀딩처럼 "차오르는 진행도" 개념이 없는 타입은 기본 구현 그대로 false. 캐스트바 UI가 이걸로 폴링한다 */
     virtual bool GetCastProgress(float& OutElapsed, float& OutTotal) const { return false; }
 
+    /** 슬롯에 넣을 때 애니메이션·VFX·소리를 미리 읽는다 — 전투 중 첫 사용에서 동기 로드로 끊기지 않게 */
+    void PreloadAssets();
+
 protected:
 
     // 실제 스킬 효과 발동 (서브클래스에서 오버라이드)
@@ -91,6 +94,9 @@ protected:
 
 private:
     void ResolveSkillAnims();
+
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<class USoundBase>> PreloadedSounds;
 
     UPROPERTY(Transient)
     TObjectPtr<UAnimSequence> CastAnim;

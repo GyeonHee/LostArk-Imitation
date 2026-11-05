@@ -89,6 +89,17 @@ namespace RaidCue
 	inline constexpr FRaidCue ClashBossDeath(1, 597);		// 격돌 성공 후 보스 쓰러짐
 	// 플레이어
 	inline constexpr FRaidCue PlayerCharm(2, 74);			// 매혹 스택이 쌓일 때
+
+	// 레이드 진입 때 미리 읽을 목록 — 위에 소리를 추가하면 여기에도 넣을 것
+	inline constexpr FRaidCue All[] = {
+		CounterSplit, CounterReturn, RibbonThrow, RibbonLeap, RibbonArc, DragFanTether, DragFanFirst, DragFanSecond,
+		DonutSlash1, DonutSlash2, DonutSmall, DonutRise, DonutFall, DonutOuter, RetreatLotusJump, RetreatLotusFan,
+		LotusBloom, LotusBurst, PoopStart, PoopSegment, PoopCircle, HeartFire, BackstepHeartFan, RetreatFanBurst,
+		HexVertical, HexHorizontal, HexEdge, PalmBlast, OrbThrow, OrbFan, MirrorLink, Swing,
+		RandomGrabLine, MirrorCounterIntro, SkyMirrorFollow, Groggy, FinalMirrorAppear, FinalRedGlow, FinalPortraitStart, FinalSwap,
+		FinalCounterWait, ClashGrab, ClashLoop, ClashNoteHit, ClashBad, ClashMash, ClashWin, ClashBossDeath,
+		PlayerCharm,
+	};
 }
 
 /** 에키드나 레이드 원본 사운드(/Game/LostArk/Raid/EchidnaModling/sound/<Folder>/<Name>) 재생 도우미.
@@ -97,6 +108,10 @@ namespace RaidCue
 namespace LoARaidSound
 {
 	LOA_API USoundBase* Load(const TCHAR* Folder, const TCHAR* Name);
+	/** `LoA.Raid.Preload` — 끄면 예전처럼 처음 쓸 때 읽는다(성능 비교용) */
+	LOA_API bool IsPreloadEnabled();
+	/** RaidCue::All과 거울 소리를 전부 읽어 Out에 담는다 — 받는 쪽이 Out을 UPROPERTY로 들고 있어야 GC되지 않는다 */
+	LOA_API void PreloadAll(TArray<TObjectPtr<UObject>>& Out);
 	/** 패턴 소리 — 액터에 붙지 않아 부른 쪽(장판·리본)이 먼저 사라져도 끝까지 나온다. 범위면 무작위 하나 */
 	LOA_API void Play(const UObject* WorldContext, const FRaidCue& Cue);
 	/** Play와 같은데 끊거나 반복할 수 있게 컴포넌트를 돌려준다. bAutoDestroy=false면 끝나도 남아 KeepLooping으로 다시 튼다 — 반드시 Stop.

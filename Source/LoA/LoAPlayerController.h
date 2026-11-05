@@ -161,6 +161,8 @@ public:
 	void ShowTimedNotice(const FText& Title, const FText& Message, float Duration = 2.f);
 
 private:
+	FTimerHandle DamageNumberStressTimer;
+
 	UPROPERTY(Transient)
 	TObjectPtr<class UZoneNoticeWidget> TimedNoticeWidget;
 
@@ -392,6 +394,10 @@ public:
 	/** 테스트용 콘솔 명령 — 회복약 묶음 여러 개를 빈 칸 아무 데나 흩뿌림(정렬·잠금 확인용) */
 	UFUNCTION(Exec)
 	void LoAInvTest();
+
+	/** 성능 측정용 — 피해 없이 보스 위에 데미지 숫자를 초당 PerSecond개씩 Seconds초 동안 띄운다. 예) LoADamageNumberStress 60 30 */
+	UFUNCTION(Exec)
+	void LoADamageNumberStress(float PerSecond, float Seconds);
 
 	/** 테스트용 콘솔 명령 — 실링 추가(음수면 차감). 예) LoAGiveSilling 5000 */
 	UFUNCTION(Exec)

@@ -7,6 +7,7 @@
 #include "LoACharacter.h"
 #include "LoAGameInstance.h"
 #include "LoAPlayerController.h"
+#include "Raid/RaidSound.h"
 #include "Stat/StatComponent.h"
 
 // Sets default values for this component's properties
@@ -66,6 +67,7 @@ void USkillManagerComponent::BeginPlay()
             if (FSkillData* Row = SkillDataTable->FindRow<FSkillData>(SlotInstances[BasicAttackSlotIndex]->SkillRowName, TEXT("")))
             {
                 SlotInstances[BasicAttackSlotIndex]->SkillData = *Row;
+                if (LoARaidSound::IsPreloadEnabled()) SlotInstances[BasicAttackSlotIndex]->PreloadAssets();
                 UE_LOG(LogTemp, Log, TEXT("[SkillManager] 기본공격 로드 성공 (쿨타임: %.1f초)"),
                     SlotInstances[BasicAttackSlotIndex]->SkillData.Cooldown);
             }
@@ -139,7 +141,24 @@ void USkillManagerComponent::SaveLoadoutToGameInstance() const
 void USkillManagerComponent::RestoreLoadoutFromGameInstance()
 {
     ULoAGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<ULoAGameInstance>() : nullptr;
-    if (!GI || !GI->bHasSkillLoadout) return;
+    if (!GI) return;
+    if (!GI->bHasSkillLoadout)
+    {
+        // 저장이 없는 첫 실행 — BP 기본 배치가 비어 있어 스킬을 하나도 못 쓰므로 기본 배치를 넣는다
+        static const TCHAR* const DefaultLoadout[8] = {
+            TEXT("블레이즈"), TEXT("아이스에로우"), TEXT("인페르노"), TEXT("돌풍"),
+            TEXT("종말의날"), TEXT("익스플로전"), TEXT("천벌"), TEXT("혹한의부름"),
+        };
+        for (int32 i = 0; i < 8; ++i)
+        {
+            if (!GetSlotRowName(i).IsNone()) continue;
+            if (!AssignSkillToSlotInternal(FName(DefaultLoadout[i]), i, false))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[SkillLoadout] 기본 배치 실패 — 슬롯 %d '%s'"), i, DefaultLoadout[i]);
+            }
+        }
+        return;
+    }
 
     for (int32 i = 0; i < 8 && i < GI->SkillSlotRowNames.Num(); ++i)
     {
@@ -773,6 +792,7 @@ bool USkillManagerComponent::AssignSkillToSlotInternal(FName RowName, int32 Slot
     NewInstance->SkillData = *Data;
     NewInstance->SkillRowName = RowName;
     SlotInstances[SlotIndex] = NewInstance;
+    if (LoARaidSound::IsPreloadEnabled()) NewInstance->PreloadAssets();
 
     CooldownEndTimes[SlotIndex] = 0.0f;
     CooldownDurations[SlotIndex] = Data->Cooldown;
