@@ -174,6 +174,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Skill")
     bool SwapSkillSlots(int32 SlotA, int32 SlotB);
 
+    /** HUD 칸 밖으로 끌어 스킬을 뺀다 — 정비소 안에서만(보스 맵에선 다시 넣을 수 없으므로). 시전·후딜·쿨타임 중이면 거부 */
+    bool RemoveSkillFromSlot(int32 SlotIndex);
+
     // 스킬 슬롯 등록 허용 여부 — 대기 지역 정비소가 들어올 때 켜고 나갈 때 끈다. 보스 맵엔 정비소가 없으니 항상 꺼짐
     UFUNCTION(BlueprintCallable, Category="SkillTree")
     void SetSlotEditAllowed(bool bAllowed) { bSlotEditAllowed = bAllowed; }

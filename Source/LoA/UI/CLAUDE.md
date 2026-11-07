@@ -2,6 +2,7 @@
 
 ## 공통 규칙
 - **새 UI는 C++ `BindWidget` 상속 WBP 또는 C++ 트리 위젯**으로 — MVVM은 바인딩을 에디터에서 손으로 걸어야 해서 MCP로 끝까지 못 만든다(MVVM은 `WBP_HUD`·`WBP_SkillTree`만)
+- **`UScrollBox` 안에서 우클릭을 받으려면 `SetAllowRightClickDragScrolling(false)`** — 기본값이면 스크롤이 필요할 때 스크롤 박스가 우클릭을 먹어 부모 위젯까지 안 온다(각인 카드 우클릭 장착이 안 됐던 원인)
 - `BindWidget` 이름을 바꾸면 컴파일 에러, `BindWidgetOptional`은 없으면 그 기능만 안 보임
 - **플레이어 안내는 `ALoAPlayerController::ShowTimedNotice`로** — `GEngine->AddOnScreenDebugMessage`는 Development 패키지(평가용)에도 그대로 나온다. 콘솔 명령 결과(`LoAStats`)에만 쓴다
 - **HUD 루트는 `HitTestInvisible`**(클릭 이동 게임). 창은 루트 `SelfHitTestInvisible` + 패널만 Visible

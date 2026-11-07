@@ -745,6 +745,20 @@ void USkillManagerComponent::ClearSlotInternal(int32 SlotIndex, bool bBroadcast)
     if (bBroadcast) OnSkillSlotChanged.Broadcast(SlotIndex, NAME_None);
 }
 
+bool USkillManagerComponent::RemoveSkillFromSlot(int32 SlotIndex)
+{
+    if (SlotIndex < 0 || SlotIndex >= 8 || !IsSlotAssigned(SlotIndex)) return false;
+    if (!bSlotEditAllowed || IsSkillLocked() || IsOnCooldown(SlotIndex)) return false;
+
+    // 슬롯 번호를 기억하는 상태는 비운다
+    ResetCombo();
+    if (QueuedSkillSlot == SlotIndex) QueuedSkillSlot = -1;
+
+    ClearSlotInternal(SlotIndex);
+    UE_LOG(LogTemp, Log, TEXT("[SkillSlot] 슬롯 %d 스킬 해제"), SlotIndex);
+    return true;
+}
+
 bool USkillManagerComponent::SwapSkillSlots(int32 SlotA, int32 SlotB)
 {
     if (SlotA == SlotB || SlotA < 0 || SlotA >= 8 || SlotB < 0 || SlotB >= 8) return false;

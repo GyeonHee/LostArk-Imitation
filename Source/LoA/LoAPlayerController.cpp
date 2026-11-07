@@ -1643,6 +1643,7 @@ void ALoAPlayerController::Tick(float DeltaSeconds)
 
 	// HUD 슬롯 드래그 — 조작 불가 상태여도 놓는 처리는 돼야 하므로 맨 앞
 	UpdateSlotDrag();
+	UpdateEmptySkillSlotIcons();
 
 	// 폰 체크보다 앞 — 인트로는 폰이 빙의되기 전부터 카메라를 움직여야 한다
 	UpdateRaidIntro(DeltaSeconds);
@@ -2287,6 +2288,15 @@ void ALoAPlayerController::UpdateSlotDrag()
 		{
 			return;
 		}
+		if (SlotPressGroup == HUDGroupSkill)
+		{
+			// 빈 스킬 칸은 숨겨 둔 이미지에 이전 브러시가 남아 있을 수 있어 실제 배정으로 판단
+			const USkillManagerComponent* SM = GetSkillManager();
+			if (SM && !SM->IsSlotAssigned(SlotPressIndex))
+			{
+				return;
+			}
+		}
 
 		// 쿨타임 중인 스킬은 집어 들 수도 없다
 		if (SlotPressGroup == HUDGroupSkill)
@@ -2338,9 +2348,24 @@ void ALoAPlayerController::FinishSlotDrag()
 	{
 		int32 Group = -1, Index = -1;
 		// 같은 종류 슬롯 위에서 놓았을 때만 스왑 — 스킬은 스킬끼리, 아이템은 아이템끼리, 배틀아이템은 배틀아이템끼리
-		if (FindHUDSlotUnderCursor(Group, Index) && Group == SlotPressGroup && Index != SlotPressIndex)
+		if (FindHUDSlotUnderCursor(Group, Index))
 		{
-			SwapHUDSlots(Group, SlotPressIndex, Index);
+			if (Group == SlotPressGroup && Index != SlotPressIndex)
+			{
+				SwapHUDSlots(Group, SlotPressIndex, Index);
+			}
+		}
+		else if (SlotPressGroup == HUDGroupSkill)
+		{
+			// 어느 칸에도 놓지 않았다 = 스킬 빼기
+			if (USkillManagerComponent* SM = GetSkillManager(); SM && !SM->RemoveSkillFromSlot(SlotPressIndex))
+			{
+				ShowTimedNotice(FText::FromString(!SM->IsSlotEditAllowed()
+					? TEXT("스킬은 정비소에서만 뺄 수 있습니다.")
+					: SM->IsSlotOnCooldown(SlotPressIndex)
+						? TEXT("재사용 대기 중인 스킬은 뺄 수 없습니다.")
+						: TEXT("스킬 사용 중에는 뺄 수 없습니다.")), FText::GetEmpty(), 1.5f);
+			}
 		}
 	}
 
@@ -2352,6 +2377,23 @@ void ALoAPlayerController::FinishSlotDrag()
 	bSlotDragging = false;
 	SlotPressGroup = -1;
 	SlotPressIndex = -1;
+}
+
+void ALoAPlayerController::UpdateEmptySkillSlotIcons()
+{
+	const USkillManagerComponent* SM = GetSkillManager();
+	if (!SM || !HUDWidget) return;
+	for (int32 i = 0; i < UE_ARRAY_COUNT(HUDSkillImages); ++i)
+	{
+		UWidget* Image = HUDWidget->GetWidgetFromName(FName(HUDSkillImages[i]));
+		if (!Image) continue;
+		const bool bImageHidden = Image->GetVisibility() == ESlateVisibility::Hidden;
+		const bool bAssigned = SM->IsSlotAssigned(i);
+		if (bAssigned == bImageHidden)
+		{
+			Image->SetVisibility(bAssigned ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		}
+	}
 }
 
 void ALoAPlayerController::SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB)

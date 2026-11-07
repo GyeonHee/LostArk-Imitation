@@ -54,6 +54,7 @@
 - `IsSkillLocked()` = 어느 슬롯이든 Active/MovingToRange/PostDelay. 잠금 중 입력은 `QueuedSkillSlot` 1개(덮어쓰기) → `OnSkillLockReleased`에서 발동
 - Instant·Cast·Charge 완료/취소 → `SkillPostDelay`(실제 값은 `BP_Sorceress` SkillManager **0.1초**, C++ 기본값과 다름) 후 해제. Hold 완료/취소·사거리 이동 취소 → 즉시. Hold 활성 중엔 다른 키 완전히 씹힘
 - `SwapSkillSlots`: 시전/후딜 중 또는 둘 중 하나라도 쿨타임이면 거부
+- `RemoveSkillFromSlot`(HUD 칸 밖으로 끌어 놓기): 정비소 안에서만(보스 맵에선 다시 못 넣음), 시전/후딜·쿨타임 중 거부. 빈 칸 아이콘은 컨트롤러 `UpdateEmptySkillSlotIcons`가 숨김
 - 슬롯 등록(`AssignSkillToSlot`)은 정비소 안에서만(`SetSlotEditAllowed`). 복원은 제한·브로드캐스트 없는 `AssignSkillToSlotInternal`(HUD가 BeginPlay 시점엔 준비 안 됨)
 - 배치 유지: `EndPlay`에서 `ULoAGameInstance`에 저장 → `BeginPlay`에서 복원
 

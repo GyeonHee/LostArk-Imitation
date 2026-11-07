@@ -181,6 +181,8 @@ private:
 	void UpdateSlotDrag();
 	void FinishSlotDrag();
 	void SwapHUDSlots(int32 Group, int32 IndexA, int32 IndexB);
+	/** 빈 스킬 칸(Q~F)의 아이콘을 숨긴다 — 텍스처 없는 UImage는 흰 사각형으로 그려지고, 저장에서 복원된 빈 칸도 있어 매 틱 맞춘다 */
+	void UpdateEmptySkillSlotIcons();
 	bool GetHUDSlotIconBrush(int32 Group, int32 Index, FSlateBrush& OutBrush) const;
 
 	// ── 배틀아이템 칸 1~4 (키 1~4, HUD Border_1~4) ──

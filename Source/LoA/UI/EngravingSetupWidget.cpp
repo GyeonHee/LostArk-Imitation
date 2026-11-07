@@ -88,6 +88,8 @@ TSharedRef<SWidget> UEngravingSetupWidget::RebuildWidget()
 		ListBack->SetPadding(FMargin(6.f));
 		ListSize->SetContent(ListBack);
 		UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+		// 기본값이면 스크롤이 필요할 때 우클릭을 스크롤 박스가 먹어 카드 우클릭 장착이 창까지 안 온다
+		Scroll->SetAllowRightClickDragScrolling(false);
 		ListBack->SetContent(Scroll);
 		CardGrid = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
 		CardGrid->SetSlotPadding(FMargin(3.f));
